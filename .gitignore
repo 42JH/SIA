@@ -1,0 +1,39 @@
+# Claude Code
+.claude/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Frontend (Next.js)
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Backend (Java/Spring)
+build/
+.gradle/
+*.class
+HELP.md
+
+# AI (Python)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+*.log
+npm-debug.log*
