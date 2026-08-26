@@ -22,7 +22,7 @@ BLOCK = 480  # 30ms
 class VadSegmenter:
     """블록 단위 RMS로 발화 구간을 자르는 순수 로직 (테스트 가능).
 
-    ponytail: 에너지 VAD — 조용한 실내 기준. 시끄러운 환경이 문제 되면
+    NOTE(한계): 에너지 VAD — 조용한 실내 기준. 시끄러운 환경이 문제 되면
     webrtcvad/실크 VAD로 교체할 것.
     """
 

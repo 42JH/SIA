@@ -17,7 +17,7 @@ class SpeakerVerifier:
     """모델은 무겁게(12초) 로드되므로, 화자 인증을 켤 때만 생성한다."""
 
     def __init__(self, profile_path, threshold=0.25):
-        # ponytail: threshold는 코사인 유사도 하한. voxceleb ECAPA 실측 기준
+        # NOTE(튜닝): threshold는 코사인 유사도 하한. voxceleb ECAPA 실측 기준
         # 본인 발화는 보통 0.4~0.7, 타인/미디어는 0.0~0.25. 조용한 환경에서 올리고,
         # 본인이 자주 거부되면 내린다. 실사용 로그(아래 verify 반환값) 보고 조정.
         self.profile_path = str(profile_path)

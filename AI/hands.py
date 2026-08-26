@@ -205,7 +205,7 @@ class CustomGestures:
         import os
 
         self.path = str(path)
-        # ponytail: 최근접(top-1) 거리 임계. 반드시 등록 분리 기준(gesture_studio의
+        # NOTE(한계): 최근접(top-1) 거리 임계. 반드시 등록 분리 기준(gesture_studio의
         # CONFUSION_DIST)보다 작아야 두 클래스의 인식 영역이 안 겹친다. 절대값은
         # 실제 MediaPipe 랜드마크 스케일에 의존하므로 실사용 오인식/미인식 보고 보고
         # 조정할 것 (미인식↑면 올리고, 엉뚱한 발화↑면 내린다).
