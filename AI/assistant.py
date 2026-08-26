@@ -36,8 +36,9 @@ HERE = Path(__file__).parent
 
 GESTURE_HOLD_S = 0.8   # 제스처 커맨드: 이 시간 유지해야 발동 (오작동 방지)
 GESTURE_COOLDOWN_S = 1.2  # 연타 용도(10초 건너뛰기 반복)를 위해 짧게 — 홀드+재무장이 있어 안전
-CROP_SIZE = 900        # 응시 영역 크롭 한 변 px
+CROP_FRAC = 0.32       # 응시 영역 크롭 크기 = 화면 폭 × 이 비율 (해상도 무관하게 동작)
 GAZE_LOOKBACK_S = 0.15  # 발화 시작 시점 응시 조회 (눈은 말하기 직전 대상 위에 있음)
+BROWSERS = ("chrome", "whale", "edge", "firefox")  # 유튜브 컨텍스트 인정 브라우저 (창 제목 기준)
 
 # 컨텍스트별 제스처 매핑 (기획서 4번: 같은 제스처도 상황 따라 다른 기능).
 # 항목은 "run"(앱 실행) 또는 "key"(활성 창에 키 입력, 'shift+n' 형식 지원) 중 하나.
@@ -76,11 +77,12 @@ def capture_screen(fix_xy):
     full = pyautogui.screenshot()
     crop = None
     if fix_xy is not None:
+        size = int(full.width * CROP_FRAC)  # 화면 크기에 비례 — 사용자별 해상도 차이 흡수
         x, y = int(fix_xy[0]), int(fix_xy[1])
-        half = CROP_SIZE // 2
-        left = max(0, min(full.width - CROP_SIZE, x - half))
-        top = max(0, min(full.height - CROP_SIZE, y - half))
-        crop = full.crop((left, top, left + CROP_SIZE, top + CROP_SIZE))
+        half = size // 2
+        left = max(0, min(full.width - size, x - half))
+        top = max(0, min(full.height - size, y - half))
+        crop = full.crop((left, top, left + size, top + size))
     return full, crop
 
 
@@ -243,7 +245,8 @@ def main():
             # 때만 유튜브 컨텍스트로 전환한다. DOM video.present만 믿으면 백그라운드
             # 유튜브 때문에 앞의 워드 문서에 'm'이 찍히는 사고가 난다.
             fg_title = active_window_title()
-            fg_is_browser = "chrome" in fg_title.lower() or is_youtube(fg_title)
+            fg_is_browser = (is_youtube(fg_title)
+                             or any(b in fg_title.lower() for b in BROWSERS))
             dom = bridge.context()
             dom_video = bool(dom and isinstance(dom.get("video"), dict)
                              and dom["video"].get("present"))

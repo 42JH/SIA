@@ -50,7 +50,7 @@ AUTO_ACTIVE_OFF_S = 2.0  # --auto-active 모드: 손이 사라진 뒤 Passive까
 PINCH_HOLD_S = 0.35    # 이보다 짧은 핀치 = 클릭, 길면 드래그 시작
 STABLE_FRAMES = 3      # 제스처 분류가 이 프레임 수 연속일 때만 인정
 EURO_MIN_CUTOFF, EURO_BETA = 1.0, 20.0  # One Euro: 낮을수록 부드럽고, beta가 반응성
-# ponytail: 1920x1080은 홍채 정밀도가 오르지만 이 CPU에서 FaceLandmarker가 8fps로
+# NOTE(한계): 1920x1080은 홍채 정밀도가 오르지만 이 CPU에서 FaceLandmarker가 8fps로
 # 떨어져 실패. GPU delegate 또는 얼굴 주변 크롭 최적화를 붙이면 그때 올릴 것.
 CAM_W, CAM_H = 1280, 720
 SNAP_MAX_W, SNAP_MAX_H = 420, 160  # 이보다 큰 UI 요소엔 스냅 안 함 (컨테이너 중앙으로 튀는 것 방지)
