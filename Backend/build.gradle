@@ -28,6 +28,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // Boot 4 웹 스타터는 Jackson 을 전이시키지 않는다 — ObjectMapper 직접 사용(runtime.json 등)의 명시 의존성
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
     implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
 

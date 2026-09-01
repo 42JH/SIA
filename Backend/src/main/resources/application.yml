@@ -1,3 +1,11 @@
+server:
+  address: 127.0.0.1     # 이 프로세스는 창을 닫고 파일을 지운다. LAN 에 열면 그 권한이 네트워크로 나간다
+  port: 8080
+
 spring:
   application:
     name: sia-assistant
+
+sia:
+  # 비우면 %APPDATA%/SIA (없으면 ~/.sia)
+  data-dir: ${SIA_DATA_DIR:}
