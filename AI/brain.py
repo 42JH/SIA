@@ -51,6 +51,7 @@ GLOBAL_MEDIA_KEYS = {"playpause": "playpause", "mute": "volumemute",
 
 SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_command": true/false, "transcript": "들은 말",
  "action": "answer|save_crop|open_app|web_search|find_file|delete_file|window|media|end_session|confirm_yes|confirm_no|none",
+ "bbox": [ymin, xmin, ymax, xmax] (save_crop일 때 대상 경계, 전체 화면 기준 0~1000 정규화) 또는 null,
  "app": "chrome|notepad|calc|explorer|paint 또는 null",
  "query": "검색어 또는 파일명, 없으면 null",
  "window_op": "maximize|minimize|close|scroll_down|scroll_up 또는 null",
@@ -60,7 +61,10 @@ SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_comman
 ACTION_RULES = """액션 규칙:
 - "이거/저거/여기" 지시어는 응시 크롭 속 대상을 가리킨다.
 - 질문·설명·요약·번역 → answer, 크롭과 화면을 근거로 say에 답하라 (요약은 5문장까지 허용).
-- "저장해줘"류 → save_crop (응시 영역 이미지를 저장). 앱 실행 요청 → open_app.
+- "저장해줘"류 → save_crop. 사용자가 가리킨 대상(이미지·차트·문단 등)의 경계
+  상자를 bbox에 넣어라 — 전체 화면 스크린샷 기준 [ymin,xmin,ymax,xmax],
+  0~1000 정규화, 대상에 딱 맞게. 응시 크롭은 대상 위치의 힌트다. 대상을
+  특정할 수 없으면 bbox=null. 앱 실행 요청 → open_app.
 - 웹 검색 요청("~ 검색해줘/찾아봐") → web_search, query에 검색어.
 - 파일 찾기 요청 → find_file, query에 파일명.
 - 파일 삭제 요청("이거/이 파일/○○파일 삭제해줘/지워줘") → delete_file. query에는
@@ -308,6 +312,27 @@ def wav_bytes(audio_i16, sr=16000):
     return buf.getvalue()
 
 
+def crop_to_bbox(full_img, bbox, pad=0.02):
+    """LLM이 준 0~1000 정규화 bbox로 원본 해상도에서 정밀 크롭.
+
+    시선은 영역(변 32% 크롭)까지만 좁히고 대상 특정은 VLM이 하는 설계의
+    마무리 — 저장은 3×3 셀 덩어리가 아니라 가리킨 대상만 잘라낸다.
+    비정상 bbox(좌표 역전·극소·화면의 90% 이상)는 None → 영역 크롭 폴백.
+    """
+    try:
+        y1, x1, y2, x2 = (float(v) / 1000.0 for v in bbox)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1):
+        return None
+    if (x2 - x1) * (y2 - y1) > 0.9 or (x2 - x1) < 0.01 or (y2 - y1) < 0.01:
+        return None
+    w, h = full_img.size
+    box = (max(0, int((x1 - pad) * w)), max(0, int((y1 - pad) * h)),
+           min(w, int((x2 + pad) * w)), min(h, int((y2 + pad) * h)))
+    return full_img.crop(box)
+
+
 def jpeg_bytes(pil_img, max_w=1400, quality=75):
     img = pil_img
     if img.width > max_w:
@@ -385,7 +410,7 @@ class Brain(threading.Thread):
                               action=result.get("action"),
                               transcript=result.get("transcript", "")[:120],
                               had_dom=dom is not None, **audio_stats(audio))
-                self._execute(result, crop_img, t_utter, hwnd)
+                self._execute(result, crop_img, t_utter, hwnd, full_img)
             except Exception as e:
                 self.overlay.toast(f"오류: {e}")
                 print(f"[brain 오류] {e}")
@@ -425,7 +450,7 @@ class Brain(threading.Thread):
         return result
 
     # --- 액션 실행 ---
-    def _execute(self, result, crop_img, t_utter=None, hwnd=0):
+    def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None):
         t_utter = t_utter or time.monotonic()
         if not result.get("audio_is_speech", True):
             return  # 잡음/기계음 — 조용히 무시
@@ -523,10 +548,13 @@ class Brain(threading.Thread):
                 self.overlay.toast(q + ' — "응, 삭제" / "취소"', CONFIRM_TIMEOUT_S)
         elif action == "media":
             self._media(result.get("media_key"), say, hwnd)
-        elif action == "save_crop" and crop_img is not None:
+        elif action == "save_crop" and (full_img is not None or crop_img is not None):
             SAVE_DIR.mkdir(parents=True, exist_ok=True)
             path = SAVE_DIR / f"저장_{time.strftime('%H%M%S')}.png"
-            crop_img.save(path)
+            img = crop_to_bbox(full_img, result.get("bbox")) if full_img is not None else None
+            if img is None:  # bbox 없음·비정상 → 기존 응시 영역 크롭 폴백
+                img = crop_img if crop_img is not None else full_img
+            img.save(path)
             self.overlay.toast(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
         else:  # answer / none — 짧으면 토스트, 길면 플로팅 패널
             if len(say) > 60:
