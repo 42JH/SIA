@@ -72,7 +72,10 @@ def run(only=None):
         sys.exit("GEMINI_API_KEY 없음 — 환경변수 또는 gemini_api_key.txt")
     client = genai.Client(api_key=key)
 
-    dirs = [d for d in sorted(CASES.iterdir()) if d.is_dir()] if CASES.exists() else []
+    # synth_(TTS) 케이스는 1단 평가 전용 — TTS 기계음은 화자 게이트·기계음
+    # 기각 판정과 얽혀서 LLM 회귀에서는 제외한다 (--tier1에서만 채점).
+    dirs = [d for d in sorted(CASES.iterdir())
+            if d.is_dir() and not d.name.startswith("synth_")] if CASES.exists() else []
     if only:
         dirs = [d for d in dirs if d.name == only]
     unlabeled = [d.name for d in dirs if not (d / "expected.json").exists()]
@@ -133,10 +136,6 @@ def run_tier1():
     출력: 케이스별 STT 결과와 라우팅 판정, 그리고 세 바구니 집계 —
     즉시 처리(정답/오답), 승격(정상 — 1단 범위 밖), 미스(1단 범위인데 승격).
     """
-    import wave as wavmod
-
-    import numpy as np
-
     import brain
     from router import Router
 
@@ -150,9 +149,7 @@ def run_tier1():
     for d in dirs:
         expected = json.loads((d / "expected.json").read_text(encoding="utf-8"))
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
-        with wavmod.open(str(d / "audio.wav")) as w:
-            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
-        text, sec = r.transcribe(audio)
+        text, sec = r.transcribe(_load_audio(d))
         lat.append(sec)
         hit = r.route(text, meta.get("session", False))
         in_scope = expected.get("is_command", True) and expected.get("action") in TIER1_ACTIONS
@@ -173,12 +170,20 @@ def run_tier1():
 
 
 def _load_audio(d):
+    """케이스 wav → 16kHz int16. 파이프라인 표준(16k)이 아니면 리샘플 —
+    샘플레이트 불일치는 STT가 조용히 궤멸하는 종류라 로더가 방어한다."""
     import wave as wavmod
 
     import numpy as np
 
     with wavmod.open(str(d / "audio.wav")) as w:
-        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        sr = w.getframerate()
+        a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    if sr != 16000:
+        n = int(len(a) * 16000 / sr)
+        a = np.interp(np.linspace(0, len(a) - 1, n), np.arange(len(a)),
+                      a.astype(np.float32)).astype(np.int16)
+    return a
 
 
 def run_draft():
