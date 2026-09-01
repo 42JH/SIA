@@ -18,6 +18,9 @@ expected.json에는 채점할 필드만 적는다. 키 뒤에 ~를 붙이면 부
   python eval_prompt.py --only <id>   케이스 하나만 (라벨 디버깅용)
   python eval_prompt.py --tier1       같은 케이스로 1단 라우터만 오프라인 평가
                                       (LLM 미호출·비용 0 — STT 정확도·적중률·지연)
+  python eval_prompt.py --draft       라벨 없는 케이스에 초안(expected.draft.json)
+                                      자동 생성 — STT+라우터 추측, 사람은 검토만
+  python eval_prompt.py --adopt       검토 끝난 초안을 expected.json으로 채택
   python eval_prompt.py --selftest    채점 로직 자가 점검 (API 안 씀)
 """
 import json
@@ -169,11 +172,74 @@ def run_tier1():
         sys.exit(1)  # 즉시 처리가 틀리는 건 위험 — 오답 0이 합격선
 
 
+def _load_audio(d):
+    import wave as wavmod
+
+    import numpy as np
+
+    with wavmod.open(str(d / "audio.wav")) as w:
+        return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+
+
+def run_draft():
+    """라벨 초안 자동 생성 — 사람의 라벨링을 '작성'에서 '검토'로 바꾼다.
+
+    STT로 받아쓰고 1단 라우터로 액션을 추측해 expected.draft.json을 만든다.
+    _stt 필드에 받아쓴 텍스트가 있어 오디오를 안 듣고도 검토 가능. 초안은
+    채점에 쓰이지 않는다 — 검토·수정 후 --adopt 해야 expected.json이 된다
+    (검토 안 된 라벨이 기준선을 오염시키지 않게 하는 2단계 장치).
+    """
+    import brain
+    from router import DEICTIC, Router
+
+    r = Router(brain.WAKE_WORD)
+    made = 0
+    for d in (sorted(CASES.iterdir()) if CASES.exists() else []):
+        if not d.is_dir() or (d / "expected.json").exists() or (d / "expected.draft.json").exists():
+            continue
+        meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        text, _ = r.transcribe(_load_audio(d))
+        hit = r.route(text, meta.get("session", False))
+        if hit:  # 라우터가 확신한 고정 명령 — 라벨 통째로 초안
+            draft = {k: v for k, v in hit.items()
+                     if k in ("is_command", "action", "app", "media_key")}
+        elif any(w in text for w in DEICTIC):  # 지시어 — 명령일 확률 높음, 액션은 사람이
+            draft = {"is_command": True}
+        else:  # 사전 밖 — 잡음·대화일 확률 높음 (검토에서 뒤집으면 됨)
+            draft = {"is_command": False}
+        draft["_stt"] = text
+        (d / "expected.draft.json").write_text(
+            json.dumps(draft, ensure_ascii=False, indent=1), encoding="utf-8")
+        made += 1
+        print(f"[초안] {d.name}: {text!r} → {draft}")
+    print(f"\n초안 {made}건 — 검토·수정 후 `--adopt`로 채택하세요 (_stt는 채택 시 제거됨)")
+
+
+def run_adopt():
+    """검토 끝난 초안을 채점용 라벨로 채택 — _로 시작하는 보조 필드는 버린다."""
+    n = 0
+    for d in (sorted(CASES.iterdir()) if CASES.exists() else []):
+        f = d / "expected.draft.json"
+        if not d.is_dir() or not f.exists():
+            continue
+        clean = {k: v for k, v in json.loads(f.read_text(encoding="utf-8")).items()
+                 if not k.startswith("_")}
+        (d / "expected.json").write_text(
+            json.dumps(clean, ensure_ascii=False, indent=1), encoding="utf-8")
+        f.unlink()
+        n += 1
+    print(f"채택 {n}건 — 이제 채점 대상입니다")
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
     elif "--tier1" in sys.argv:
         run_tier1()
+    elif "--draft" in sys.argv:
+        run_draft()
+    elif "--adopt" in sys.argv:
+        run_adopt()
     else:
         only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
         run(only)
