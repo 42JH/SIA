@@ -16,6 +16,8 @@ expected.json에는 채점할 필드만 적는다. 키 뒤에 ~를 붙이면 부
 사용:
   python eval_prompt.py               전체 실행, 통과율 출력 + history.jsonl 기록
   python eval_prompt.py --only <id>   케이스 하나만 (라벨 디버깅용)
+  python eval_prompt.py --tier1       같은 케이스로 1단 라우터만 오프라인 평가
+                                      (LLM 미호출·비용 0 — STT 정확도·적중률·지연)
   python eval_prompt.py --selftest    채점 로직 자가 점검 (API 안 씀)
 """
 import json
@@ -119,9 +121,59 @@ def run(only=None):
     sys.exit(1 if fails else 0)
 
 
+TIER1_ACTIONS = {"open_app", "media", "end_session"}  # 1단 v1 처리 범위
+
+
+def run_tier1():
+    """케이스의 오디오만으로 1단 라우터를 오프라인 평가 — LLM·비용 없음.
+
+    출력: 케이스별 STT 결과와 라우팅 판정, 그리고 세 바구니 집계 —
+    즉시 처리(정답/오답), 승격(정상 — 1단 범위 밖), 미스(1단 범위인데 승격).
+    """
+    import wave as wavmod
+
+    import numpy as np
+
+    import brain
+    from router import Router
+
+    r = Router(brain.WAKE_WORD)
+    dirs = [d for d in sorted(CASES.iterdir()) if d.is_dir() and (d / "expected.json").exists()] \
+        if CASES.exists() else []
+    if not dirs:
+        sys.exit("라벨된 케이스 없음 — EVAL_CAPTURE=1로 수집 후 expected.json을 채우세요")
+    hit_ok = hit_bad = escal = miss = 0
+    lat = []
+    for d in dirs:
+        expected = json.loads((d / "expected.json").read_text(encoding="utf-8"))
+        meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        with wavmod.open(str(d / "audio.wav")) as w:
+            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        text, sec = r.transcribe(audio)
+        lat.append(sec)
+        hit = r.route(text, meta.get("session", False))
+        in_scope = expected.get("is_command", True) and expected.get("action") in TIER1_ACTIONS
+        if hit:
+            ok, bad = match(expected, hit)
+            hit_ok += ok; hit_bad += not ok
+            mark = "정답" if ok else "오답 — " + "; ".join(bad)
+            print(f"[즉시:{mark}] {d.name} ({sec:.2f}s) {text!r}")
+        else:
+            miss += in_scope; escal += not in_scope
+            print(f"[{'미스(1단 범위인데 승격)' if in_scope else '승격(정상)'}] {d.name} ({sec:.2f}s) {text!r}")
+    total = len(dirs)
+    print(f"\n총 {total}건 — 즉시 처리 {hit_ok + hit_bad} (정답 {hit_ok} / 오답 {hit_bad}), "
+          f"정상 승격 {escal}, 미스 {miss}")
+    print(f"STT 지연: 중앙값 {sorted(lat)[len(lat) // 2]:.2f}s, 최대 {max(lat):.2f}s")
+    if hit_bad:
+        sys.exit(1)  # 즉시 처리가 틀리는 건 위험 — 오답 0이 합격선
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
+    elif "--tier1" in sys.argv:
+        run_tier1()
     else:
         only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
         run(only)
