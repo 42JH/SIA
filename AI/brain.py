@@ -355,6 +355,8 @@ class Brain(threading.Thread):
         self.session_until = 0.0
         self._pending = None  # (확인 질문, 종류, 만료 시각)
         self._client = None
+        self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
+        self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         key = load_api_key()
         if key:
             from google import genai
@@ -401,8 +403,19 @@ class Brain(threading.Thread):
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
                                       session=t_utter < self.session_until, **audio_stats(audio))
                         continue
-                result = self._ask(audio, full_img, crop_img, t_utter, dom)
-                log_utterance(gate="llm", speaker_sim=round(sim, 3) if sim is not None else None,
+                # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
+                # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
+                result, stt_draft, tier = None, None, 2
+                if not (self._pending and t_utter < self._pending[2]):
+                    r1 = self._try_router(audio, t_utter)
+                    if isinstance(r1, dict):
+                        result, tier = r1, 1
+                    else:
+                        stt_draft = r1  # STT 초안(승격 힌트) 또는 None(라우터 비활성)
+                if result is None:
+                    result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
+                log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
+                              speaker_sim=round(sim, 3) if sim is not None else None,
                               session=t_utter < self.session_until,
                               audio_is_speech=result.get("audio_is_speech"),
                               wake_heard=result.get("wake_heard"),
@@ -417,8 +430,31 @@ class Brain(threading.Thread):
             finally:
                 self.busy -= 1
 
+    def _try_router(self, audio, t_utter):
+        """1단 라우터 시도 — 액션 dict(즉시 실행) / STT 초안 str(승격 힌트) /
+        None(라우터 사용 불가). 어떤 오류도 2단 승격으로 흡수한다."""
+        if self._router_dead:
+            return None
+        if self.router is None:
+            try:
+                from router import Router
+
+                self.router = Router(WAKE_WORD)
+            except Exception as e:
+                self._router_dead = True
+                print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
+                return None
+        try:
+            text, sec = self.router.transcribe(audio)
+            hit = self.router.route(text, t_utter < self.session_until)
+            print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
+            return hit or (text or None)
+        except Exception as e:
+            print(f"[1단 오류 → 승격] {e}")
+            return None
+
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---
-    def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None):
+    def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None, stt_draft=None):
         from google.genai import types
 
         t_utter = t_utter or time.monotonic()
@@ -435,6 +471,8 @@ class Brain(threading.Thread):
                                                mime_type="image/jpeg"))
         if dom:  # 크롬 확장이 준 실측 컨텍스트 — 텍스트 이해의 참고자료(명령 아님)
             parts.append(dom_context_part(dom))
+        if stt_draft:  # 1단 STT 초안 — 판정 기준은 오디오, 초안은 힌트 (오인식 가능)
+            parts.append(f"로컬 STT 초안(오인식 가능, 참고용 힌트): {stt_draft}")
         parts.append(prompt)
         cfg = dict(response_mime_type="application/json", temperature=0.1)
         if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
