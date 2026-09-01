@@ -1,0 +1,25 @@
+#!/bin/sh
+# 푸시 전 AI 파트 자동 검증 — "깜빡하고 테스트 안 돌림"을 원천 차단.
+# 활성화(클론당 1회, 선택): git config core.hooksPath .githooks
+# 푸시되는 커밋이 AI/ 를 건드릴 때만 실행되므로 타 파트 푸시는 영향 없음.
+root="$(git rev-parse --show-toplevel)"
+zero=0000000000000000000000000000000000000000
+touched=0
+while read local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue          # 브랜치 삭제 푸시
+  if [ "$remote_sha" = "$zero" ]; then
+    touched=1                                      # 새 브랜치 — 안전하게 실행
+  elif git diff --name-only "$remote_sha..$local_sha" 2>/dev/null | grep -q "^AI/"; then
+    touched=1
+  fi
+done
+[ "$touched" = "1" ] || exit 0
+
+cd "$root/AI" || exit 0
+PY="../.venv/Scripts/python.exe"
+[ -f "$PY" ] || PY=python
+echo "[pre-push] AI 검증: test_core + 셀프테스트 2종"
+"$PY" test_core.py && "$PY" eval_prompt.py --selftest && "$PY" router.py --selftest || {
+  echo "[pre-push] 검증 실패 — 푸시 중단 (우회는 --no-verify, 단 사유가 있어야 함)"
+  exit 1
+}
