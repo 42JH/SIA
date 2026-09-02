@@ -297,6 +297,8 @@ def test_dom_bridge():
         assert False, "토큰 없이 통과됨"
     except urllib.error.HTTPError as e:
         assert e.code == 403
+    except ConnectionError:
+        pass  # 윈도우에서 서버가 403 응답 전에 연결을 끊는 경우가 있음 — 거부는 거부
     assert b.context() is None  # 거부됐으니 저장 안 됨
     # 올바른 토큰 → 수신
     ok = urllib.request.Request("http://127.0.0.1:18877/context", data=body,
