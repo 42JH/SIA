@@ -132,6 +132,23 @@ class ToolGateTest {
     }
 
     @Test
+    @DisplayName("인자 형식 오류는 INVALID_REQUEST 코드로 나가되 outcome 은 FAILED 로 기록된다")
+    void invalidRequestKeepsItsCodeButRecordsFailed() {
+        when(sessionService.activeOrNull()).thenReturn(null);
+
+        ToolResult result = gate.run("context.get", Map.of(), Caller.LLM, () -> {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "포그라운드 창이 없습니다");
+        });
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.code()).isEqualTo("INVALID_REQUEST");
+        assertThat(result.message()).isEqualTo("포그라운드 창이 없습니다");
+        // 정책 게이트가 막은 게 아니다 — tool_call.outcome 의 CHECK 제약도 세 값뿐이다
+        verify(recorder).record(eq("context.get"), any(), eq(Caller.LLM),
+                eq("FAILED"), any(), isNull(), anyLong());
+    }
+
+    @Test
     @DisplayName("일반 예외는 일반 문구로 감추고 원인은 기록에만 남긴다")
     void genericExceptionIsMaskedButRecorded() {
         when(sessionService.activeOrNull()).thenReturn(null);

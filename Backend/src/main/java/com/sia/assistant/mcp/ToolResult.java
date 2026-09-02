@@ -25,4 +25,12 @@ public record ToolResult(boolean ok, Object data, String code, String message) {
     public static ToolResult failed(String message) {
         return new ToolResult(false, null, "FAILED", message);
     }
+
+    /**
+     * 인자 형식 오류 — LLM 이 "재시도할 게 아니라 인자를 고쳐야 한다"를 구분할 수 있게 FAILED 와 나눈다
+     * (API 명세 §3.1). 정책 게이트가 막은 게 아니므로 tool_call.outcome 은 그대로 FAILED 다.
+     */
+    public static ToolResult invalid(String message) {
+        return new ToolResult(false, null, "INVALID_REQUEST", message);
+    }
 }

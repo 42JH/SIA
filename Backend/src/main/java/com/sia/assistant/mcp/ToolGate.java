@@ -2,6 +2,7 @@ package com.sia.assistant.mcp;
 
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.BlockedException;
+import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.logging.ToolCallRecorder;
 import com.sia.assistant.session.SessionService;
 import java.util.Map;
@@ -57,13 +58,15 @@ public class ToolGate {
                     System.currentTimeMillis() - t0);
             return ToolResult.blocked(e.code.name(), e.getMessage());
         } catch (Exception e) {
+            boolean invalidArgs = e instanceof ApiException api && api.code == ErrorCode.INVALID_REQUEST;
             String message = e instanceof ApiException api && api.getMessage() != null
                     ? api.getMessage()
                     : "도구 실행에 실패했습니다";
             String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            // 인자 형식 오류도 정책 차단이 아니므로 outcome 은 FAILED 다 — 나뉘는 건 LLM 이 읽는 code 뿐이다.
             recorder.record(tool, safeArgs, caller, "FAILED", reason, sessionId,
                     System.currentTimeMillis() - t0);
-            return ToolResult.failed(message);
+            return invalidArgs ? ToolResult.invalid(message) : ToolResult.failed(message);
         }
     }
 }

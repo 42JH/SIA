@@ -64,14 +64,16 @@ class ScreenToolsTest {
     }
 
     @Test
-    @DisplayName("좌표가 하나라도 빠지면 FAILED 로 환원되고 캡처는 일어나지 않는다")
+    @DisplayName("좌표가 하나라도 빠지면 INVALID_REQUEST 로 환원되고 캡처는 일어나지 않는다")
     void missingCoordinateFails() {
         ToolResult result = tools.captureRegionResult(6, 1, null, 4);
 
         assertThat(result.ok()).isFalse();
-        assertThat(result.code()).isEqualTo("FAILED");
+        // 인자 형식 오류다 — LLM 이 "재시도"가 아니라 "인자를 고쳐 다시 호출"로 읽어야 한다 (API 명세 §3.1)
+        assertThat(result.code()).isEqualTo("INVALID_REQUEST");
         assertThat(result.message()).contains("x1, y1, x2, y2");
         verifyNoInteractions(captureService);
+        // 정책 게이트가 막은 게 아니므로 기록의 outcome 은 그대로 FAILED 다
         verify(recorder).record(eq("screen.capture_region"), any(), eq(Caller.LLM),
                 eq("FAILED"), any(), eq(5L), anyLong());
     }

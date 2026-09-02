@@ -125,7 +125,8 @@ public class GestureExecutor {
         }
         // CONFIRM_PENDING 은 더 이상 나오지 않는다 — BE 확인 게이트가 없고,
         // 애초에 C 도구는 제스처 매크로에 넣을 수 없다(GestureService.validateSteps).
-        return "FAILED".equals(r.code()) ? "FAILED" : "BLOCKED";
+        // INVALID_REQUEST(인자 형식 오류)도 정책 차단이 아니라 실패다 — ToolGate 의 기록과 어휘를 맞춘다.
+        return "FAILED".equals(r.code()) || "INVALID_REQUEST".equals(r.code()) ? "FAILED" : "BLOCKED";
     }
 
     private void sendResult(String name, boolean ok, String message, List<Map<String, Object>> steps) {
