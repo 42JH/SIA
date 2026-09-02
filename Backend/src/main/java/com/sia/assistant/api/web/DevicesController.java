@@ -39,7 +39,7 @@ public class DevicesController {
     /** 본문 {kind: "mic"|"camera", deviceLabel} → {kind, deviceLabel, activated: {...}|null, matches: [...]} */
     @PostMapping("/api/devices/remap")
     public Map<String, Object> remap(@RequestBody String raw) {
-        JsonNode body = JsonBody.parse(om, raw);
+        JsonNode body = JsonBody.parseObject(om, raw);
         String kind = body.path("kind").asText("");
         String deviceLabel = body.path("deviceLabel").asText("");
         if (deviceLabel.isBlank()) {

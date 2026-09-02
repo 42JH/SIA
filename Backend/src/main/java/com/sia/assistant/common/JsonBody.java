@@ -30,4 +30,18 @@ public final class JsonBody {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "본문이 올바른 JSON 이 아닙니다");
         }
     }
+
+    /**
+     * 필드를 바로 읽는 컨트롤러용 — 빈 본문이나 객체가 아닌 본문은 null 역참조(500)가 아니라 INVALID_REQUEST 다.
+     */
+    public static JsonNode parseObject(ObjectMapper om, String body) {
+        JsonNode node = parse(om, body);
+        if (node == null) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "본문이 비어 있습니다");
+        }
+        if (!node.isObject()) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "본문은 JSON 객체여야 합니다");
+        }
+        return node;
+    }
 }

@@ -54,7 +54,7 @@ public class CalibProfileController {
     /** 이름 변경 — {"name": "..."} */
     @PatchMapping("/{id}")
     public ResponseEntity<Void> rename(@PathVariable long id, @RequestBody String raw) {
-        calibProfiles.rename(id, JsonBody.parse(om, raw).path("name").asText(null));
+        calibProfiles.rename(id, JsonBody.parseObject(om, raw).path("name").asText(null));
         return ResponseEntity.noContent().build();
     }
 

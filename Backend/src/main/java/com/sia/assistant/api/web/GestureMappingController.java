@@ -100,7 +100,7 @@ public class GestureMappingController {
     /** 켜기/끄기 토글 — 본문 {"enabled": true|false}. 기본 제스처에도 허용된다. */
     @PatchMapping("/{id}")
     public ResponseEntity<Void> toggle(@PathVariable long id, @RequestBody String raw) {
-        JsonNode body = JsonBody.parse(om, raw);
+        JsonNode body = JsonBody.parseObject(om, raw);
         if (!body.has("enabled") || !body.path("enabled").isBoolean()) {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "enabled(true|false) 가 필요합니다");
         }
@@ -114,7 +114,7 @@ public class GestureMappingController {
      */
     @PutMapping("/{id}")
     public Map<String, Object> update(@PathVariable long id, @RequestBody String raw) {
-        JsonNode body = JsonBody.parse(om, raw);
+        JsonNode body = JsonBody.parseObject(om, raw);
         List<GestureService.Step> steps = null;
         if (body.has("steps")) {
             steps = new ArrayList<>();

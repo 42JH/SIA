@@ -60,7 +60,7 @@ public class VoiceProfileController {
     /** 이름 변경 — {"name": "..."} */
     @PatchMapping("/api/voices/{id}")
     public ResponseEntity<Void> rename(@PathVariable long id, @RequestBody String raw) {
-        voiceProfiles.rename(id, JsonBody.parse(om, raw).path("name").asText(null));
+        voiceProfiles.rename(id, JsonBody.parseObject(om, raw).path("name").asText(null));
         return ResponseEntity.noContent().build();
     }
 
