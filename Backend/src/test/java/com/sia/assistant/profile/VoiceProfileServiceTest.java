@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Times;
+import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.ws.AgentHub;
 import java.nio.file.Path;
 import java.util.List;
@@ -20,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
@@ -32,9 +36,11 @@ class VoiceProfileServiceTest {
     private SingleConnectionDataSource ds;
     private JdbcTemplate jdbc;
     private AgentHub agentHub;
+    private AgentSyncNotifier notifier;
     private VoiceProfileService service;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp(@TempDir Path dir) {
         // 단일 커넥션 — saveNew 가 INSERT 직후 last_insert_rowid() 를 같은 커넥션에서 읽어야 한다
         // (운영은 @Transactional 이 커넥션을 고정한다).
@@ -42,7 +48,10 @@ class VoiceProfileServiceTest {
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         jdbc = new JdbcTemplate(ds);
         agentHub = mock(AgentHub.class);
-        service = new VoiceProfileService(jdbc, agentHub);
+        notifier = mock(AgentSyncNotifier.class);
+        ObjectProvider<AgentSyncNotifier> notifierProvider = mock(ObjectProvider.class);
+        when(notifierProvider.getIfAvailable()).thenReturn(notifier);
+        service = new VoiceProfileService(jdbc, agentHub, notifierProvider);
     }
 
     @AfterEach
@@ -102,6 +111,18 @@ class VoiceProfileServiceTest {
         List<Map<String, Object>> items = service.list();
         assertThat(items).allSatisfy(m -> assertThat(m.get("lastUsedAt")).isNotNull());
         assertThat(items.get(0)).containsEntry("id", second); // 사용 중이 목록 맨 앞
+    }
+
+    @Test
+    @DisplayName("활성 교체는 voice_changed 에 이어 settings_changed 도 보낸다 — AI 가 후자만 들어도 놓치지 않는다")
+    void activateAlsoNotifiesSettingsChanged() {
+        long first = save(null, "mic");   // 첫 저장이 자동 활성 → 여기서 이미 1회
+        long second = save(null, "mic");
+
+        service.activate(second);
+
+        verify(agentHub, times(2)).send(eq("voice_changed"), any());
+        verify(notifier, times(2)).notifySettingsChanged();
     }
 
     @Test

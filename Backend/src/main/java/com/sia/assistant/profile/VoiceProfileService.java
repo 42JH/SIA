@@ -3,10 +3,12 @@ package com.sia.assistant.profile;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Times;
+import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.ws.AgentHub;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,10 +29,14 @@ public class VoiceProfileService {
 
     private final JdbcTemplate jdbc;
     private final AgentHub agentHub;
+    /** 활성 프로필이 바뀌면 blobs.voice 가 바뀐다 — settings_changed 도 함께 나간다. 순환은 지연 조회로 끊는다. */
+    private final ObjectProvider<AgentSyncNotifier> notifierProvider;
 
-    public VoiceProfileService(JdbcTemplate jdbc, AgentHub agentHub) {
+    public VoiceProfileService(JdbcTemplate jdbc, AgentHub agentHub,
+                               ObjectProvider<AgentSyncNotifier> notifierProvider) {
         this.jdbc = jdbc;
         this.agentHub = agentHub;
+        this.notifierProvider = notifierProvider;
     }
 
     // ------------------------------------------------------------------ 조회
@@ -262,11 +268,19 @@ public class VoiceProfileService {
         return rows.get(0);
     }
 
+    /**
+     * 활성 보이스 교체 통지. voice_changed 가 먼저 나가고, 이어서 settings_changed 로 전체 상태를 다시 실어 보낸다
+     * — AI 가 settings_changed 하나만 듣고 있어도 프로필 교체를 놓치지 않게 하는 계약이다 (프로토콜 §4.2).
+     */
     private void notifyVoiceChanged(long id, String sha256) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", id);
         body.put("sha256", sha256);
         agentHub.send("voice_changed", body);
+        AgentSyncNotifier notifier = notifierProvider.getIfAvailable();
+        if (notifier != null) {
+            notifier.notifySettingsChanged();
+        }
     }
 
     private Double avgAccuracySince(long id, String sinceOrNull) {

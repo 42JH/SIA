@@ -157,7 +157,10 @@ public class SettingsService {
                 seed, newVersion, Times.now());
     }
 
-    /** 설정·blob·프로필이 바뀔 때 에이전트에 보내는 공용 통지 — 페이로드 조립은 AgentSyncNotifier. */
+    /**
+     * 설정 저장·blob 변경 때 에이전트에 보내는 통지 — 페이로드 조립은 AgentSyncNotifier.
+     * 프로필 활성 교체·제스처 토글은 각 서비스가 AgentSyncNotifier 를 직접 부른다 (PROTOCOL.md §4.2).
+     */
     void notifySettingsChanged() {
         AgentSyncNotifier notifier = notifierProvider.getIfAvailable();
         if (notifier != null) {

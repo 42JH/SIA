@@ -5,12 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.Sha256;
 import com.sia.assistant.common.Times;
 import com.sia.assistant.config.DataDirs;
+import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.ws.AgentHub;
 import java.nio.file.Path;
 import java.util.List;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 
@@ -37,9 +40,11 @@ class GestureServiceTest {
     private SingleConnectionDataSource ds;
     private JdbcTemplate jdbc;
     private AgentHub agentHub;
+    private AgentSyncNotifier notifier;
     private GestureService service;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp(@TempDir Path dir) {
         // 단일 커넥션 — saveCustom 이 INSERT 직후 last_insert_rowid() 를 같은 커넥션에서 읽어야 한다
         ds = new SingleConnectionDataSource("jdbc:sqlite:" + dir.resolve("gestures-test.db"), true);
@@ -52,7 +57,11 @@ class GestureServiceTest {
         jdbc.update("INSERT INTO gesture (custom, kind, context, name, label, repeatable)"
                 + " VALUES (0, 'HAND', NULL, 'Open_Palm', '세션 연장', 0)");
         agentHub = mock(AgentHub.class);
-        service = new GestureService(jdbc, new ObjectMapper(), agentHub, new DataDirs(dir.toString()));
+        notifier = mock(AgentSyncNotifier.class);
+        ObjectProvider<AgentSyncNotifier> notifierProvider = mock(ObjectProvider.class);
+        when(notifierProvider.getIfAvailable()).thenReturn(notifier);
+        service = new GestureService(jdbc, new ObjectMapper(), agentHub, new DataDirs(dir.toString()),
+                notifierProvider);
     }
 
     @AfterEach
@@ -119,6 +128,21 @@ class GestureServiceTest {
         verify(agentHub).send(eq("gesture_removed"), removed.capture());
         assertThat(removed.getValue()).containsEntry("id", a).containsEntry("name", "하트");
         assertThat(service.customNpzRefs()).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("켜기/끄기는 gesture_toggled 에 이어 settings_changed 도 보낸다 — AI 가 후자만 들어도 놓치지 않는다")
+    void toggleAlsoNotifiesSettingsChanged() {
+        long canned = jdbc.queryForObject("SELECT id FROM gesture WHERE name = 'Open_Palm'", Long.class);
+
+        service.setEnabled(canned, false);
+
+        ArgumentCaptor<Map<String, Object>> toggled = ArgumentCaptor.forClass(Map.class);
+        verify(agentHub).send(eq("gesture_toggled"), toggled.capture());
+        assertThat(toggled.getValue()).containsEntry("name", "Open_Palm").containsEntry("enabled", false);
+        verify(notifier).notifySettingsChanged();
+        assertThat(service.disabledNames()).contains("Open_Palm");
     }
 
     @Test
