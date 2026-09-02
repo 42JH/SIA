@@ -182,6 +182,28 @@ class DashboardCardsControllerTest {
         assertThat(summaryOf(body).get("totalLaunches")).isEqualTo(3L);
     }
 
+    @Test
+    @DisplayName("등록 해제된 앱의 실행 기록도 카드에 남는다 — appKey 는 기록의 appRef 에서 복원한다")
+    void deletedAppStaysInCardWithAppKey() {
+        long chrome = app("chrome", "크롬");
+        launchWithArgs(chrome, "{\"appRef\":\"app:chrome\"}", minutesAgo(5));
+        launchWithArgs(chrome, "{\"appRef\":\"app:chrome\"}", minutesAgo(6));
+        launchWithArgs(app("slack", "슬랙"), "{\"appRef\":\"app:slack\"}", minutesAgo(7));
+        jdbc.update("DELETE FROM app_target WHERE id = ?", chrome);   // DELETE /api/apps/chrome 과 같다
+
+        Map<String, Object> body = controller.apps("day", 10);
+        List<Map<String, Object>> items = castList(body.get("items"));
+        Map<String, Object> summary = summaryOf(body);
+
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0)).containsEntry("appKey", "chrome")
+                .containsEntry("displayName", "chrome")
+                .containsEntry("count", 2L);
+        assertThat(items.get(1)).containsEntry("appKey", "slack").containsEntry("displayName", "슬랙");
+        assertThat(summary.get("totalLaunches")).isEqualTo(3L);
+        assertThat(summary.get("topAppKey")).isEqualTo("chrome");
+    }
+
     // ------------------------------------------------------------------ 첫 화면
     @Test
     @DisplayName("overview 는 카드 4개를 한 번에 준다")
@@ -218,6 +240,12 @@ class DashboardCardsControllerTest {
         jdbc.update("INSERT INTO tool_call (session_id, app_target_id, tool_name, ts, args_json,"
                         + " caller, outcome) VALUES (NULL, ?, 'app.launch', ?, '{}', 'LLM', ?)",
                 appTargetId, Times.of(at), outcome);
+    }
+
+    private void launchWithArgs(long appTargetId, String argsJson, Instant at) {
+        jdbc.update("INSERT INTO tool_call (session_id, app_target_id, tool_name, ts, args_json,"
+                        + " caller, outcome) VALUES (NULL, ?, 'app.launch', ?, ?, 'LLM', 'EXECUTED')",
+                appTargetId, Times.of(at), argsJson);
     }
 
     private static Instant minutesAgo(int m) {

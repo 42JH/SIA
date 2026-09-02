@@ -275,18 +275,24 @@ public class DashboardCardsController {
         Spec spec = DashboardBuckets.of(period, zone);
         int cap = Math.max(1, Math.min(20, limit));
 
+        // 등록 해제(DELETE /api/apps/{appKey})는 hard delete 라 tool_call.app_target_id 가 NULL 로 풀린다.
+        // 그래도 실행 기록은 카드에 남아야 하므로(문서 §1.23) LEFT JOIN 하고, 키는 기록된 인자 appRef("app:키")에서 복원한다.
+        String keyExpr = "COALESCE(a.app_key, CASE WHEN json_extract(tc.args_json, '$.appRef') LIKE 'app:%'"
+                + " THEN substr(json_extract(tc.args_json, '$.appRef'), 5) END)";
         List<Map<String, Object>> all = jdbc.query(
-                "SELECT a.app_key AS k, a.display_name AS n, COUNT(*) AS c"
-                        + " FROM tool_call tc JOIN app_target a ON a.id = tc.app_target_id"
+                "SELECT " + keyExpr + " AS k, MAX(a.display_name) AS n, COUNT(*) AS c"
+                        + " FROM tool_call tc LEFT JOIN app_target a ON a.id = tc.app_target_id"
                         + " WHERE tc.ts >= ? AND tc.ts < ?"
                         + "   AND tc.tool_name = 'app.launch' AND tc.outcome = 'EXECUTED'"
-                        + " GROUP BY a.id ORDER BY c DESC, a.app_key",
+                        + " GROUP BY " + keyExpr + " ORDER BY c DESC, k",
                 (rs, i) -> {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("appKey", rs.getString("k"));
-                    // 등록이 해제됐으면 app_key 를 그대로 쓴다
+                    String key = rs.getString("k");
+                    row.put("appKey", key);
+                    // 등록이 해제됐으면 app_key 를 그대로 표시한다 (appRef 도 없는 기록은 이름을 알 수 없다)
                     String name = rs.getString("n");
-                    row.put("displayName", name == null || name.isBlank() ? rs.getString("k") : name);
+                    row.put("displayName", name == null || name.isBlank()
+                            ? (key != null ? key : "등록 해제된 앱") : name);
                     row.put("count", rs.getLong("c"));
                     return row;
                 }, DashboardBuckets.utc(spec.from()), DashboardBuckets.utc(spec.to()));
