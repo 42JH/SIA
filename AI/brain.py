@@ -293,13 +293,25 @@ def audio_stats(audio_i16):
             "rms": round(float(np.sqrt(np.mean(a ** 2))), 1)}
 
 
-def load_api_key():
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
+def load_api_keys():
+    """API 키 목록 — 환경변수 GEMINI_API_KEY(콤마 구분 가능) 또는
+    gemini_api_key.txt(줄당 하나). 무료 티어 쿼터에 걸리면 다음 키로 넘어간다."""
+    raw = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not raw:
         f = HERE / "gemini_api_key.txt"
         if f.exists():
-            key = f.read_text(encoding="utf-8").strip()
-    return key or None
+            raw = f.read_text(encoding="utf-8")
+    return [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
+
+
+def load_api_key():
+    keys = load_api_keys()
+    return keys[0] if keys else None
+
+
+def is_quota_error(e):
+    s = str(e)
+    return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
 
 
 def wav_bytes(audio_i16, sr=16000):
@@ -357,12 +369,14 @@ class Brain(threading.Thread):
         self._client = None
         self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
-        key = load_api_key()
-        if key:
+        self._keys = load_api_keys()
+        self._key_i = 0
+        if self._keys:
             from google import genai
 
-            self._client = genai.Client(api_key=key)
-            print(f"Gemini 연결됨 (모델 {MODEL}, 호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
+            self._client = genai.Client(api_key=self._keys[0])
+            print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
+                  f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
         else:
             print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
@@ -478,9 +492,22 @@ class Brain(threading.Thread):
         if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
             cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         t0 = time.monotonic()
-        resp = self._client.models.generate_content(
-            model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
-        )
+        for attempt in range(max(1, len(self._keys))):
+            try:
+                resp = self._client.models.generate_content(
+                    model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
+                )
+                break
+            except Exception as e:
+                # 쿼터 소진이고 남은 키가 있으면 다음 키로 재시도
+                if is_quota_error(e) and len(self._keys) > 1 and attempt < len(self._keys) - 1:
+                    self._key_i = (self._key_i + 1) % len(self._keys)
+                    from google import genai
+
+                    self._client = genai.Client(api_key=self._keys[self._key_i])
+                    print(f"쿼터 소진 → 키 {self._key_i + 1}/{len(self._keys)}로 전환")
+                    continue
+                raise
         text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
         result = json.loads(text)
         print(f"[{time.monotonic() - t0:.1f}s] {result.get('transcript', '')!r} → "
