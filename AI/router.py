@@ -43,6 +43,12 @@ MEDIA_KO = [  # (키워드들, media_key, say)
 
 END_KO = ("그만", "이제 됐어", "이제됐어", "들어가", "쉬어")
 
+# 호출어의 STT 흔한 오표기 — 동음·유사 발음만 (실측 기반으로 추가)
+# NOTE(튜닝): 미인식↑면 변형을 추가하고, 엉뚱한 발화가 통과하면 뺀다.
+# 짧은 변형("시아"·"시야")은 시아버지·시야 같은 일상 단어에 오탐하므로 넣지 않는다
+WAKE_VARIANTS = {"시아야": ("시아야", "시야야", "씨아야"),
+                 "자비스": ("자비스", "쟈비스", "자비수")}
+
 
 def _compact(text):
     return re.sub(r"[^\w]", "", text)
@@ -50,7 +56,8 @@ def _compact(text):
 
 class Router:
     def __init__(self, wake_word):
-        self.wake = _compact(wake_word)
+        self.wakes = tuple(_compact(w) for w in
+                           WAKE_VARIANTS.get(wake_word, (wake_word,)))
         self._model = None
 
     def transcribe(self, audio_i16):
@@ -76,7 +83,7 @@ class Router:
         c = _compact(text)
         if any(_compact(d) in c for d in DEICTIC) or any(a in c for a in ASK):
             return None  # 화면·생성이 필요 — LLM 몫
-        wake = self.wake in c
+        wake = any(w in c for w in self.wakes)
         if not (wake or session_active):
             return None  # 호출어도 세션도 없음 — 기각 판단은 LLM이 (오인식 방어)
 
@@ -95,15 +102,15 @@ class Router:
 
 
 def selftest():
-    r = Router("자비스")
-    hit = r.route("자비스 계산기 열어줘", False)
+    r = Router("시아야")
+    hit = r.route("시아야 계산기 열어줘", False)
     assert hit and hit["action"] == "open_app" and hit["app"] == "calc" and hit["wake_heard"]
     hit = r.route("음소거 해줘", True)  # 세션 중엔 호출어 없이도
     assert hit and hit["action"] == "media" and hit["media_key"] == "mute"
     assert r.route("계산기 열어줘", False) is None       # 호출어도 세션도 없음 → 승격
-    assert r.route("자비스 이거 저장해줘", False) is None  # 지시어 → 승격
-    assert r.route("자비스 이 문서 요약해줘", False) is None  # 생성 필요 → 승격
-    assert r.route("자비스 아까 그 파일 다시 띄워봐", False) is None  # 사전 밖 → 승격
+    assert r.route("시아야 이거 저장해줘", False) is None  # 지시어 → 승격
+    assert r.route("시아야 이 문서 요약해줘", False) is None  # 생성 필요 → 승격
+    assert r.route("시아야 아까 그 파일 다시 띄워봐", False) is None  # 사전 밖 → 승격
     hit = r.route("이제 그만", True)
     assert hit and hit["action"] == "end_session"
     assert r.route("그만", False) is None  # 세션 없는 '그만'은 승격
