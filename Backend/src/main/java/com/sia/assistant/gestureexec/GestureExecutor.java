@@ -3,8 +3,10 @@ package com.sia.assistant.gestureexec;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.context.ContextService;
 import com.sia.assistant.mcp.Caller;
+import com.sia.assistant.mcp.ToolCatalog;
 import com.sia.assistant.mcp.ToolInvoker;
 import com.sia.assistant.mcp.ToolResult;
+import com.sia.assistant.session.SessionService;
 import com.sia.assistant.settings.GestureService;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.FeHub;
@@ -32,6 +34,7 @@ public class GestureExecutor {
     private final GestureService gestureService;
     private final ContextService contextService;
     private final ToolInvoker toolInvoker;
+    private final SessionService sessionService;
     private final AgentHub agentHub;
     private final FeHub feHub;
 
@@ -42,10 +45,12 @@ public class GestureExecutor {
     });
 
     public GestureExecutor(GestureService gestureService, ContextService contextService,
-                           ToolInvoker toolInvoker, AgentHub agentHub, FeHub feHub) {
+                           ToolInvoker toolInvoker, SessionService sessionService,
+                           AgentHub agentHub, FeHub feHub) {
         this.gestureService = gestureService;
         this.contextService = contextService;
         this.toolInvoker = toolInvoker;
+        this.sessionService = sessionService;
         this.agentHub = agentHub;
         this.feHub = feHub;
     }
@@ -72,6 +77,12 @@ public class GestureExecutor {
             // BE 도 실행을 막는다 — 켜기/끄기의 최종 집행 지점은 여기다.
             if (!def.enabled()) {
                 sendResult(name, false, "꺼져 있는 제스처예요. 제스처 목록에서 켠 뒤 사용할 수 있습니다", stepResults);
+                return;
+            }
+            // 세션 게이트는 매크로 단위다 — S 도구가 하나라도 있으면 첫 스텝 전에 확인한다 (프로토콜 §8.6).
+            // 스텝마다 검사하면 앞 스텝이 이미 실행된 뒤 중간에서 막혀 반쯤 실행된 매크로가 남는다.
+            if (needsSession(def) && sessionService.activeOrNull() == null) {
+                sendResult(name, false, "세션이 활성화되지 않았습니다", stepResults);
                 return;
             }
 
@@ -106,6 +117,14 @@ public class GestureExecutor {
             log.warn("제스처 {} 실행 실패", name, e);
             sendResult(name, false, "제스처 실행 중 오류가 발생했습니다", stepResults);
         }
+    }
+
+    /** 매크로에 S 도구가 하나라도 있는가 — 카탈로그에 없는 이름은 어차피 스텝에서 failed 로 걸린다. */
+    private static boolean needsSession(GestureService.GestureDef def) {
+        return def.steps().stream().anyMatch(s -> {
+            ToolCatalog.ToolSpec spec = ToolCatalog.spec(s.tool());
+            return spec != null && spec.sessionRequired();
+        });
     }
 
     private static Map<String, Object> stepEntry(String tool, ToolResult r) {
