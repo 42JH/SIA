@@ -67,10 +67,11 @@ def run(only=None):
 
     import brain
 
-    key = brain.load_api_key()
-    if not key:
+    keys = brain.load_api_keys()
+    if not keys:
         sys.exit("GEMINI_API_KEY 없음 — 환경변수 또는 gemini_api_key.txt")
-    client = genai.Client(api_key=key)
+    ki = 0
+    client = genai.Client(api_key=keys[ki])
 
     # synth_(TTS) 케이스는 1단 평가 전용 — TTS 기계음은 화자 게이트·기계음
     # 기각 판정과 얽혀서 LLM 회귀에서는 제외한다 (--tier1에서만 채점).
@@ -103,14 +104,23 @@ def run(only=None):
         if "lite" not in brain.MODEL:
             cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         t0 = time.monotonic()
-        try:
-            resp = client.models.generate_content(
-                model=brain.MODEL, contents=parts, config=types.GenerateContentConfig(**cfg))
-            text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-            result = json.loads(text)
-            ok, bad = match(expected, result)
-        except Exception as e:
-            ok, bad, result = False, [f"호출 실패: {e}"], {}
+        result, err = {}, None
+        for attempt in range(max(1, len(keys))):
+            try:
+                resp = client.models.generate_content(
+                    model=brain.MODEL, contents=parts, config=types.GenerateContentConfig(**cfg))
+                text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
+                result = json.loads(text)
+                break
+            except Exception as e:
+                if brain.is_quota_error(e) and len(keys) > 1 and attempt < len(keys) - 1:
+                    ki = (ki + 1) % len(keys)
+                    client = genai.Client(api_key=keys[ki])
+                    print(f"쿼터 소진 → 키 {ki + 1}/{len(keys)}로 전환")
+                    continue
+                err = e
+                break
+        ok, bad = (False, [f"호출 실패: {err}"]) if err else match(expected, result)
         if not ok:
             fails.append(d.name)
         print(f"[{'PASS' if ok else 'FAIL'}] {d.name} ({time.monotonic() - t0:.1f}s)"
