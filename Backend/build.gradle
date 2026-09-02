@@ -6,7 +6,6 @@ plugins {
 
 group = 'com.sia'
 version = '0.1.0'
-description = 'sia-assistant'
 
 java {
     toolchain {
@@ -32,10 +31,21 @@ dependencies {
     // Boot 4 웹 스타터는 Jackson 을 전이시키지 않는다 — ObjectMapper 직접 사용(runtime.json 등)의 명시 의존성
     implementation 'com.fasterxml.jackson.core:jackson-databind'
 
+    // MCP 서버 (LLM 도구 호출 경로)
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
+
     // Boot 4 는 기술별 자동구성이 모듈로 분리됐다 — flyway-core 단독으로는 마이그레이션이 돌지 않는다
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
     runtimeOnly 'org.xerial:sqlite-jdbc'
-    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
+
+    // Windows 제어 (User32/Kernel32)
+    implementation 'net.java.dev.jna:jna-platform:5.14.0'
+
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
+
+    // 미리보기 webm 인코딩 — ffmpeg 바이너리 번들 (+약 30MB, 배포 명세 합의 반영)
+    implementation 'ws.schild:jave-core:3.5.0'
+    runtimeOnly 'ws.schild:jave-nativebin-win64:3.5.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
