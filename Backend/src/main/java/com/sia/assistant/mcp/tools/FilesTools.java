@@ -76,7 +76,7 @@ public class FilesTools {
             annotations = @McpTool.McpAnnotations(destructiveHint = false))
     public CallToolResult save(
             @McpToolParam(required = true, description = "저장할 파일 이름 (예: 메모.txt)") String name,
-            @McpToolParam(required = true, description = "파일에 저장할 텍스트 내용") String content) {
+            @McpToolParam(required = false, description = "파일에 저장할 텍스트 내용 (생략하면 빈 파일)") String content) {
         return mcp.of(saveResult(name, content));
     }
 
