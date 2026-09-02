@@ -4,16 +4,6 @@
 > **동작의 정의는 확정 와이어프레임 + 시퀀스 다이어그램 4장**(`docs/외부자료/`, 2026-09-01 확정),
 > **스키마의 정의는 `docs/ERD.sql`**, **FE·AI 가 붙는 계약의 정의는 `docs/API.md`** 다.
 
-## 문서
-
-| 문서 | 무엇 |
-|---|---|
-| [`docs/API.md`](docs/API.md) | **현행 계약 — FE·AI 는 이 문서만 보고 붙는다.** REST 전량 · WS 3채널 · MCP 도구 27개 · 부록 B(구현과의 차이) |
-| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | 다이어그램·와이어프레임을 전송 계약으로 옮긴 원본(2026-09-01 개정). 구→신 이벤트 대응표는 §6 |
-| [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) | 모듈 경계와 동결 시그니처 (내부 개발용) |
-| [`docs/ERD.sql`](docs/ERD.sql) | 확정 ERD (ERDCloud import 소스). SQLite 각색본은 `V1__init_schema.sql` |
-| [`docs/외부자료/`](docs/외부자료) | ★확정 와이어프레임(`WIREFRAME.svg`) + 시퀀스 다이어그램 4장 — 01 기동 · 02 발화 처리 · 03 커스텀 제스처 · 04 캘리브레이션/화자 등록 |
-
 ## 스택
 
 | 항목 | 값 | 비고 |
@@ -77,7 +67,7 @@ com.sia.assistant
 ├── relay/         온보딩 등록 중계(호출어 10샘플·명령 5문장) + AI 동기화 페이로드 조립(AgentSyncNotifier)
 ├── profile/       ★보이스·시선 보정 프로필 (각 최대 4개 — 사용 1·스톡 3, 장비 맵핑, 프로필별 정확도)
 ├── model/         HuggingFace 다운로드·sha256 검증·진행률 (01) — 목록 models.json 은 아직 빈 배열
-├── mcp/           ToolCatalog(25)·ToolGate·RefResolver·ToolInvoker + tools/
+├── mcp/           ToolCatalog(27)·ToolGate·RefResolver·ToolInvoker + tools/
 ├── context/       컨텍스트 체인 판별 (video·youtube·explorer …)
 ├── domtext/       확장 왕복 — requestId 상관, 4초 타임아웃, 20,000자 컷
 ├── session/       세션 타이머 — BE 소유, 만료를 능동 push (ACTIVE/PASSIVE + deadlineMs)
@@ -142,7 +132,7 @@ com.sia.assistant
 
 ## 검증
 
-- `./gradlew test` — 30개 클래스 171개 통과 (2026-09-02, 커스텀 제스처 템플릿을 제스처별 npz 로 전환한 뒤 실행. 스키마가 바뀌어 `build/test-data/sia-test.db` 를 지우고 돌렸다).
+- `./gradlew test` — 34개 클래스 198개 통과 (2026-09-02).
 - 기동 스모크 기록(2026-08-27~28, 도구가 25개이던 시점): Flyway 적용, MCP `initialize`→`tools/list`,
   `context.get` 실창 열거, `files.delete` 휴지통 이동, WS `hello`→`recognition_start`→세션 수명주기,
   `gesture_exec` 매크로 실행, 탐색기 항목 bounds 12/12, 확장 `/ws/ext` 왕복, `GET /api/apps/scan` 103건.
