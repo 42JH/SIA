@@ -1,5 +1,6 @@
 package com.sia.assistant.settings;
 
+import com.sia.assistant.control.process.DefaultAppTargets;
 import com.sia.assistant.profile.CalibProfileService;
 import com.sia.assistant.profile.VoiceProfileService;
 import com.sia.assistant.session.SessionService;
@@ -16,7 +17,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 전체 삭제(DELETE /api/data).
- * FK 역순으로 지우고, 기본 제스처 매핑 11건(DefaultMappings)을 되살린 뒤, 설정을 시드로 되돌린다.
+ * FK 역순으로 지우고, 기본 제스처 매핑 11건(DefaultMappings)과 Windows 기본 앱(DefaultAppTargets)을
+ * 되살린 뒤, 설정을 시드로 되돌린다.
  * 에이전트에는 wipe(로컬 캐시 삭제), FE 에는 settings_sync 를 통지한다.
  */
 @Service
@@ -62,7 +64,9 @@ public class WipeService {
             voiceProfileService.deleteAll();
             calibProfileService.deleteAll();
             int seeded = DefaultMappings.seedInto(jdbc);
-            log.info("전체 삭제 완료 — 기본 매핑 {}건과 시드 설정으로 복원했습니다", seeded);
+            int apps = DefaultAppTargets.seedInto(jdbc);
+            log.info("전체 삭제 완료 — 기본 매핑 {}건, Windows 기본 앱 {}건과 시드 설정으로 복원했습니다",
+                    seeded, apps);
         });
         gestureService.deleteAllVideos(); // 등록 영상 파일 — 트랜잭션 밖(파일 시스템)
         settingsService.resetToSeed();

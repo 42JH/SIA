@@ -25,7 +25,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * app.launch 화이트리스트(app_target) 관리 — 사용자가 등록한 것(개별 POST 또는 스캔 일괄 등록)만 실행된다.
+ * app.launch 화이트리스트(app_target) 관리 — 사용자가 등록한 것(개별 POST 또는 스캔 일괄 등록)과
+ * BE 가 시드한 Windows 기본 앱(DefaultAppTargets: 메모장·계산기)만 실행된다.
  * appKey 는 [a-z0-9_-]{1,40}. POST /api/apps 는 같은 appKey 가 있으면 갱신(UPSERT)이다.
  */
 @RestController

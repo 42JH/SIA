@@ -16,7 +16,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * app.launch 의 실행부. 실행 가능한 것은 사용자가 app_target 에 등록한 항목뿐이다 —
+ * app.launch 의 실행부. 실행 가능한 것은 app_target 에 등록된 항목뿐이다 — 사용자가 등록한 앱과
+ * BE 가 시드한 Windows 기본 앱(DefaultAppTargets: 메모장·계산기)이고,
  * LLM 이 임의 경로를 실행할 수 있는 칸은 어디에도 없다.
  */
 @Service
