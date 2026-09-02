@@ -125,7 +125,7 @@ public class WindowTools {
     public ToolResult closeResult(String winRef) {
         return gate.run("window.close", args(winRef, null), CallerContext.get(), () -> {
             windowService.close(refResolver.resolveWindow(winRef));
-            return null;
+            return Map.of("closed", true);   // 문서 계약 {closed:true} — 데이터 없는 "실행했습니다" 가 아니다
         });
     }
 
