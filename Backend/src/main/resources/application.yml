@@ -5,6 +5,20 @@ server:
 spring:
   application:
     name: sia-assistant
+  datasource:
+    url: ${SIA_DB_URL:jdbc:sqlite:sia.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 4
+      data-source-properties:
+        journal_mode: WAL        # 폴링·기록 동시 접근을 흡수한다
+        foreign_keys: true       # SQLite 는 FK 를 연결 옵션으로 켜야 강제된다
+        busy_timeout: 5000
+  # spring.jpa 설정은 없다 — 이 프로젝트는 JdbcTemplate 만 쓰고 JPA 스타터를 넣지 않는다
+  # (build.gradle 은 spring-boot-starter-jdbc). 스키마의 주인은 아래 Flyway 다.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 sia:
   # 비우면 %APPDATA%/SIA (없으면 ~/.sia)
