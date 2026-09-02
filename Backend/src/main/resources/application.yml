@@ -5,6 +5,12 @@ server:
 spring:
   application:
     name: sia-assistant
+  ai:
+    mcp:
+      server:
+        name: sia
+        version: 1.0.0
+        protocol: STREAMABLE
   datasource:
     url: ${SIA_DB_URL:jdbc:sqlite:sia.db}
     driver-class-name: org.sqlite.JDBC
