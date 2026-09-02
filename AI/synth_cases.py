@@ -20,18 +20,18 @@ CASES = Path(__file__).parent / "eval" / "cases"
 # (문장, 세션 활성 여부, 기대 라벨) — 기대 라벨은 --tier1과 LLM 회귀가 공용으로 읽는 형식
 COMMANDS = [
     # 1단이 즉시 처리해야 하는 고정 명령
-    ("자비스 계산기 열어줘", False, {"is_command": True, "action": "open_app", "app": "calc"}),
-    ("자비스 메모장 켜줘", False, {"is_command": True, "action": "open_app", "app": "notepad"}),
-    ("자비스 크롬 실행해줘", False, {"is_command": True, "action": "open_app", "app": "chrome"}),
-    ("자비스 그림판 띄워줘", False, {"is_command": True, "action": "open_app", "app": "paint"}),
+    ("시아야 계산기 열어줘", False, {"is_command": True, "action": "open_app", "app": "calc"}),
+    ("시아야 메모장 켜줘", False, {"is_command": True, "action": "open_app", "app": "notepad"}),
+    ("시아야 크롬 실행해줘", False, {"is_command": True, "action": "open_app", "app": "chrome"}),
+    ("시아야 그림판 띄워줘", False, {"is_command": True, "action": "open_app", "app": "paint"}),
     ("음소거 해줘", True, {"is_command": True, "action": "media", "media_key": "mute"}),
     ("일시정지 해줘", True, {"is_command": True, "action": "media", "media_key": "playpause"}),
     ("다음 곡 틀어줘", True, {"is_command": True, "action": "media", "media_key": "next"}),
     ("볼륨 올려줘", True, {"is_command": True, "action": "media", "media_key": "volup"}),
     ("이제 그만", True, {"is_command": True, "action": "end_session"}),
     # 1단이 손대면 안 되는 것 — 승격이 정답
-    ("자비스 이거 저장해줘", False, {"is_command": True, "action": "save_crop"}),
-    ("자비스 이 창 닫아줘", False, {"is_command": True, "action": "window", "window_op": "close"}),
+    ("시아야 이거 저장해줘", False, {"is_command": True, "action": "save_crop"}),
+    ("시아야 이 창 닫아줘", False, {"is_command": True, "action": "window", "window_op": "close"}),
     ("오늘 날씨 어때", False, {"is_command": False}),
     ("저 이제 밥 먹으러 갈게요", True, {"is_command": False}),
 ]

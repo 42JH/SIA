@@ -33,7 +33,7 @@ LOG_DIR = HERE / "logs"
 EVAL_DIR = HERE / "eval" / "cases"
 EVAL_CAPTURE = os.environ.get("EVAL_CAPTURE", "") == "1"  # 회귀 케이스 수집 스위치
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5 Flash / 3.1 Flash-Lite
-WAKE_WORD = os.environ.get("WAKE_WORD", "자비스")  # 호출어 — 원하는 이름으로 교체 가능
+WAKE_WORD = os.environ.get("WAKE_WORD", "시아야")  # 호출어 — 웨이크워드 모델과 동일 표기(음성 파트 확정)
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
