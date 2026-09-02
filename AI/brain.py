@@ -324,12 +324,12 @@ def wav_bytes(audio_i16, sr=16000):
     return buf.getvalue()
 
 
-def crop_to_bbox(full_img, bbox, pad=0.02):
-    """LLM이 준 0~1000 정규화 bbox로 원본 해상도에서 정밀 크롭.
+def bbox_to_box(size, bbox, pad=0.02):
+    """LLM이 준 0~1000 정규화 bbox → 원본 픽셀 사각형 (좌상단x, 좌상단y,
+    우하단x, 우하단y). BE에 영역을 넘길 때도 이 좌표를 쓴다.
 
     시선은 영역(변 32% 크롭)까지만 좁히고 대상 특정은 VLM이 하는 설계의
-    마무리 — 저장은 3×3 셀 덩어리가 아니라 가리킨 대상만 잘라낸다.
-    비정상 bbox(좌표 역전·극소·화면의 90% 이상)는 None → 영역 크롭 폴백.
+    마무리. 비정상 bbox(좌표 역전·극소·화면의 90% 이상)는 None → 영역 크롭 폴백.
     """
     try:
         y1, x1, y2, x2 = (float(v) / 1000.0 for v in bbox)
@@ -339,10 +339,9 @@ def crop_to_bbox(full_img, bbox, pad=0.02):
         return None
     if (x2 - x1) * (y2 - y1) > 0.9 or (x2 - x1) < 0.01 or (y2 - y1) < 0.01:
         return None
-    w, h = full_img.size
-    box = (max(0, int((x1 - pad) * w)), max(0, int((y1 - pad) * h)),
-           min(w, int((x2 + pad) * w)), min(h, int((y2 + pad) * h)))
-    return full_img.crop(box)
+    w, h = size
+    return (max(0, int((x1 - pad) * w)), max(0, int((y1 - pad) * h)),
+            min(w, int((x2 + pad) * w)), min(h, int((y2 + pad) * h)))
 
 
 def jpeg_bytes(pil_img, max_w=1400, quality=75):
@@ -615,10 +614,22 @@ class Brain(threading.Thread):
             self._media(result.get("media_key"), say, hwnd)
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
             SAVE_DIR.mkdir(parents=True, exist_ok=True)
-            path = SAVE_DIR / f"저장_{time.strftime('%H%M%S')}.png"
-            img = crop_to_bbox(full_img, result.get("bbox")) if full_img is not None else None
-            if img is None:  # bbox 없음·비정상 → 기존 응시 영역 크롭 폴백
+            ts = time.strftime("%H%M%S")
+            box = bbox_to_box(full_img.size, result.get("bbox")) if full_img is not None else None
+            if box:
+                img = full_img.crop(box)
+                # 영역 선택 검증용 좌표·오버레이 — "사용자가 원한 부분이 골라졌나" 실측 근거
+                print(f"[bbox] 좌상단 ({box[0]},{box[1]}) 우하단 ({box[2]},{box[3]})")
+                if EVAL_CAPTURE:
+                    from PIL import ImageDraw
+
+                    dbg = full_img.convert("RGB").copy()
+                    ImageDraw.Draw(dbg).rectangle(box, outline=(255, 64, 64), width=4)
+                    dbg.save(SAVE_DIR / f"저장_{ts}_영역.png")
+            else:  # bbox 없음·비정상 → 기존 응시 영역 크롭 폴백
                 img = crop_img if crop_img is not None else full_img
+                print("[bbox] 없음 → 응시 영역 크롭 폴백")
+            path = SAVE_DIR / f"저장_{ts}.png"
             img.save(path)
             self.overlay.toast(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
         else:  # answer / none — 짧으면 토스트, 길면 플로팅 패널
