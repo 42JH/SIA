@@ -7,7 +7,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class AssistantApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(AssistantApplication.class, args);
+        // files.delete 가 Desktop.moveToTrash(휴지통 이동)를 쓴다 — headless 면 UnsupportedOperation
+        System.setProperty("java.awt.headless", "false");
+        SpringApplication app = new SpringApplication(AssistantApplication.class);
+        app.setHeadless(false);
+        app.run(args);
     }
-
 }
