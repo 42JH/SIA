@@ -10,7 +10,7 @@ package com.sia.assistant.mcp;
  * <p>message 는 LLM 이 그대로 읽고 사용자에게 전달할 수 있는 한국어 문장이다.
  *
  * <p>"대기(pending)" 상태는 없다. BE 확인 게이트가 사라지면서 도구는 실행되거나 안 되거나 둘뿐이다 —
- * 파괴적 도구의 사용자 동의는 AI 가 호출 <b>전에</b> 받는다(docs/API.md §6.3).
+ * 파괴적 도구의 사용자 동의는 AI 가 호출 <b>전에</b> 받는다(API.md §6.3).
  */
 public record ToolResult(boolean ok, Object data, String code, String message) {
 
