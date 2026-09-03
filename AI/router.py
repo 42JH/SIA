@@ -41,7 +41,10 @@ MEDIA_KO = [  # (키워드들, media_key, say)
     (("볼륨내려", "볼륨 내려", "볼륨줄여", "볼륨 줄여", "소리줄여", "소리 줄여"), "voldown", "볼륨을 내릴게요"),
 ]
 
-END_KO = ("그만", "이제 됐어", "이제됐어", "들어가", "쉬어")
+# NOTE(튜닝): 흔한 동사("들어가" 등)는 오탐 실측 후 제거됨 — '유튜브 들어가줄래'가
+# end_session 으로 처리된 사례(2026-09-03). 부분 일치는 명시적 종료 표현만.
+END_EXACT = ("그만", "끝", "종료")            # 발화 전체가 이것일 때만
+END_KO = ("이제그만", "그만해", "이제됐어")    # 부분 일치 허용
 
 # 호출어의 STT 흔한 오표기 — 동음·유사 발음만 (실측 기반으로 추가)
 # NOTE(튜닝): 미인식↑면 변형을 추가하고, 엉뚱한 발화가 통과하면 뺀다.
@@ -96,7 +99,7 @@ class Router:
         for words, key, say in MEDIA_KO:
             if any(_compact(w) in c for w in words):
                 return {**base, "action": "media", "media_key": key, "say": say}
-        if session_active and any(_compact(e) in c for e in END_KO):
+        if session_active and (c in END_EXACT or any(e in c for e in END_KO)):
             return {**base, "action": "end_session", "say": "대기 모드로 전환합니다"}
         return None
 
