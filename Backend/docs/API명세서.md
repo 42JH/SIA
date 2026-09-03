@@ -1489,7 +1489,7 @@ If-None-Match: "8c22b1de44a0…"
 
 | 도구 | 조건 | `message` |
 |---|---|---|
-| `window.resize` | 모르는 프리셋 | `지원하지 않는 창 크기 프리셋입니다: <preset> (LEFT_HALF\|RIGHT_HALF\|MAXIMIZE\|RESTORE\|CENTER)` |
+| `window.resize` | 모르는 프리셋 | `지원하지 않는 창 크기 프리셋입니다: <preset> (LEFT_HALF\|RIGHT_HALF\|CENTER)` |
 | `explorer.items` | 탐색기 창이 아님 | `지정한 창은 파일 탐색기 창이 아닙니다. context.get으로 탐색기 창의 ref를 확인하세요` |
 | `explorer.items` | 포그라운드 창 없음 | `포그라운드 창이 없습니다` |
 | `scroll.step` | 모르는 방향 | `지원하지 않는 스크롤 방향입니다: <dir> (up\|down\|left\|right)` |
@@ -1607,7 +1607,7 @@ If-None-Match: "8c22b1de44a0…"
 | 인자 | 필수 | 규칙 |
 |---|:-:|---|
 | `winRef` | O | `win:N` |
-| `preset` | O | `LEFT_HALF` / `RIGHT_HALF` / `MAXIMIZE` / `RESTORE` / `CENTER`. 대소문자를 가리지 않는다 |
+| `preset` | O | `LEFT_HALF` / `RIGHT_HALF` / `CENTER`. 대소문자를 가리지 않는다 |
 
 ```json
 { "winRef": "win:2", "preset": "LEFT_HALF" }
@@ -1619,8 +1619,8 @@ If-None-Match: "8c22b1de44a0…"
 | 실패 | `code` | `message` |
 |---|---|---|
 | 없는 ref | `REF_NOT_FOUND` | 대상을 찾을 수 없습니다. context.get으로 목록을 다시 확인하세요 |
-| 관리자 권한 창 (`LEFT_HALF` · `RIGHT_HALF` · `CENTER`) | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
-| 모르는 프리셋 | `INVALID_REQUEST` | 지원하지 않는 창 크기 프리셋입니다: TOP (LEFT_HALF\|RIGHT_HALF\|MAXIMIZE\|RESTORE\|CENTER) |
+| 관리자 권한 창 | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
+| 모르는 프리셋 | `INVALID_REQUEST` | 지원하지 않는 창 크기 프리셋입니다: TOP (LEFT_HALF\|RIGHT_HALF\|CENTER) |
 
 ### 3.8 `window.close` — 창 닫기 · S · C
 

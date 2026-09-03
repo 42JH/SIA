@@ -103,7 +103,8 @@ public class WindowTools {
     public CallToolResult resize(
             @McpToolParam(required = true, description = WIN_REF_DESC) String winRef,
             @McpToolParam(required = true,
-                    description = "크기 프리셋 (LEFT_HALF|RIGHT_HALF|MAXIMIZE|RESTORE|CENTER)") String preset) {
+                    description = "크기 프리셋 (LEFT_HALF|RIGHT_HALF|CENTER)."
+                            + " 최대화·복원은 window.maximize·window.restore 를 쓰세요") String preset) {
         return mcp.of(resizeResult(winRef, preset));
     }
 

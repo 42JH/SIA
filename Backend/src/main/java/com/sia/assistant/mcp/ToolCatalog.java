@@ -34,7 +34,8 @@ public final class ToolCatalog {
     public static final String D_WINDOW_RESTORE =
             "최소화되거나 최대화된 창을 보통 크기로 되돌립니다.";
     public static final String D_WINDOW_RESIZE =
-            "지정한 창의 크기와 위치를 프리셋으로 바꿉니다. preset 은 LEFT_HALF, RIGHT_HALF, MAXIMIZE, RESTORE, CENTER 중 하나입니다.";
+            "지정한 창의 크기와 위치를 프리셋으로 바꿉니다. preset 은 LEFT_HALF, RIGHT_HALF, CENTER 중 하나입니다. "
+                    + "최대화·복원은 window.maximize·window.restore 를 쓰세요.";
     public static final String D_WINDOW_CLOSE =
             "지정한 창을 닫습니다. 사용자 확인 게이트를 통과해야 실제로 실행됩니다.";
     public static final String D_WINDOW_NEXT =

@@ -90,12 +90,14 @@ public class WindowService {
         User32.INSTANCE.ShowWindow(hwnd(hwnd), WinUser.SW_RESTORE);
     }
 
-    /** preset: LEFT_HALF | RIGHT_HALF | MAXIMIZE | RESTORE | CENTER. 좌표는 창이 속한 모니터의 rcWork 기준. */
+    /**
+     * preset: LEFT_HALF | RIGHT_HALF | CENTER. 좌표는 창이 속한 모니터의 rcWork 기준.
+     * 전부 SetWindowPos 라 관리자 창이면 항상 ELEVATED_WINDOW 다 — 이 도구의 실패 모드는 하나다.
+     * 상태 전환(최대화·복원)은 ShowWindow 를 쓰는 maximize/restore 가 맡는다: 프리셋으로 겹쳐 받지 않는다.
+     */
     public void resize(long hwnd, String preset) {
         String p = preset == null ? "" : preset.trim().toUpperCase(Locale.ROOT);
         switch (p) {
-            case "MAXIMIZE" -> maximize(hwnd);
-            case "RESTORE" -> restore(hwnd);
             case "LEFT_HALF", "RIGHT_HALF", "CENTER" -> {
                 WinDef.HWND h = hwnd(hwnd);
                 // 최대화/최소화 상태에서 SetWindowPos 를 하면 배치가 어긋난다 — 먼저 보통 상태로.
@@ -137,7 +139,7 @@ public class WindowService {
                 }
             }
             default -> throw new ApiException(ErrorCode.INVALID_REQUEST,
-                    "지원하지 않는 창 크기 프리셋입니다: " + preset + " (LEFT_HALF|RIGHT_HALF|MAXIMIZE|RESTORE|CENTER)");
+                    "지원하지 않는 창 크기 프리셋입니다: " + preset + " (LEFT_HALF|RIGHT_HALF|CENTER)");
         }
     }
 
