@@ -52,6 +52,7 @@ GLOBAL_MEDIA_KEYS = {"playpause": "playpause", "mute": "volumemute",
 SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_command": true/false, "transcript": "들은 말",
  "action": "answer|save_crop|open_app|web_search|find_file|delete_file|window|media|end_session|confirm_yes|confirm_no|none",
  "bbox": [ymin, xmin, ymax, xmax] (save_crop일 때 대상 경계, 전체 화면 기준 0~1000 정규화) 또는 null,
+ "save_text": "save_crop 대상이 줄글이면 그 텍스트 전문, 아니면 null",
  "app": "chrome|notepad|calc|explorer|paint 또는 null",
  "query": "검색어 또는 파일명, 없으면 null",
  "window_op": "maximize|minimize|close|scroll_down|scroll_up 또는 null",
@@ -61,10 +62,13 @@ SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_comman
 ACTION_RULES = """액션 규칙:
 - "이거/저거/여기" 지시어는 응시 크롭 속 대상을 가리킨다.
 - 질문·설명·요약·번역 → answer, 크롭과 화면을 근거로 say에 답하라 (요약은 5문장까지 허용).
-- "저장해줘"류 → save_crop. 사용자가 가리킨 대상(이미지·차트·문단 등)의 경계
-  상자를 bbox에 넣어라 — 전체 화면 스크린샷 기준 [ymin,xmin,ymax,xmax],
-  0~1000 정규화, 대상에 딱 맞게. 응시 크롭은 대상 위치의 힌트다. 대상을
-  특정할 수 없으면 bbox=null. 앱 실행 요청 → open_app.
+- "저장해줘"류 → save_crop. 대상이 이미지·차트 등 시각 요소면 경계 상자를
+  bbox에 넣어라 — 전체 화면 스크린샷 기준 [ymin,xmin,ymax,xmax], 0~1000
+  정규화, 대상에 딱 맞게. 응시 크롭은 대상 위치의 힌트다.
+  대상이 줄글(기사 본문·문단·목록)이면 픽셀로 자르지 말고 save_text에 그
+  텍스트 전문을 담아라 — 화면에 보이는 그대로, 브라우저 참고 데이터가 있으면
+  화면 밖으로 잘린 부분까지 그걸로 보완하라. 이때 bbox는 null로 둔다.
+  대상을 특정할 수 없으면 둘 다 null. 앱 실행 요청 → open_app.
 - 웹 검색 요청("~ 검색해줘/찾아봐") → web_search, query에 검색어.
 - 파일 찾기 요청 → find_file, query에 파일명.
 - 파일 삭제 요청("이거/이 파일/○○파일 삭제해줘/지워줘") → delete_file. query에는
@@ -615,6 +619,12 @@ class Brain(threading.Thread):
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
             SAVE_DIR.mkdir(parents=True, exist_ok=True)
             ts = time.strftime("%H%M%S")
+            text = (result.get("save_text") or "").strip()
+            if len(text) >= 40:  # 줄글 대상 — 픽셀 크롭은 문맥이 잘리므로 내용 자체를 저장
+                path = SAVE_DIR / f"저장_{ts}.txt"
+                path.write_text(text + "\n", encoding="utf-8")
+                self.overlay.toast(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
+                return
             box = bbox_to_box(full_img.size, result.get("bbox")) if full_img is not None else None
             if box:
                 img = full_img.crop(box)
