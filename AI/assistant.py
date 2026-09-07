@@ -20,6 +20,7 @@
 import argparse
 import collections
 import json
+import os
 import subprocess
 import sys
 import time
@@ -155,7 +156,19 @@ def main():
         else:
             print("화자 미등록 → 아무 목소리나 허용. 내 목소리만 반응시키려면: python voice_enroll.py")
 
-    brain = Brain(overlay, act=not args.no_actions, speaker=speaker)
+    # BE 연결 계층 — runtime.json 있으면 WS/MCP 접속(백그라운드), 없거나 SIA_NO_BE 면
+    # link=None 으로 오늘처럼 로컬 단독 동작. 실행/세션은 연결됐을 때만 BE 로 넘어간다.
+    link = None
+    if not os.environ.get("SIA_NO_BE"):
+        try:
+            from be_link import AgentLink
+
+            link = AgentLink()
+            print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
+        except Exception as e:
+            print(f"BE 연결 계층 비활성: {e}")
+
+    brain = Brain(overlay, act=not args.no_actions, speaker=speaker, link=link)
     brain.start()
 
     voice_events = collections.deque(maxlen=16)
@@ -305,6 +318,8 @@ def main():
         voice.running = False
         if worker:
             worker.running = False
+        if link:
+            link.close()
         cap.release()
         cv2.destroyAllWindows()
 
