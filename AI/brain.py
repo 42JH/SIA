@@ -48,6 +48,11 @@ YOUTUBE_KEYS = {"playpause": "k", "mute": "m", "forward": "l", "back": "j",
 GLOBAL_MEDIA_KEYS = {"playpause": "playpause", "mute": "volumemute",
                      "next": "nexttrack", "prev": "prevtrack",
                      "volup": "volumeup", "voldown": "volumedown"}
+# media_key → BE MCP 도구(+인자). BE 연결 시 이 표에 있는 키만 이관하고,
+# forward/back(유튜브 10초 이동)은 카탈로그에 없어 로컬 단축키로 남는다.
+MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggle", None),
+             "next": ("media.next", None), "prev": ("media.prev", None),
+             "volup": ("volume.step", {"dir": "up"}), "voldown": ("volume.step", {"dir": "down"})}
 
 SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_command": true/false, "transcript": "들은 말",
  "action": "answer|save_crop|open_app|web_search|find_file|delete_file|window|media|end_session|confirm_yes|confirm_no|none",
@@ -604,12 +609,14 @@ class Brain(threading.Thread):
             self._pending = None
             self.overlay.toast("취소했습니다")
         elif action == "open_app":
-            app = APPS.get(str(result.get("app", "")).lower())
-            if app:
+            key = str(result.get("app", "")).lower()
+            app = APPS.get(key)
+            if not app:
+                self.overlay.toast(f"지원하지 않는 앱: {result.get('app')}")
+            # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
+            elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
                 subprocess.Popen(["cmd", "/c", "start", "", app])
                 self.overlay.toast(say or f"{app} 실행")
-            else:
-                self.overlay.toast(f"지원하지 않는 앱: {result.get('app')}")
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             if q:
@@ -683,6 +690,11 @@ class Brain(threading.Thread):
                 self.overlay.toast(say or "…")
 
     def _media(self, key, say="", hwnd=0):
+        # BE 연결 시 미디어/볼륨은 MCP 도구로 이관(유튜브 여부는 BE 가 포그라운드로 판별).
+        # forward/back(유튜브 10초 이동)은 카탈로그에 없어 아래 로컬 경로로 남는다.
+        tool = MEDIA_MCP.get(key)
+        if tool and self._try_be(tool[0], tool[1], say):
+            return
         # 판별 기준도 '발화 순간의 창' — 말한 뒤 알트탭해도 의도한 창이 제어된다
         if hwnd and is_youtube(window_title_of(hwnd)):
             spec = YOUTUBE_KEYS.get(key)
