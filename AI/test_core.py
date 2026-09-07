@@ -340,6 +340,17 @@ def test_one_euro():
     assert f((0.1, 0.1), t + 1)[0] == 0.1    # 리셋 후 새로 시작
 
 
+def test_wake_gate():
+    """시동어 게이트 판정 — 실측 로그 재현: 세션 밖 저점수(0.001, 호출어 없는 "계산기 켜줘")는 차단,
+    세션 안 저점수(후속 명령 "볼륨 올려")는 통과, 섀도는 무조건 통과."""
+    from brain import WAKE_THRESHOLD, wake_rejects
+    assert wake_rejects(0.001, in_session=False)                   # 세션 밖 비호출 → 차단 (API 절감)
+    assert not wake_rejects(0.001, in_session=True)                # 세션 안은 호출어 불필요 → 후속 명령 통과
+    assert not wake_rejects(0.95, in_session=False)                # 호출 → 통과
+    assert not wake_rejects(WAKE_THRESHOLD, in_session=False)      # 경계값은 통과
+    assert not wake_rejects(0.001, in_session=False, shadow=True)  # 섀도: 로그만, 차단 없음
+
+
 def test_mouse_subpixel_accumulator():
     from main import Mouse
     m = Mouse(enabled=False)  # 로그만 — 실제 마우스 안 건드림
@@ -365,4 +376,5 @@ if __name__ == "__main__":
     test_build_prompt()
     test_one_euro()
     test_mouse_subpixel_accumulator()
-    print("OK - 14/14 통과")
+    test_wake_gate()
+    print("OK - 15/15 통과")
