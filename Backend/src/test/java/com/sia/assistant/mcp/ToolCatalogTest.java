@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test;
 class ToolCatalogTest {
 
     @Test
-    @DisplayName("카탈로그는 27개다 — tool 테이블의 원천")
-    void catalogHas27Tools() {
-        assertThat(ToolCatalog.all()).hasSize(27);
+    @DisplayName("카탈로그는 28개다 — tool 테이블의 원천")
+    void catalogHas28Tools() {
+        assertThat(ToolCatalog.all()).hasSize(28);
         // 확인 게이트가 사라지면서 confirm.* 두 개는 카탈로그에 없다
         assertThat(ToolCatalog.spec("confirm.accept")).isNull();
         assertThat(ToolCatalog.spec("confirm.reject")).isNull();
@@ -24,6 +24,9 @@ class ToolCatalogTest {
         // 우상단·좌하단 두 점 영역 캡처 — screen.capture 와 같은 급 (파일만 만든다)
         assertThat(ToolCatalog.spec("screen.capture_region").sessionRequired()).isTrue();
         assertThat(ToolCatalog.spec("screen.capture_region").confirmRequired()).isFalse();
+        // 절대값 볼륨 — 단계(volume.step)와 같은 급이다
+        assertThat(ToolCatalog.spec("volume.set").sessionRequired()).isTrue();
+        assertThat(ToolCatalog.spec("volume.set").confirmRequired()).isFalse();
     }
 
     @Test

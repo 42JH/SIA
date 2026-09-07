@@ -1,5 +1,6 @@
 package com.sia.assistant.context;
 
+import com.sia.assistant.control.audio.AudioService;
 import com.sia.assistant.control.window.WindowService;
 import com.sia.assistant.mcp.RefResolver;
 import java.util.ArrayList;
@@ -22,11 +23,14 @@ public class ContextService {
 
     private final WindowService windowService;
     private final RefResolver refResolver;
+    private final AudioService audioService;
     private final JdbcTemplate jdbc;
 
-    public ContextService(WindowService windowService, RefResolver refResolver, JdbcTemplate jdbc) {
+    public ContextService(WindowService windowService, RefResolver refResolver,
+                          AudioService audioService, JdbcTemplate jdbc) {
         this.windowService = windowService;
         this.refResolver = refResolver;
+        this.audioService = audioService;
         this.jdbc = jdbc;
     }
 
@@ -76,7 +80,20 @@ public class ContextService {
         out.put("foreground", foreground);
         out.put("windows", windows);
         out.put("apps", apps());
+        out.put("volume", volume());
         out.put("capabilities", CAPABILITIES);
+        return out;
+    }
+
+    /** 현재 시스템 볼륨 — 상대적인 요청("조금 줄여줘")을 volume.set 의 절대값으로 옮기는 근거다. */
+    private Map<String, Object> volume() {
+        AudioService.Volume v = audioService.currentOrNull();
+        if (v == null) {
+            return null; // 출력 장치가 없거나 조회 실패 — 볼륨 없이도 컨텍스트는 성립한다
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("level", v.level());
+        out.put("muted", v.muted());
         return out;
     }
 

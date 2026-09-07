@@ -9,4 +9,4 @@ out/
 .vscode/
 HELP.md
 inspector.bat
-tools/
+/tools/

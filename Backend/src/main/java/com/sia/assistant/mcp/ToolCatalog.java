@@ -58,7 +58,12 @@ public final class ToolCatalog {
     public static final String D_MEDIA_PREV =
             "이전 트랙 또는 이전 영상으로 돌아갑니다. 포그라운드가 유튜브면 해당 창의 단축키를 사용합니다.";
     public static final String D_VOLUME_STEP =
-            "시스템 볼륨을 한 단계 조절합니다. dir 은 up 또는 down 입니다.";
+            "시스템 볼륨을 한 단계 조절합니다. dir 은 up 또는 down 입니다. 값을 정해 맞출 때는 volume.set 을 쓰세요.";
+    public static final String D_VOLUME_SET =
+            "시스템 볼륨을 지정한 값으로 맞춥니다. level 은 0~100 이고 작업표시줄 볼륨 슬라이더와 같은 척도입니다. "
+                    + "범위를 벗어난 값은 0 또는 100 으로 잘라서 맞춥니다. 음소거 상태에서 0 보다 큰 값을 주면 음소거도 함께 풉니다. "
+                    + "실제 반영된 level 과 muted 를 반환하므로 사용자에게 그 값을 그대로 알려 주세요. "
+                    + "현재 볼륨은 context.get 의 volume 에 있습니다 — '조금만 줄여줘'처럼 상대적인 요청은 그 값에서 계산해 부르세요.";
     public static final String D_FILES_OPEN =
             "지정한 절대 경로의 파일을 Windows 기본 연결 프로그램으로 엽니다. 열기만 하며 내용을 바꾸지 않습니다. 제스처 매크로의 '파일 실행' 단계가 이 도구를 사용합니다.";
     public static final String D_FILES_DELETE =
@@ -79,7 +84,7 @@ public final class ToolCatalog {
             "활성 세션의 만료 시간을 연장합니다. 유효한 명령을 처리한 직후에만 호출하세요.";
     public static final String D_SESSION_CANCEL =
             "활성 세션을 즉시 종료합니다.";
-    // 도구 27개 — 이 목록이 tool 테이블의 원천이다
+    // 도구 28개 — 이 목록이 tool 테이블의 원천이다
     private static final Map<String, ToolSpec> SPECS = build();
 
     private static Map<String, ToolSpec> build() {
@@ -103,6 +108,7 @@ public final class ToolCatalog {
         put(m, "media.next",        true,  false, D_MEDIA_NEXT);
         put(m, "media.prev",        true,  false, D_MEDIA_PREV);
         put(m, "volume.step",       true,  false, D_VOLUME_STEP);
+        put(m, "volume.set",        true,  false, D_VOLUME_SET);
         put(m, "files.open",        true,  false, D_FILES_OPEN);
         put(m, "files.delete",      true,  true,  D_FILES_DELETE);
         put(m, "files.save",        true,  false, D_FILES_SAVE);

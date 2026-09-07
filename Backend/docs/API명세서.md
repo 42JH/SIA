@@ -10,7 +10,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 | [0](#0-공통-규약) | 공통 규약 — 주소 · 인증 · 시각 · 오류 응답 · 목록 형식 |
 | [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장비 맵핑 |
 | [2](#2-rest--ai-용) | REST (AI) — npz · 오디오 업/다운로드, 통계 배치 |
-| [3](#3-mcp-도구-27개) | MCP 도구 27개 — 인자 · 응답 · 실패 코드 |
+| [3](#3-mcp-도구-28개) | MCP 도구 28개 — 인자 · 응답 · 실패 코드 |
 | [4](#4-websocket-메시지-양식) | WebSocket 메시지 양식 — 봉투 · 채널별 이벤트의 필드 타입 · 예시 |
 | [5](#5-부록--엔드포인트--이벤트-색인) | 부록 — 엔드포인트 · 이벤트 색인 |
 
@@ -1456,7 +1456,7 @@ If-None-Match: "8c22b1de44a0…"
 
 ---
 
-## 3. MCP 도구 27개
+## 3. MCP 도구 28개
 
 ### 3.1 호출 · 반환 형식 요약
 
@@ -1494,6 +1494,7 @@ If-None-Match: "8c22b1de44a0…"
 | `explorer.items` | 포그라운드 창 없음 | `포그라운드 창이 없습니다` |
 | `scroll.step` | 모르는 방향 | `지원하지 않는 스크롤 방향입니다: <dir> (up\|down\|left\|right)` |
 | `volume.step` | 모르는 방향 | `지원하지 않는 볼륨 방향입니다: <dir> (up\|down)` |
+| `volume.set` | `level` 누락 | `볼륨 값(level)이 필요합니다 (0~100)` |
 | `files.open` | 빈 경로 | `열 파일의 절대 경로가 필요합니다` |
 | `files.open` | 상대 경로 | `파일 경로는 절대 경로여야 합니다: <path>` |
 | `files.save` | 이름 부적합 | `저장할 파일 이름이 올바르지 않습니다` |
@@ -1521,6 +1522,7 @@ If-None-Match: "8c22b1de44a0…"
       { "ref": "app:chrome", "name": "Chrome" },
       { "ref": "app:vscode", "name": "Visual Studio Code" }
     ],
+    "volume": { "level": 33, "muted": false },
     "capabilities": ["window", "scroll", "app", "media", "files"]
   }
 }
@@ -1534,6 +1536,7 @@ If-None-Match: "8c22b1de44a0…"
 | `windows[].app` | 프로세스 실행 파일 이름 (확장자 없음) |
 | `windows[].state` | `NORMAL` / `MINIMIZED` / `MAXIMIZED` |
 | `apps` | `enabled = 1` 인 등록 앱. `displayName` 오름차순 |
+| `volume` | 현재 시스템 볼륨 `{level 0~100, muted}`. 출력 장치가 없거나 조회에 실패하면 `null`. 상대적인 요청("조금 줄여줘")을 `volume.set` 의 절대값으로 옮길 때 쓴다 |
 | `capabilities` | 고정 5개 |
 
 `ref` 는 호출마다 재발급된다. 조작 직전에 `context.get` 또는 `window.list` 로 다시 받는다. 만료된 ref 는 `REF_NOT_FOUND` 로 실패한다.
@@ -1722,7 +1725,9 @@ AI 는 호출 전에 사용자 동의를 받는다. BE 는 동의가 끝난 요�
 | `media.next` | `Shift+n` | NEXT |
 | `media.prev` | `Shift+p` | PREV |
 
-### 3.13 `volume.step` — 시스템 볼륨 · S
+### 3.13 `volume.step` — 시스템 볼륨 한 단계 · S
+
+한 단계씩만 움직인다. 값을 정해 맞출 때는 §3.22 `volume.set` 을 쓴다.
 
 | 인자 | 필수 | 규칙 |
 |---|:-:|---|
@@ -1917,6 +1922,33 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | 화면과 겹치지 않음 | `INVALID_REQUEST` | 캡처 영역이 화면 밖입니다. 좌표는 가상 스크린 물리 픽셀이어야 합니다 |
 | 화면 읽기 실패 | `FAILED` | 화면 캡처에 실패했습니다. 잠시 후 다시 시도해주세요 |
 | 저장 실패 | `FAILED` | 캡처 저장에 실패했습니다. 잠시 후 다시 시도해주세요 |
+
+### 3.22 `volume.set` — 시스템 볼륨 절대값 · S
+
+기본 재생 장치의 마스터 볼륨을 지정한 값으로 맞춘다. `level` 은 작업표시줄 볼륨 슬라이더와 같은 척도라 `30` 이면 슬라이더도 30% 에 선다. 현재 볼륨은 §3.2 `context.get` 의 `volume` 에 있다 — "조금만 줄여줘" 같은 상대적인 요청은 그 값에서 계산해 부른다.
+
+| 인자 | 필수 | 규칙 |
+|---|:-:|---|
+| `level` | O | `0` ~ `100`. 범위 밖은 `0` 또는 `100` 으로 잘라서 맞춘다 (실패가 아니다) |
+
+```json
+{ "level": 30 }
+```
+```json
+{ "content": [{ "type": "text", "text": "{\"level\":30,\"muted\":false}" }], "isError": false, "structuredContent": { "level": 30, "muted": false } }
+```
+
+| 필드 | 설명 |
+|---|---|
+| `level` | **실제로 반영된** 값. 잘렸거나 장치가 다른 값으로 맞췄으면 요청 값과 다르다 — 사용자에게는 이 값을 읽어 준다 |
+| `muted` | 반영 후 음소거 상태 |
+
+`level > 0` 이면 음소거도 함께 푼다. 볼륨을 먼저 맞춘 뒤 풀기 때문에 이전의 큰 볼륨으로 한 번 터지지 않는다. `level: 0` 은 음소거를 건드리지 않고 볼륨만 0 으로 내린다.
+
+| 실패 | `code` | `message` |
+|---|---|---|
+| `level` 누락 | `INVALID_REQUEST` | 볼륨 값(level)이 필요합니다 (0~100) |
+| 출력 장치 없음 · 오디오 접근 실패 | `FAILED` | 시스템 볼륨을 조절하지 못했습니다 |
 
 ---
 
@@ -2465,6 +2497,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `scroll.step` | ● | | §3.11 |
 | `media.play_pause` · `media.mute_toggle` · `media.next` · `media.prev` | ● | | §3.12 |
 | `volume.step` | ● | | §3.13 |
+| `volume.set` | ● | | §3.22 |
 | `files.open` | ● | | §3.14 |
 | `files.delete` | ● | ● | §3.15 |
 | `files.save` | ● | | §3.16 |
