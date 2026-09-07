@@ -15,6 +15,9 @@
   같은 제스처가 재생/음소거/건너뛰기로 자동 전환** (기획서 4번)
 - 안전장치: 비음성(음악·기계음) 기각, 호출어 없는 발화로는 세션이 절대 열리지
   않음(코드 게이트), 파괴적 동작은 음성 재확인, `--no-actions`로 전체 리허설
+- **시동어 게이트** (`models/siaya_v1.onnx`, openWakeWord 커스텀): 세션 밖 발화는
+  로컬 모델이 "시아야"를 못 들으면 LLM에 보내지 않는다 (발화당 ~60ms). `WAKE_SHADOW=1`이면
+  판정만 `logs/utterances.jsonl`에 기록하고 동작은 그대로 (실측용)
 
 Gemini 키: `gemini_api_key.txt` 또는 환경변수. 모델·호출어는 `GEMINI_MODEL`,
 `WAKE_WORD` 환경변수로 변경.

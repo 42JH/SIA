@@ -37,6 +37,10 @@ WAKE_WORD = os.environ.get("WAKE_WORD", "시아야")  # 호출어 — 웨이크�
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
+WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
+WAKE_THRESHOLD = 0.5      # NOTE(튜닝): predict_clip 최대 점수 하한. 노트북 마이크+Windows 오디오 향상
+                          # 채널 실측 기준 인식 98.3%·본인 비호출 오발 0 — 채널이 바뀌면 재선정할 것
+WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정만 로그, 발화는 그대로 LLM으로 (실측용)
 
 # LLM이 고른 앱만 허용 (임의 문자열 실행 금지 — 프롬프트 인젝션 방어선)
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
@@ -318,6 +322,30 @@ def load_api_key():
     return keys[0] if keys else None
 
 
+def load_wake_model():
+    """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (게이트 없이 LLM 판정만).
+
+    siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
+    (melspectrogram·embedding)는 openwakeword 패키지에 포함. 학습·판정 채널은 노트북
+    마이크 배열 + Windows 오디오 향상 켜짐 — 헤드셋·다른 PC는 미검증.
+    """
+    if not WAKE_MODEL.exists():
+        print(f"시동어 모델 없음({WAKE_MODEL.name}) → 게이트 비활성, 호출어 판정은 LLM만")
+        return None
+    try:
+        from openwakeword.model import Model
+
+        return Model(wakeword_models=[str(WAKE_MODEL)], inference_framework="onnx")
+    except Exception as e:
+        print(f"시동어 모델 비활성({type(e).__name__}: {e}) → 호출어 판정은 LLM만:  pip install openwakeword")
+        return None
+
+
+def wake_rejects(score, in_session, shadow=False):
+    """게이트 판정 — True면 LLM에 보내지 않는다. 세션 안(호출어 불필요)과 섀도(로그만)는 항상 통과."""
+    return score < WAKE_THRESHOLD and not in_session and not shadow
+
+
 def is_quota_error(e):
     s = str(e)
     return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
@@ -380,12 +408,17 @@ class Brain(threading.Thread):
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         self._keys = load_api_keys()
         self._key_i = 0
+        self.wake = None  # 시동어 모델 (openwakeword Model) 또는 None
         if self._keys:
             from google import genai
 
             self._client = genai.Client(api_key=self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
+            self.wake = load_wake_model()  # 시동어 게이트 — LLM을 안 쓰면 게이트도 의미 없음
+            if self.wake is not None:
+                print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
+                      + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         else:
             print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
@@ -440,6 +473,17 @@ class Brain(threading.Thread):
                 if EVAL_CAPTURE:
                     pq = self._pending[0] if self._pending and t_utter < self._pending[2] else None
                     capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
+                # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
+                # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
+                # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
+                wake_score = None
+                if self.wake is not None:
+                    wake_score = round(float(max(p[WAKE_MODEL.stem] for p in self.wake.predict_clip(audio))), 3)  # np.float32는 json 불가
+                    if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
+                        print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
+                        log_utterance(gate="wake_reject", wake_score=wake_score,
+                                      session=False, **audio_stats(audio))
+                        continue
                 # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
                 sim = None
@@ -448,6 +492,7 @@ class Brain(threading.Thread):
                     if not ok:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
+                                      wake_score=wake_score,
                                       session=t_utter < self._session_until(), **audio_stats(audio))
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
@@ -463,6 +508,7 @@ class Brain(threading.Thread):
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
                               speaker_sim=round(sim, 3) if sim is not None else None,
+                              wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
                               session=t_utter < self._session_until(),
                               audio_is_speech=result.get("audio_is_speech"),
                               wake_heard=result.get("wake_heard"),
