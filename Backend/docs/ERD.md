@@ -96,6 +96,7 @@ erDiagram
         INTEGER screen_h
         REAL avg_error_px
         REAL max_error_px
+        TEXT grade
         TEXT points_json
         TEXT created_at
         TEXT last_used_at
@@ -268,7 +269,7 @@ erDiagram
 
 ### 2.4 `calib_profile` — 시선 보정 프로필
 
-규칙은 `voice_profile` 과 같다. 보정 정확도와 산점도, 학습 해상도를 함께 저장한다.
+규칙은 `voice_profile` 과 같다. 보정 정확도와 오차 등급, 산점도, 학습 해상도를 함께 저장한다.
 
 | 컬럼 | 타입 | NULL | 기본값 | 설명 |
 |---|---|:-:|---|---|
@@ -281,9 +282,10 @@ erDiagram
 | `npz_bytes` | INTEGER | Y | — | npz 크기 |
 | `screen_w` | INTEGER | Y | — | 학습 화면 폭. 현재 해상도와 다르면 재보정 대상 |
 | `screen_h` | INTEGER | Y | — | 학습 화면 높이 |
-| `avg_error_px` | REAL | Y | — | 평균 오차. 50 이하 = 통과 |
+| `avg_error_px` | REAL | Y | — | 평균 오차 |
 | `max_error_px` | REAL | Y | — | 최대 오차 |
-| `points_json` | TEXT | Y | — | 산점도 `[{n, x, y, gx, gy}]`. `x, y` 목표점, `gx, gy` 측정 시선 |
+| `grade` | TEXT | Y | — | `CHECK ('excellent', 'good', 'poor')`. 오차 등급. 판정 기준은 AI 서버가 관리하고 BE 는 받아 적는다. V2 이전에 만든 행은 `NULL` |
+| `points_json` | TEXT | Y | — | 산점도 `[{n, dx, dy}]`. 목표점을 원점으로 둔 오차 벡터 |
 | `created_at` | TEXT | N | — | 등록일 |
 | `last_used_at` | TEXT | Y | — | 최근 사용일. 활성 전환 시각 |
 
@@ -419,6 +421,7 @@ AI 가 `POST /api/agent/events` 로 보내는 이벤트와 BE 가 스스로 기�
 | `app_settings` | `CHECK (id = 1)` |
 | `blob` | `CHECK (name IN ('wakeword'))`, `CHECK (byte_size BETWEEN 1 AND 5242880)` |
 | `voice_profile` · `calib_profile` | `CHECK (active IN (0, 1))` |
+| `calib_profile` | `CHECK (grade IS NULL OR grade IN ('excellent', 'good', 'poor'))` |
 | `tool` | `CHECK (session_required IN (0, 1))`, `CHECK (confirm_required IN (0, 1))`, `CHECK (available IN (0, 1))` |
 | `session` | `CHECK (end_reason IS NULL OR end_reason IN ('EXPIRED', 'STOPPED', 'WATCHDOG', 'SHUTDOWN'))`, `CHECK (ended_at IS NULL OR ended_at >= started_at)` |
 | `app_target` | `UNIQUE (app_key)`, `CHECK (enabled IN (0, 1))` |
@@ -631,9 +634,10 @@ CREATE TABLE `calib_profile` (
 	`npz_bytes`	INT	NULL,
 	`screen_w`	INT	NULL	COMMENT '학습 화면 폭. 현재 해상도와 다르면 재보정 대상',
 	`screen_h`	INT	NULL,
-	`avg_error_px`	DECIMAL(7,2)	NULL	COMMENT '평균 오차. 50px 이하 = 통과',
+	`avg_error_px`	DECIMAL(7,2)	NULL	COMMENT '평균 오차',
 	`max_error_px`	DECIMAL(7,2)	NULL	COMMENT '최대 오차',
-	`points_json`	TEXT	NULL	COMMENT '산점도 [{n,x,y,gx,gy}]. x,y 목표점 / gx,gy 측정 시선',
+	`grade`	VARCHAR(16)	NULL	COMMENT 'excellent | good | poor. 오차 등급. 판정 기준은 AI 서버 관리',
+	`points_json`	TEXT	NULL	COMMENT '산점도 [{n,dx,dy}]. 목표점 기준 오차 벡터',
 	`created_at`	TIMESTAMPTZ	NOT NULL	COMMENT '등록일',
 	`last_used_at`	TIMESTAMPTZ	NULL	COMMENT '최근 사용일. 활성 전환 시각'
 );

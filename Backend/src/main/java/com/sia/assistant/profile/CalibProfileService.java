@@ -15,15 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 시선 보정 프로필 저장소 — 최대 4개 (사용 1 + 스톡 3), 와이어프레임 시선 섹션의 원천.
- * 보정 정확도(평균/최대 오차)와 시선 학습 결과 산점도(points_json), 학습 해상도를 함께 저장한다.
+ * 보정 정확도(평균/최대 오차·오차 등급)와 시선 학습 결과 산점도(points_json), 학습 해상도를 함께 저장한다.
+ * 오차 등급(grade)의 판정 기준은 AI 서버가 관리한다 — BE 는 AI 가 보낸 값을 받아 적기만 하고 스스로 판정하지 않는다.
  * 보정 진행 중 임시본은 CalibrationOrchestrator 메모리에 있고, 여기는 확정본만 다룬다.
  */
 @Service
 public class CalibProfileService {
 
     public static final int MAX_PROFILES = 4;
-    /** 통과 기준 — 평균 오차 50px 이하 (와이어프레임 "기준 50px 이하"). */
-    public static final double THRESHOLD_PX = 50.0;
 
     private final JdbcTemplate jdbc;
     private final AgentHub agentHub;
@@ -69,7 +68,7 @@ public class CalibProfileService {
     public List<Map<String, Object>> list() {
         return jdbc.query(
                 "SELECT id, name, active, device_label, screen_w, screen_h,"
-                        + " avg_error_px, max_error_px, created_at, last_used_at FROM calib_profile"
+                        + " avg_error_px, max_error_px, grade, created_at, last_used_at FROM calib_profile"
                         + " ORDER BY active DESC, created_at ASC, id ASC",
                 (rs, i) -> summaryRow(rs.getLong("id"), rs.getString("name"), rs.getInt("active") == 1,
                         rs.getString("device_label"),
@@ -77,6 +76,7 @@ public class CalibProfileService {
                         rs.getObject("screen_h") == null ? null : rs.getInt("screen_h"),
                         rs.getObject("avg_error_px") == null ? null : rs.getDouble("avg_error_px"),
                         rs.getObject("max_error_px") == null ? null : rs.getDouble("max_error_px"),
+                        rs.getString("grade"),
                         rs.getString("created_at"), rs.getString("last_used_at")));
     }
 
@@ -84,7 +84,7 @@ public class CalibProfileService {
     public Map<String, Object> get(long id) {
         List<Map<String, Object>> rows = jdbc.query(
                 "SELECT id, name, active, device_label, screen_w, screen_h, avg_error_px, max_error_px,"
-                        + " points_json, created_at, last_used_at FROM calib_profile WHERE id = ?",
+                        + " grade, points_json, created_at, last_used_at FROM calib_profile WHERE id = ?",
                 (rs, i) -> {
                     Map<String, Object> m = summaryRow(rs.getLong("id"), rs.getString("name"),
                             rs.getInt("active") == 1, rs.getString("device_label"),
@@ -92,6 +92,7 @@ public class CalibProfileService {
                             rs.getObject("screen_h") == null ? null : rs.getInt("screen_h"),
                             rs.getObject("avg_error_px") == null ? null : rs.getDouble("avg_error_px"),
                             rs.getObject("max_error_px") == null ? null : rs.getDouble("max_error_px"),
+                            rs.getString("grade"),
                             rs.getString("created_at"), rs.getString("last_used_at"));
                     m.put("pointsJson", rs.getString("points_json"));
                     return m;
@@ -158,7 +159,8 @@ public class CalibProfileService {
      */
     @Transactional
     public long saveNew(String nameOrNull, byte[] npz, String npzSha256, Integer screenW, Integer screenH,
-                        Double avgErrorPx, Double maxErrorPx, String pointsJson, String deviceLabel) {
+                        Double avgErrorPx, Double maxErrorPx, String grade, String pointsJson,
+                        String deviceLabel) {
         if (count() >= MAX_PROFILES) {
             throw new ApiException(ErrorCode.PROFILE_LIMIT,
                     "시선 보정은 최대 " + MAX_PROFILES + "개까지 저장할 수 있습니다. 먼저 사용하지 않는 보정을 삭제해 주세요");
@@ -167,10 +169,11 @@ public class CalibProfileService {
         boolean first = count() == 0;
         String now = Times.now();
         jdbc.update("INSERT INTO calib_profile (name, active, device_label, npz, npz_sha256, npz_bytes,"
-                        + " screen_w, screen_h, avg_error_px, max_error_px, points_json, created_at, last_used_at)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        + " screen_w, screen_h, avg_error_px, max_error_px, grade, points_json,"
+                        + " created_at, last_used_at)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 name, first ? 1 : 0, deviceLabel, npz, npzSha256, npz == null ? null : npz.length,
-                screenW, screenH, avgErrorPx, maxErrorPx, pointsJson, now, first ? now : null);
+                screenW, screenH, avgErrorPx, maxErrorPx, grade, pointsJson, now, first ? now : null);
         Long id = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
         if (first) {
             notifyCalibChanged(id, npzSha256, screenW, screenH);
@@ -234,7 +237,8 @@ public class CalibProfileService {
 
     private Map<String, Object> summaryRow(long id, String name, boolean active, String deviceLabel,
                                            Integer screenW, Integer screenH, Double avgErrorPx,
-                                           Double maxErrorPx, String createdAt, String lastUsedAt) {
+                                           Double maxErrorPx, String grade, String createdAt,
+                                           String lastUsedAt) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
         m.put("name", name);
@@ -244,8 +248,7 @@ public class CalibProfileService {
         m.put("screenH", screenH);
         m.put("avgErrorPx", avgErrorPx);
         m.put("maxErrorPx", maxErrorPx);
-        m.put("thresholdPx", THRESHOLD_PX);
-        m.put("pass", avgErrorPx != null && avgErrorPx <= THRESHOLD_PX);
+        m.put("grade", grade);
         m.put("createdAt", createdAt);
         m.put("lastUsedAt", lastUsedAt);
         return m;

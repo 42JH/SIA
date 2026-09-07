@@ -21,7 +21,8 @@ import org.springframework.stereotype.Component;
 /**
  * 시선 보정 오케스트레이터 — 동시 진행 1건 (와이어프레임 시선 섹션, PROTOCOL.md §2.2).
  * ★ 재측정("다시 측정")은 보정 세션당 최대 3회이고 그 카운트는 BE(여기)가 센다 —
- *   사용자가 요구했든 오차가 기준(50px)을 넘어 FE 가 유도했든 같은 카운트다.
+ *   사용자가 요구했든 오차 등급이 나빠 FE 가 유도했든 같은 카운트다.
+ * ★ 오차 기준은 AI 서버가 관리한다 — BE 는 AI 가 보낸 grade·pass 를 중계하고 프로필에 적기만 한다.
  * 임시본(npz·결과)은 메모리에만 있다가 "완료"(calib_commit)에서 프로필로 확정된다.
  * "그만두기"(calib_cancel)면 폐기 — 이전 시선 데이터가 그대로 유지된다 (와이어프레임 중단 다이얼로그).
  */
@@ -51,6 +52,8 @@ public class CalibrationOrchestrator {
         volatile Integer screenH;
         volatile Double avgErrorPx;
         volatile Double maxErrorPx;
+        volatile String grade;
+        volatile Boolean pass;
         volatile String pointsJson;
 
         Session(String tempId) {
@@ -90,12 +93,24 @@ public class CalibrationOrchestrator {
         feHub.send("calib_precheck", d != null && d.isObject() ? d : Map.of());
     }
 
-    /** FE calib_point_shown {n} — AI 에 점 n 수집 시작 신호. */
-    public void onPointShown(int n) {
-        agentHub.send("calib_collect_start", Map.of("n", n));
+    /**
+     * FE calib_point_shown {n, x, y} — AI 에 점 n 수집 시작 신호.
+     * 좌표는 점을 실제로 그린 FE 가 정한다 (화면 3×3 중 n 번째 칸의 중앙점). AI 는 이 좌표를 기준점으로
+     * 삼아 dx, dy 를 낸다 — 멀티 모니터에서는 좌표가 음수일 수 있고 DPI 배율도 걸리므로 BE·AI 가
+     * 해상도만으로 되짚을 수 없다. 그린 쪽이 알려주는 게 유일하게 안전하다.
+     */
+    public void onPointShown(int n, Integer x, Integer y) {
+        if (x == null || y == null) {
+            log.warn("점 {} 의 표시 좌표가 없다 — AI 가 오차 기준점을 알 수 없다", n);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("n", n);
+        body.put("x", x);
+        body.put("y", y);
+        agentHub.send("calib_collect_start", body);
     }
 
-    /** AI calib_point_ready — FE 점 표시 지시 (페이로드 그대로). */
+    /** AI calib_point_ready {n, total} — FE 점 표시 지시 (페이로드 그대로. 좌표는 FE 가 정한다). */
     public void onPointReady(JsonNode d) {
         feHub.send("calib_point", d != null && d.isObject() ? d : Map.of());
     }
@@ -113,8 +128,9 @@ public class CalibrationOrchestrator {
     }
 
     /**
-     * AI calib_result — 시선 학습 결과. FE 에 통과 여부·재측정 잔여 횟수를 붙여 중계하고
+     * AI calib_result — 시선 학습 결과. AI 판정(grade·pass)과 재측정 잔여 횟수를 붙여 FE 로 중계하고
      * 통계(usage_event, kind=calibration)로도 남긴다 — "보정 정확도 저장" 확정 사항.
+     * points 는 [{n, dx, dy}] — 목표점을 원점으로 둔 오차 벡터다. BE 는 해석하지 않고 그대로 넘긴다.
      */
     public void onResult(String tempId, JsonNode d) {
         Session session = current.get();
@@ -124,15 +140,16 @@ public class CalibrationOrchestrator {
         }
         session.avgErrorPx = d.hasNonNull("avgErrorPx") ? d.path("avgErrorPx").asDouble() : null;
         session.maxErrorPx = d.hasNonNull("maxErrorPx") ? d.path("maxErrorPx").asDouble() : null;
+        session.grade = d.hasNonNull("grade") ? d.path("grade").asText() : null;
+        session.pass = d.hasNonNull("pass") ? d.path("pass").asBoolean() : null;
         session.pointsJson = d.has("points") ? d.path("points").toString() : null;
 
-        boolean pass = session.avgErrorPx != null && session.avgErrorPx <= CalibProfileService.THRESHOLD_PX;
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("avgErrorPx", session.avgErrorPx);
         body.put("maxErrorPx", session.maxErrorPx);
         body.put("points", d.path("points"));
-        body.put("pass", pass);
-        body.put("thresholdPx", CalibProfileService.THRESHOLD_PX);
+        body.put("grade", session.grade);
+        body.put("pass", session.pass);
         body.put("remeasuresUsed", session.remeasuresUsed);
         body.put("remeasuresLeft", MAX_REMEASURES - session.remeasuresUsed);
         feHub.send("calib_result", body);
@@ -144,6 +161,7 @@ public class CalibrationOrchestrator {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("avgErrorPx", session.avgErrorPx);
             payload.put("maxErrorPx", session.maxErrorPx);
+            payload.put("grade", session.grade);
             payload.put("remeasuresUsed", session.remeasuresUsed);
             event.put("payload", payload);
             usageEventBatchWriter.write(List.of(event));
@@ -170,6 +188,8 @@ public class CalibrationOrchestrator {
         session.remeasuresUsed++;
         session.avgErrorPx = null;
         session.maxErrorPx = null;
+        session.grade = null;
+        session.pass = null;
         session.pointsJson = null;
         session.npz = null;
         agentHub.send("calib_restart", Map.of("tempId", session.tempId));
@@ -199,7 +219,7 @@ public class CalibrationOrchestrator {
         }
         long id = calibProfileService.saveNew(nameOrNull, session.npz, session.npzSha256,
                 session.screenW, session.screenH, session.avgErrorPx, session.maxErrorPx,
-                session.pointsJson, deviceLabel);
+                session.grade, session.pointsJson, deviceLabel);
         boolean active = orZero(calibProfileService.activeIdOrNull()) == id;
 
         Map<String, Object> saved = new LinkedHashMap<>();

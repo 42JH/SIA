@@ -1098,8 +1098,7 @@ Content-Disposition: attachment; filename="wakeword.npz"
       "screenH": 1080,
       "avgErrorPx": 38.0,
       "maxErrorPx": 62.0,
-      "thresholdPx": 50.0,
-      "pass": true,
+      "grade": "good",
       "createdAt": "2026-03-12 09:30:00.000",
       "lastUsedAt": "2026-08-30 11:02:07.913"
     }
@@ -1111,15 +1110,14 @@ Content-Disposition: attachment; filename="wakeword.npz"
 |---|---|
 | `screenW` / `screenH` | 학습 해상도 |
 | `avgErrorPx` / `maxErrorPx` | 평균 · 최대 오차 |
-| `thresholdPx` | 통과 기준 50 |
-| `pass` | `avgErrorPx ≤ thresholdPx` |
+| `grade` | 오차 등급 `excellent \| good \| poor`. 판정 기준은 AI 서버가 관리하고 BE 는 받아 적는다. 등급이 없던 시절에 만든 보정은 `null` |
 
 #### `GET /api/calibs/{id}` — 상세
 
-목록 필드에 `pointsJson` 이 붙는다. 산점도 원본 JSON 문자열이다. `x, y` 는 목표점, `gx, gy` 는 측정 시선이다.
+목록 필드에 `pointsJson` 이 붙는다. 산점도 원본 JSON 문자열이고, `dx, dy` 는 목표점을 원점으로 둔 오차 벡터다.
 
 ```json
-{ "id": 1, "name": "내 보정 1", "active": true, "deviceLabel": "HD Webcam", "screenW": 1920, "screenH": 1080, "avgErrorPx": 38.0, "maxErrorPx": 62.0, "thresholdPx": 50.0, "pass": true, "createdAt": "2026-03-12 09:30:00.000", "lastUsedAt": "2026-08-30 11:02:07.913", "pointsJson": "[{\"n\":1,\"x\":160,\"y\":90,\"gx\":171,\"gy\":102}]" }
+{ "id": 1, "name": "내 보정 1", "active": true, "deviceLabel": "HD Webcam", "screenW": 1920, "screenH": 1080, "avgErrorPx": 38.0, "maxErrorPx": 62.0, "grade": "good", "createdAt": "2026-03-12 09:30:00.000", "lastUsedAt": "2026-08-30 11:02:07.913", "pointsJson": "[{\"n\":1,\"dx\":11,\"dy\":12}]" }
 ```
 
 #### `GET /api/calibs/{id}/npz` — 백업 다운로드
@@ -1983,7 +1981,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | BE 발신 | 해당 채널 구독자 전원에게 브로드캐스트 |
 | 프레임 상한 | 4MB. idle 타임아웃 없음 |
 | 절대 시각 | epoch millis 정수 (`deadlineMs`, `tsMs`) |
-| 좌표 | 가상 스크린 물리 픽셀 정수 (`gaze_cursor`, `calib_point`) |
+| 좌표 | 가상 스크린 물리 픽셀 정수 (`gaze_cursor`, `calib_point_shown`) |
 
 타입 표기:
 
@@ -2011,7 +2009,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `voice_commit` | `{tempId: string, name?: string, deviceLabel?: string}` | 보이스 프로필 확정. `name` 생략 시 `내 목소리 N`. `deviceLabel` 은 실제 녹음에 쓴 마이크의 OS 장치 이름 |
 | `voice_reg_cancel` | `{tempId: string}` | 보이스 등록 중단 |
 | `calib_start` | `{}` | 시선 보정 시작 |
-| `calib_point_shown` | `{n: int}` | 점 n 표시 완료 |
+| `calib_point_shown` | `{n: int, x: int, y: int}` | 점 n 표시 완료. `x, y` 는 실제로 그린 점의 좌표 (화면 3×3 중 n 번째 칸의 중앙점) |
 | `calib_restart` | `{}` | 재측정. 세션당 최대 3회 |
 | `calib_commit` | `{name?: string \| null, deviceLabel?: string}` | 보정 프로필 확정. `name` 생략 시 `내 보정 N`. `deviceLabel` 은 실제 보정에 쓴 카메라의 OS 장치 이름 |
 | `calib_cancel` | `{}` | 보정 중단. 이전 보정 유지 |
@@ -2121,7 +2119,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `type` | `data` | 설명 |
 |---|---|---|
 | `calib_precheck` | `{face: boolean, distance: ok \| near \| far, lighting: ok \| low}` | 위치 확인 상태 |
-| `calib_point` | `{n: int, total: int, x: int, y: int}` | 점 n 표시 지시 (total 9) |
+| `calib_point` | `{n: int, total: int}` | 점 n 표시 지시 (total 9). 좌표는 FE 가 정한다 |
 | `calib_result` | 아래 상세 | 보정 결과 |
 | `calib_limit` | `{message: string, remeasuresUsed: int}` | 재측정 한도 초과 |
 | `calib_saved` | `{id: long, name: string, avgErrorPx: number, active: boolean}` | 보정 프로필 저장 완료 |
@@ -2201,14 +2199,14 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 |---|---|:-:|---|
 | `avgErrorPx` | number \| null | O | 평균 오차 |
 | `maxErrorPx` | number \| null | O | 최대 오차 |
-| `points` | object[] \| null | O | `{n: int, x: int, y: int, gx: int, gy: int}`. `x, y` 목표점, `gx, gy` 측정 시선. AI 가 보내지 않았으면 `null` |
-| `pass` | boolean | O | `avgErrorPx ≤ thresholdPx` |
-| `thresholdPx` | number | O | 50 |
+| `points` | object[] \| null | O | `{n: int, dx: number, dy: number}`. 목표점을 원점으로 둔 오차 벡터. AI 가 보내지 않았으면 `null` |
+| `grade` | string \| null | O | `excellent \| good \| poor`. AI 가 판정한 오차 등급 |
+| `pass` | boolean \| null | O | AI 판정. 기준값은 AI 서버가 관리하므로 BE 는 계산하지 않는다 |
 | `remeasuresUsed` | int | O | 지금까지 쓴 재측정 횟수 |
 | `remeasuresLeft` | int | O | 남은 재측정 횟수. 0 이면 [다시 측정] 비활성화 |
 
 ```json
-{ "type": "calib_result", "data": { "avgErrorPx": 38.0, "maxErrorPx": 62.0, "points": [ { "n": 1, "x": 160, "y": 90, "gx": 171, "gy": 102 } ], "pass": true, "thresholdPx": 50.0, "remeasuresUsed": 1, "remeasuresLeft": 2 } }
+{ "type": "calib_result", "data": { "avgErrorPx": 38.0, "maxErrorPx": 62.0, "points": [ { "n": 1, "dx": 11, "dy": 12 } ], "grade": "good", "pass": true, "remeasuresUsed": 1, "remeasuresLeft": 2 } }
 ```
 
 그 밖의 예시:
@@ -2286,9 +2284,9 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `calib_precheck` | `{face: boolean, distance: ok \| near \| far, lighting: ok \| low}` | 위치 확인 상태. 바뀔 때마다 |
-| `calib_point_ready` | `{n: int, total: int, x: int, y: int}` | 점 n 수집 준비 |
+| `calib_point_ready` | `{n: int, total: int}` | 점 n 수집 준비. 좌표는 싣지 않는다 |
 | `calib_point_done` | `{n: int}` | 점 n 완료 |
-| `calib_result` | `{tempId: string, avgErrorPx: number, maxErrorPx: number, points: {n: int, x: int, y: int, gx: int, gy: int}[]}` | 학습 결과. npz 를 `PUT /api/agent/calibs/{tempId}/npz` 로 먼저 올린 뒤 보낸다 |
+| `calib_result` | `{tempId: string, avgErrorPx: number, maxErrorPx: number, points: {n: int, dx: number, dy: number}[], grade: string, pass: boolean}` | 학습 결과. `grade` 는 `excellent \| good \| poor` 이고 기준은 AI 서버가 관리한다. npz 를 `PUT /api/agent/calibs/{tempId}/npz` 로 먼저 올린 뒤 보낸다 |
 
 ```json
 { "type": "hello", "data": { "agentVersion": "0.4.2" } }
@@ -2303,7 +2301,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 { "type": "voice_captured", "data": { "tempId": "9f3a2c17", "durationSec": 4.2, "quality": "양호", "noise": "낮음" } }
 ```
 ```json
-{ "type": "calib_result", "data": { "tempId": "b81d203e", "avgErrorPx": 38.0, "maxErrorPx": 62.0, "points": [ { "n": 1, "x": 160, "y": 90, "gx": 171, "gy": 102 } ] } }
+{ "type": "calib_result", "data": { "tempId": "b81d203e", "avgErrorPx": 38.0, "maxErrorPx": 62.0, "points": [ { "n": 1, "dx": 11, "dy": 12 } ], "grade": "good", "pass": true } }
 ```
 
 ### 4.5 `/ws/agent` — BE → AI
@@ -2364,7 +2362,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `calib_start` | `{tempId: string}` | 보정 실행 지시 |
-| `calib_collect_start` | `{n: int}` | 점 n 수집 시작 |
+| `calib_collect_start` | `{n: int, x: int, y: int}` | 점 n 수집 시작. `x, y` 는 FE 가 그린 점의 좌표 — AI 가 오차를 재는 기준점 |
 | `calib_restart` | `{tempId: string}` | 재측정 |
 | `calib_cancel` | `{tempId: string}` | 보정 중단 |
 | `calib_registered` | `{id: long, active: boolean}` | 보정 프로필 확정 |

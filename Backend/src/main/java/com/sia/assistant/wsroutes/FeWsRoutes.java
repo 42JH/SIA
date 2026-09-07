@@ -61,7 +61,9 @@ public class FeWsRoutes {
             case "voice_reg_cancel" -> voiceRegistration.cancel(d.path("tempId").asText());
             // ---- 시선 보정 (재측정 최대 3회 — BE 가 센다)
             case "calib_start" -> calibration.start();
-            case "calib_point_shown" -> calibration.onPointShown(d.path("n").asInt());
+            case "calib_point_shown" -> calibration.onPointShown(d.path("n").asInt(),
+                    d.hasNonNull("x") ? d.path("x").asInt() : null,
+                    d.hasNonNull("y") ? d.path("y").asInt() : null);
             case "calib_restart" -> calibration.restart();
             case "calib_commit" -> calibration.commit(
                     d.hasNonNull("name") ? d.path("name").asText() : null,

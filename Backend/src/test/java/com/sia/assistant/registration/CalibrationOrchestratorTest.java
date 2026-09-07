@@ -31,6 +31,11 @@ import org.mockito.ArgumentCaptor;
  */
 class CalibrationOrchestratorTest {
 
+    /** AI 가 보내는 결과 — 오차 등급 판정은 AI 서버 소관이고 points 는 목표점 기준 dx, dy 다. */
+    private static final String RESULT_JSON = """
+            {"tempId":"%s","avgErrorPx":38.0,"maxErrorPx":62.0,\
+            "points":[{"n":1,"dx":11,"dy":12}],"grade":"good","pass":true}""";
+
     private final ObjectMapper om = new ObjectMapper();
     private AgentHub agentHub;
     private FeHub feHub;
@@ -73,22 +78,38 @@ class CalibrationOrchestratorTest {
     }
 
     @Test
-    @DisplayName("calib_result 는 통과 여부·기준(50px)·남은 재측정 횟수를 붙여 FE 로 나간다")
-    void resultCarriesPassAndBudget() throws Exception {
+    @DisplayName("calib_result 는 AI 판정(grade·pass)을 그대로, 남은 재측정 횟수를 붙여 FE 로 나간다")
+    void resultCarriesGradeAndBudget() throws Exception {
         String tempId = startAndGetTempId();
         orchestrator.restart(); // 1회 사용
 
-        orchestrator.onResult(tempId, om.readTree(
-                "{\"tempId\":\"" + tempId + "\",\"avgErrorPx\":38.0,\"maxErrorPx\":62.0,\"points\":[]}"));
+        orchestrator.onResult(tempId, om.readTree(RESULT_JSON.formatted(tempId)));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(feHub).send(eq("calib_result"), captor.capture());
         assertThat(captor.getValue())
+                .containsEntry("grade", "good")
                 .containsEntry("pass", true)
-                .containsEntry("thresholdPx", 50.0)
                 .containsEntry("remeasuresUsed", 1)
-                .containsEntry("remeasuresLeft", 2);
+                .containsEntry("remeasuresLeft", 2)
+                .doesNotContainKey("thresholdPx");
+    }
+
+    @Test
+    @DisplayName("점 n 의 표시 좌표는 FE 가 정한다 — calib_collect_start 에 x, y 가 실려 AI 로 간다")
+    void collectStartCarriesPointDrawnByFe() {
+        startAndGetTempId();
+
+        orchestrator.onPointShown(5, 960, 540);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(agentHub).send(eq("calib_collect_start"), captor.capture());
+        assertThat(captor.getValue())
+                .containsEntry("n", 5)
+                .containsEntry("x", 960)
+                .containsEntry("y", 540);
     }
 
     @Test
@@ -100,10 +121,9 @@ class CalibrationOrchestratorTest {
                         e -> assertThat(e.code).isEqualTo(ErrorCode.INVALID_REQUEST));
 
         orchestrator.attachNpz(tempId, new byte[]{1}, 1920, 1080);
-        orchestrator.onResult(tempId, om.readTree(
-                "{\"tempId\":\"" + tempId + "\",\"avgErrorPx\":38.0,\"maxErrorPx\":62.0,\"points\":[]}"));
+        orchestrator.onResult(tempId, om.readTree(RESULT_JSON.formatted(tempId)));
         when(settingsService.peekString("cameraDevice")).thenReturn("HD Webcam");
-        when(calibProfiles.saveNew(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(calibProfiles.saveNew(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(7L);
         when(calibProfiles.activeIdOrNull()).thenReturn(7L);
         when(calibProfiles.get(7L)).thenReturn(Map.of("name", "내 보정 1"));
@@ -111,7 +131,7 @@ class CalibrationOrchestratorTest {
         orchestrator.commit(null, null);
 
         verify(calibProfiles).saveNew(eq(null), any(), anyString(), eq(1920), eq(1080),
-                eq(38.0), eq(62.0), anyString(), eq("HD Webcam"));
+                eq(38.0), eq(62.0), eq("good"), anyString(), eq("HD Webcam"));
         verify(feHub).send(eq("calib_saved"), any());
         verify(agentHub).send(eq("calib_registered"), any());
     }
@@ -125,7 +145,8 @@ class CalibrationOrchestratorTest {
         verify(agentHub).send(eq("calib_cancel"), any());
         assertThatThrownBy(() -> orchestrator.commit(null, null))
                 .isInstanceOf(ApiException.class);
-        verify(calibProfiles, never()).saveNew(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(calibProfiles, never())
+                .saveNew(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
