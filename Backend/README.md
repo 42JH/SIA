@@ -29,7 +29,7 @@
   `bootRun` 은 자동으로 맞고, IDE 는 커밋된 공유 실행 설정(`.run/Backend bootRun.run.xml`, `.run/Backend.run.xml`)을 쓴다.
 - `127.0.0.1:8080` 에만 바인딩된다 — 이 프로세스는 창을 닫고 파일을 지운다. LAN 에 열면 그 권한이 네트워크로 나간다.
 - 첫 기동에 Flyway 가 스키마와 설정 싱글턴 시드를 만들고, `ToolCatalogSync` 가 코드의 도구 목록
-  (`ToolCatalog` 27개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
+  (`ToolCatalog` 29개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
   `DefaultMappingBootstrap` 이 gesture 테이블이 비어 있으면 기본 매핑 11건을 넣는다.
 - AI 파트는 `%APPDATA%/SIA/runtime.json` 의 `{token, port, pid}` 를 읽어 접속한다.
 
@@ -69,9 +69,10 @@ com.sia.assistant
 ├── relay/         온보딩 등록 중계(호출어 10샘플·명령 5문장) + AI 동기화 페이로드 조립(AgentSyncNotifier)
 ├── profile/       ★보이스·시선 보정 프로필 (각 최대 4개 — 사용 1·스톡 3, 장비 맵핑, 프로필별 정확도)
 ├── model/         HuggingFace 다운로드·sha256 검증·진행률 (01) — 목록 models.json 은 아직 빈 배열
-├── mcp/           ToolCatalog(27)·ToolGate·RefResolver·ToolInvoker + tools/
+├── mcp/           ToolCatalog(29)·ToolGate·RefResolver·ToolInvoker + tools/
 ├── context/       컨텍스트 체인 판별 (video·youtube·explorer …)
 ├── domtext/       확장 왕복 — requestId 상관, 4초 타임아웃, 20,000자 컷
+├── control/process/ 앱 실행(화이트리스트)·앱 스캔·브라우저 검색(확장 탭 ↔ OS 기본 브라우저)
 ├── session/       세션 타이머 — BE 소유, 만료를 능동 push (ACTIVE/PASSIVE + deadlineMs)
 ├── settings/      설정 싱글턴·blob(wakeword)·제스처 매핑(원천 테이블, 제스처별 템플릿 npz 포함)·전체 삭제
 ├── control/       JNA 창 제어·SendInput(휠·미디어 키)·앱 실행·휴지통·파일 저장·탐색기 항목(com/, explorer/)
@@ -87,7 +88,7 @@ com.sia.assistant
 | 호출어 | `시아` | V1 시드 (`seed/default-settings.json` 과 동일 값) |
 | 설정 키 | 6종 (`wakeWord`·`sessionSeconds`·`autoStart`·`gazeCursor`·`micDevice`·`cameraDevice`) | `settings/SettingsSchema` — 자유 JSON 이지만 이 키들은 유실·오타입이 막힌다. 옛 `screen` 은 삭제 |
 | 세션 유지 | 15초 (기본, 변경 가능) | `settings.sessionSeconds` — 개시·갱신마다 다시 읽어 다음 세션부터 적용 |
-| 도구 | 27개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
+| 도구 | 29개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region`, 2026-09-07 `volume.set`·`browser.search` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
 | 기본 제스처 매핑 | 11건 (실행 가능 9건) | `DefaultMappings` — 기동 시 gesture 가 비어 있으면 주입. FACE 2건은 스텝 없음 (dangling) |
 | 기록 보존 | 400일 | 대시보드의 가장 긴 축이 12개월 |
 | 프로필 | 보이스·시선 각 최대 4개 (사용 1+스톡 3) | 회의 확정 2026-09-01. 시선 재측정은 세션당 3회 (BE 카운트) |

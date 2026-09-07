@@ -10,7 +10,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 | [0](#0-공통-규약) | 공통 규약 — 주소 · 인증 · 시각 · 오류 응답 · 목록 형식 |
 | [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장비 맵핑 |
 | [2](#2-rest--ai-용) | REST (AI) — npz · 오디오 업/다운로드, 통계 배치 |
-| [3](#3-mcp-도구-28개) | MCP 도구 28개 — 인자 · 응답 · 실패 코드 |
+| [3](#3-mcp-도구-29개) | MCP 도구 29개 — 인자 · 응답 · 실패 코드 |
 | [4](#4-websocket-메시지-양식) | WebSocket 메시지 양식 — 봉투 · 채널별 이벤트의 필드 타입 · 예시 |
 | [5](#5-부록--엔드포인트--이벤트-색인) | 부록 — 엔드포인트 · 이벤트 색인 |
 
@@ -1454,7 +1454,7 @@ If-None-Match: "8c22b1de44a0…"
 
 ---
 
-## 3. MCP 도구 28개
+## 3. MCP 도구 29개
 
 ### 3.1 호출 · 반환 형식 요약
 
@@ -1948,6 +1948,56 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `level` 누락 | `INVALID_REQUEST` | 볼륨 값(level)이 필요합니다 (0~100) |
 | 출력 장치 없음 · 오디오 접근 실패 | `FAILED` | 시스템 볼륨을 조절하지 못했습니다 |
 
+### 3.23 `browser.search` — 브라우저 검색 · 주소 열기 · S
+
+기본 브라우저로 검색어를 찾거나 주소를 연다. **여는 경로가 둘이고, 갈림은 브라우저 확장(§4.6) 연결 여부 하나다.** 어느 쪽으로 열리든 `ok: true` 이고, 차이는 `via` 와 `domAvailable` 두 필드로만 드러난다.
+
+| 인자 | 필수 | 규칙 |
+|---|:-:|---|
+| `query` | O | 검색어, 또는 `http://` · `https://` 로 시작하는 주소. 500자 이하 |
+
+`query` 를 실제로 열 주소로 바꾸는 규칙은 셋뿐이다.
+
+| `query` | 여는 주소 |
+|---|---|
+| `http(s)://` 로 시작 | 그 주소 그대로 |
+| 다른 스킴(`file:` · `javascript:` · `data:` · `chrome:` …) 이거나 `://` 를 포함 | 열지 않는다 — `INVALID_REQUEST` |
+| 그 외 전부 | `https://www.google.com/search?q=<URL 인코딩>`. `www.naver.com` 처럼 스킴 없는 도메인도 검색어로 넘긴다 |
+
+```json
+{ "query": "반도체 수출 전망" }
+```
+
+확장이 연결돼 있을 때 — 확장이 활성 크롬 창에 **새 탭**으로 연다.
+
+```json
+{ "content": [{ "type": "text", "text": "{\"ok\":true,\"via\":\"extension\",\"url\":\"https://www.google.com/search?q=%EB%B0%98%EB%8F%84%EC%B2%B4+%EC%88%98%EC%B6%9C+%EC%A0%84%EB%A7%9D\",\"title\":\"반도체 수출 전망 - Google 검색\",\"tabId\":42,\"domAvailable\":true}" }], "isError": false, "structuredContent": { "ok": true, "via": "extension", "url": "https://www.google.com/search?q=%EB%B0%98%EB%8F%84%EC%B2%B4+%EC%88%98%EC%B6%9C+%EC%A0%84%EB%A7%9D", "title": "반도체 수출 전망 - Google 검색", "tabId": 42, "domAvailable": true } }
+```
+
+확장이 없을 때 — OS 기본 브라우저로 연다.
+
+```json
+{ "content": [{ "type": "text", "text": "{\"ok\":true,\"via\":\"os\",\"url\":\"https://www.google.com/search?q=%EB%B0%98%EB%8F%84%EC%B2%B4+%EC%88%98%EC%B6%9C+%EC%A0%84%EB%A7%9D\",\"domAvailable\":false}" }], "isError": false, "structuredContent": { "ok": true, "via": "os", "url": "https://www.google.com/search?q=%EB%B0%98%EB%8F%84%EC%B2%B4+%EC%88%98%EC%B6%9C+%EC%A0%84%EB%A7%9D", "domAvailable": false } }
+```
+
+| 필드 | 설명 |
+|---|---|
+| `via` | `extension` 또는 `os`. 실제로 연 주체 |
+| `url` | 실제로 연 주소 |
+| `title` | 확장 경로에서만 온다. 2.5초 안에 로딩이 끝나지 않으면 `null` |
+| `tabId` | 확장 경로에서만 온다. 크롬 탭 id — 참고값이고 BE 가 이 값으로 뭘 하지는 않는다 |
+| `domAvailable` | `true` 면 이어서 `dom_text_request`(§4.5)로 그 페이지 본문을 읽을 수 있다. `false` 면 열어 준 것까지만 확실하다 — **AI 는 이때 본문을 읽었다고 말하지 않는다** |
+
+확장이 연결돼 있어도 4초 안에 회신하지 않거나 실패를 보고하면 OS 경로로 폴백해 `via: "os"` 로 답한다. "검색해줘"가 조용히 실패하지 않게 하기 위한 것이고, 그 창은 이미 확장이 응답하지 못하는 상태라 탭이 둘 열리지는 않는다.
+
+| 실패 | `code` | `message` |
+|---|---|---|
+| `query` 누락 · 공백뿐 | `INVALID_REQUEST` | 검색어나 주소(query)가 필요합니다 |
+| 500자 초과 | `INVALID_REQUEST` | 검색어가 너무 깁니다 (500자 이하) |
+| `http(s)` 가 아닌 스킴 | `INVALID_REQUEST` | http(s) 가 아닌 주소는 열 수 없습니다. 검색어를 넘기세요 |
+| host 가 없는 `http(s)` 주소 | `INVALID_REQUEST` | 열 수 없는 주소입니다. 올바른 http(s) 주소이거나 검색어여야 합니다 |
+| 두 경로 다 브라우저를 못 띄움 | `FAILED` | 브라우저를 열지 못했습니다. 잠시 후 다시 시도해주세요 |
+
 ---
 
 ## 4. WebSocket 메시지 양식
@@ -2397,8 +2447,10 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 |---|---|---|---|
 | 확장 → BE | `hello` | `{extVersion: string}` | 접속 직후 1회 |
 | 확장 → BE | `dom_text` | `{requestId: string, available: boolean, url?: string, title?: string, text?: string, truncated?: boolean, reason?: string}` | 본문 응답. `text` 는 20,000자 이하 |
+| 확장 → BE | `browser_open` | `{requestId: string, ok: boolean, url?: string, title?: string, tabId?: number, reason?: string}` | 탭 열기 결과. `title` 은 2.5초 안에 로딩이 끝났을 때만 채워진다 |
 | 확장 → BE | `ping` | `{}` | 20초 주기 하트비트 |
 | BE → 확장 | `dom_text_request` | `{requestId: string}` | 활성 탭 본문 요청 |
+| BE → 확장 | `browser_open_request` | `{requestId: string, url: string}` | 새 탭으로 `url` 열기 요청. `url` 은 항상 `http(s)` 다 (§3.23) |
 | BE → 확장 | `pong` | `{}` | `ping` 응답 |
 | BE → 확장 | `error` | `{message: string, of?: string}` | `type` 이 없는 메시지, 또는 처리 중 예외. 보낸 소켓에만 |
 
@@ -2486,6 +2538,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `context.get` | | | §3.2 |
 | `app.list` | | | §3.3 |
 | `app.launch` | ● | | §3.4 |
+| `browser.search` | ● | | §3.23 |
 | `window.list` | | | §3.5 |
 | `window.focus` · `window.minimize` · `window.maximize` · `window.restore` | ● | | §3.6 |
 | `window.resize` | ● | | §3.7 |

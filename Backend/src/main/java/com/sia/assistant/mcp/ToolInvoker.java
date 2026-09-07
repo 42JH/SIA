@@ -1,6 +1,7 @@
 package com.sia.assistant.mcp;
 
 import com.sia.assistant.mcp.tools.AppTools;
+import com.sia.assistant.mcp.tools.BrowserTools;
 import com.sia.assistant.mcp.tools.ContextTools;
 import com.sia.assistant.mcp.tools.ExplorerTools;
 import com.sia.assistant.mcp.tools.FilesTools;
@@ -32,6 +33,7 @@ public class ToolInvoker {
 
     private final ContextTools contextTools;
     private final AppTools appTools;
+    private final BrowserTools browserTools;
     private final WindowTools windowTools;
     private final ExplorerTools explorerTools;
     private final ScrollTools scrollTools;
@@ -42,13 +44,15 @@ public class ToolInvoker {
     private final ScreenTools screenTools;
     private final SessionTools sessionTools;
 
-    public ToolInvoker(ContextTools contextTools, AppTools appTools, WindowTools windowTools,
+    public ToolInvoker(ContextTools contextTools, AppTools appTools, BrowserTools browserTools,
+                       WindowTools windowTools,
                        ExplorerTools explorerTools, ScrollTools scrollTools, MediaTools mediaTools,
                        VolumeTools volumeTools, FilesTools filesTools, SystemTools systemTools,
                        ScreenTools screenTools, SessionTools sessionTools) {
         this.screenTools = screenTools;
         this.contextTools = contextTools;
         this.appTools = appTools;
+        this.browserTools = browserTools;
         this.windowTools = windowTools;
         this.explorerTools = explorerTools;
         this.scrollTools = scrollTools;
@@ -78,6 +82,7 @@ public class ToolInvoker {
             case "context.get" -> contextTools.getResult();
             case "app.list" -> appTools.listResult();
             case "app.launch" -> appTools.launchResult(str(args, "appRef"));
+            case "browser.search" -> browserTools.searchResult(str(args, "query"));
             case "window.list" -> windowTools.listResult();
             case "window.focus" -> windowTools.focusResult(str(args, "winRef"));
             case "window.minimize" -> windowTools.minimizeResult(str(args, "winRef"));

@@ -46,8 +46,8 @@ class AssistantApplicationTests {
     @Test
     @DisplayName("기동이 도구 목록과 기본 매핑을 DB 에 넣는다 — 마이그레이션 시드 없이")
     void bootSeedsToolsAndDefaultMappings() {
-        // ToolCatalogSync(@Order 0) — ToolCatalog 28개가 tool 테이블에 올라간다
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tool", Integer.class)).isEqualTo(28);
+        // ToolCatalogSync(@Order 0) — ToolCatalog 29개가 tool 테이블에 올라간다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tool", Integer.class)).isEqualTo(29);
         // DefaultMappingBootstrap(@Order 5) — 빈 gesture 테이블에 기본 매핑 11건 (실행 가능 9건)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture", Integer.class)).isEqualTo(11);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture_step", Integer.class)).isEqualTo(9);

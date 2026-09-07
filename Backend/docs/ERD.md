@@ -494,7 +494,7 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다.
 
 | 순서 | 대상 | 조건 | 내용 |
 |---|---|---|---|
-| 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 28개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
+| 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 29개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
 | 2 | `gesture` · `gesture_step` | `gesture` 가 비어 있을 때만 | 기본 제스처 매핑 11건 |
 
 `tool` 28행:
@@ -643,7 +643,7 @@ CREATE TABLE `calib_profile` (
 );
 
 CREATE TABLE `tool` (
-	`name`	VARCHAR(64)	NOT NULL	COMMENT 'MCP 도구 이름. 카탈로그 28개',
+	`name`	VARCHAR(64)	NOT NULL	COMMENT 'MCP 도구 이름. 카탈로그 29개',
 	`description`	TEXT	NOT NULL	COMMENT 'LLM 에 노출되는 설명 원문',
 	`input_schema_json`	TEXT	NOT NULL	COMMENT '인자 JSON Schema',
 	`session_required`	TINYINT	NOT NULL	DEFAULT 0	COMMENT '0 | 1. S 플래그',
