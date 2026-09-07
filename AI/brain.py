@@ -593,16 +593,20 @@ class Brain(threading.Thread):
                     close_window(target)  # 확인 요청 당시의 그 창만 닫힌다 (포커스 무관)
                     self.overlay.toast("창을 닫았습니다")
                 elif kind == "delete_file":
-                    import send2trash
+                    # BE 연결 시 files.delete(휴지통 이동)로 이관 — 확인은 AI 가 이미 받았고
+                    # BE 는 재확인 없이 실행(§1). 실패·미연결이면 로컬 send2trash 폴백.
+                    if not self._try_be("files.delete", {"paths": list(target)},
+                                        f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
+                        import send2trash
 
-                    ok = 0
-                    for p in target:
-                        try:
-                            send2trash.send2trash(p)  # 완전삭제 아님 — 휴지통 (복구 가능)
-                            ok += 1
-                        except Exception as e:
-                            print(f"[삭제 실패] {p}: {e}")
-                    self.overlay.toast(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                        ok = 0
+                        for p in target:
+                            try:
+                                send2trash.send2trash(p)  # 완전삭제 아님 — 휴지통 (복구 가능)
+                                ok += 1
+                            except Exception as e:
+                                print(f"[삭제 실패] {p}: {e}")
+                        self.overlay.toast(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
             else:
                 self.overlay.toast("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
@@ -662,7 +666,13 @@ class Brain(threading.Thread):
             ts = time.strftime("%H%M%S")
             text = (result.get("save_text") or "").strip()
             if len(text) >= 40:  # 줄글 대상 — 픽셀 크롭은 문맥이 잘리므로 내용 자체를 저장
-                path = SAVE_DIR / f"저장_{ts}.txt"
+                name = f"저장_{ts}.txt"
+                # BE 연결 시 files.save(Documents/MotionControl)로 이관, 아니면 로컬 저장.
+                # 이미지 크롭은 화면 캡처 MCP 도구가 없어 항상 로컬로 남는다.
+                if self._try_be("files.save", {"name": name, "content": text},
+                                f"글로 저장했습니다 → {name}"):
+                    return
+                path = SAVE_DIR / name
                 path.write_text(text + "\n", encoding="utf-8")
                 self.overlay.toast(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
                 return
@@ -684,6 +694,9 @@ class Brain(threading.Thread):
             img.save(path)
             self.overlay.toast(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
         else:  # answer / none — 짧으면 토스트, 길면 플로팅 패널
+            be = self._be()
+            if be and say:
+                be.notice(say)  # 지능형 결과를 FE 에도 표시(§1 notice)
             if len(say) > 60:
                 self.overlay.panel(say)
             else:
