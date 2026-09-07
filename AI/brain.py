@@ -360,11 +360,12 @@ def jpeg_bytes(pil_img, max_w=1400, quality=75):
 class Brain(threading.Thread):
     """요청 큐를 소비하는 워커 — 메인 루프(영상 처리)를 API 지연으로 막지 않는다."""
 
-    def __init__(self, overlay, act=True, speaker=None):
+    def __init__(self, overlay, act=True, speaker=None, link=None):
         super().__init__(daemon=True)
         self.overlay = overlay
         self.act = act  # False면 실행 없이 로그만 (--no-actions)
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
+        self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
         self.queue = []
         self.busy = 0
         self.session_until = 0.0
@@ -388,8 +389,32 @@ class Brain(threading.Thread):
     def enabled(self):
         return self._client is not None
 
+    def _be(self):
+        """BE 로 실행·세션을 넘길 상태면 링크를, 아니면 None(로컬 폴백)."""
+        return self.link if (self.link and self.link.connected) else None
+
+    def _session_until(self):
+        """활성 세션 마감(모노토닉). BE 연결 시 BE 소유 타이머, 아니면 로컬."""
+        be = self._be()
+        return be.session_until_mono if be else self.session_until
+
+    def _try_be(self, tool, args, ok_say):
+        """BE MCP 도구 시도 → 실제로 실행됐으면(ok True) 토스트 후 True.
+        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
+        be = self._be()
+        if not be:
+            return False
+        ok, payload = be.call(tool, args or {})
+        if ok is True:
+            msg = payload.get("message") if isinstance(payload, dict) else ""
+            self.overlay.toast(ok_say or msg or "완료")
+            return True
+        if ok is False and isinstance(payload, dict):
+            print(f"[BE {tool} → 로컬 폴백] {payload.get('code')}: {payload.get('message')}")
+        return False
+
     def session_left(self):
-        return max(0.0, self.session_until - time.monotonic())
+        return max(0.0, self._session_until() - time.monotonic())
 
     def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, dom=None):
         """t_utter = 발화 시작 시각, target_hwnd = 그 순간의 포커스 창, dom = 브라우저
@@ -409,7 +434,7 @@ class Brain(threading.Thread):
             try:
                 if EVAL_CAPTURE:
                     pq = self._pending[0] if self._pending and t_utter < self._pending[2] else None
-                    capture_case(audio, full_img, crop_img, t_utter < self.session_until, pq, dom)
+                    capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
                 # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
                 sim = None
@@ -418,7 +443,7 @@ class Brain(threading.Thread):
                     if not ok:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
-                                      session=t_utter < self.session_until, **audio_stats(audio))
+                                      session=t_utter < self._session_until(), **audio_stats(audio))
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
@@ -433,7 +458,7 @@ class Brain(threading.Thread):
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
                               speaker_sim=round(sim, 3) if sim is not None else None,
-                              session=t_utter < self.session_until,
+                              session=t_utter < self._session_until(),
                               audio_is_speech=result.get("audio_is_speech"),
                               wake_heard=result.get("wake_heard"),
                               is_command=result.get("is_command"),
@@ -463,7 +488,7 @@ class Brain(threading.Thread):
                 return None
         try:
             text, sec = self.router.transcribe(audio)
-            hit = self.router.route(text, t_utter < self.session_until)
+            hit = self.router.route(text, t_utter < self._session_until())
             print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
             return hit or (text or None)
         except Exception as e:
@@ -476,7 +501,7 @@ class Brain(threading.Thread):
 
         t_utter = t_utter or time.monotonic()
         pending_q = self._pending[0] if self._pending and t_utter < self._pending[2] else None
-        prompt = build_prompt(t_utter < self.session_until, pending_q)
+        prompt = build_prompt(t_utter < self._session_until(), pending_q)
 
         # 이미지 다이어트 + thinking 끄기 = 실측 8~9초 → 2.4~3.0초 (품질 손실 체감 없음)
         parts = [types.Part.from_bytes(data=wav_bytes(audio), mime_type="audio/wav")]
@@ -525,23 +550,32 @@ class Brain(threading.Thread):
         if not result.get("is_command"):
             # "자비스" 하고 이름만 부른 경우 — 명령은 아니지만 세션을 열고 응답한다.
             # (사람들은 "자비스, (쉬고) 크롬 켜줘"처럼 말해서 발화가 둘로 쪼개진다)
-            if result.get("wake_heard") and t_utter >= self.session_until:
-                self.session_until = time.monotonic() + SESSION_S
+            if result.get("wake_heard") and t_utter >= self._session_until():
+                be = self._be()
+                if be:
+                    be.renew(opening=True)  # BE 가 세션 개시 → session_state 로 마감시각 회신
+                self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
                 self.overlay.toast("네, 듣고 있어요")
             return
         # 코드 차원 호출어 게이트: 세션이 없을 땐 wake_heard 없이는 절대 통과 못 함 —
         # 환각 한 번이 90초 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
-        if t_utter >= self.session_until and not result.get("wake_heard"):
+        if t_utter >= self._session_until() and not result.get("wake_heard"):
             print(f"[무시] 호출어 없음: {result.get('transcript', '')!r}")
             return
         action = result.get("action", "none")
         say = result.get("say") or ""
         if action == "end_session":  # 세션 갱신보다 먼저 — '그만'이 세션을 연장하면 안 됨
+            be = self._be()
+            if be:
+                be.end()
             self.session_until = 0.0
             self._pending = None
             self.overlay.toast(say or "대기 모드로 전환합니다")
             return
-        self.session_until = time.monotonic() + SESSION_S  # 유효 명령이 세션을 열고/갱신
+        be = self._be()
+        if be:  # 유효 명령 판정 후에만 — 미활성이면 개시(session_open), 활성이면 연장(session.extend)
+            be.renew(opening=t_utter >= self._session_until())
+        self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
         if not self.act:
             self.overlay.toast(f"[시늉만] {action}: {say}")
             return
