@@ -65,6 +65,8 @@ class VadSegmenter:
             if self._hot >= self.start_blocks:
                 self.recording = True
                 self._buf = list(self._preroll)
+                self._preroll = []  # 링은 녹음 중엔 안 채워지므로 비운다 — 안 비우면 직전 조각 종료 후 preroll_s 안에
+                # 열린 조각 앞에 직전 녹음 이전의 옛 오디오가 붙어 시간이 끊긴다 (유튜브 12초 상한 연속 절단 때 거의 매 조각).
                 self._hot = 0
                 self._quiet = 0
                 self._speech = self.start_blocks
