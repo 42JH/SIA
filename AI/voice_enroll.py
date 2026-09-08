@@ -21,7 +21,7 @@ from voice import SR, VadSegmenter
 HERE = Path(__file__).parent
 PROFILE = HERE / "models" / "speaker.npz"
 PHRASES = [
-    "자비스 지금 화면 좀 정리해줘",
+    "시아야 지금 화면 좀 정리해줘",
     "오늘 날씨가 참 맑고 좋다",
     "이 파일을 다른 폴더로 옮겨줄래",
     "다음 영상으로 넘어가고 음소거 해줘",

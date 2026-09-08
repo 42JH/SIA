@@ -28,7 +28,7 @@ class VadSegmenter:
 
     def __init__(self, sr=SR, block=BLOCK, start_blocks=2, end_silence_s=0.55,
                  preroll_s=0.7, max_s=12.0, min_speech_s=0.35, floor=350.0):
-        # start 2블록(60ms)+프리롤 0.7초 — 호출어 첫 음절("자비스")이 잘리면
+        # start 2블록(60ms)+프리롤 0.7초 — 호출어 첫 음절("시아야")이 잘리면
         # 명령 전체가 기각되므로, 시작은 후하게 잡는다 (오탐은 어차피 LLM이 거름)
         self.block_dur = block / sr
         self.start_blocks = start_blocks
