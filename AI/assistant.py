@@ -165,6 +165,9 @@ def main():
 
             link = AgentLink()
             print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
+            from calib_bridge import CalibSession
+
+            link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
         except Exception as e:
             print(f"BE 연결 계층 비활성: {e}")
 
@@ -214,6 +217,8 @@ def main():
                 continue
             seq = s
             frame = cv2.flip(f, 1)
+            if link and link.calib and link.calib.active:
+                link.calib.feed_frame(frame)  # 보정 중이면 시선 특징 수집(비활성 시 no-op)
             now = time.monotonic()
 
             # --- 음성 이벤트 처리 ---

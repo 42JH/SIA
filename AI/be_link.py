@@ -122,6 +122,7 @@ class AgentLink:
         self.connected = False          # WS 열림 (MCP 는 lazy)
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
         self.be_session_id = None
+        self.calib = None               # CalibSession 또는 None (assistant가 주입)
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -169,6 +170,14 @@ class AgentLink:
             else:  # PASSIVE — 만료·종료
                 self.session_until_mono = 0.0
                 self.be_session_id = None
+        elif self.calib and t and t.startswith("calib_"):
+            c = self.calib
+            if t == "calib_start":         c.on_start(d.get("tempId"))
+            elif t == "calib_collect_start": c.on_collect_start(d.get("n"), d.get("x"), d.get("y"))
+            elif t == "calib_restart":     c.on_restart(d.get("tempId"))
+            elif t == "calib_registered":  c.on_registered(d.get("id"), d.get("active"))
+            elif t == "calib_changed":     c.on_changed(d)
+            elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
         # ponytail: hello_ack/recognition_start/settings_changed/wipe 는 로그만.
         # 설정·blob 동기화는 9/11 MVP 합류 후 붙인다(-61). 모르는 type 은 무시(§0).
 
