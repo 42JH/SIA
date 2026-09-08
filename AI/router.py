@@ -49,8 +49,7 @@ END_KO = ("이제그만", "그만해", "이제됐어")    # 부분 일치 허용
 # 호출어의 STT 흔한 오표기 — 동음·유사 발음만 (실측 기반으로 추가)
 # NOTE(튜닝): 미인식↑면 변형을 추가하고, 엉뚱한 발화가 통과하면 뺀다.
 # 짧은 변형("시아"·"시야")은 시아버지·시야 같은 일상 단어에 오탐하므로 넣지 않는다
-WAKE_VARIANTS = {"시아야": ("시아야", "시야야", "씨아야"),
-                 "자비스": ("자비스", "쟈비스", "자비수")}
+WAKE_VARIANTS = {"시아야": ("시아야", "시야야", "씨아야")}
 
 
 def _compact(text):
@@ -128,7 +127,7 @@ if __name__ == "__main__":
     elif "--bench" in sys.argv:  # STT 지연 실측: 2초짜리 무음+톤 오디오로 왕복 시간
         import numpy as np
 
-        r = Router("자비스")
+        r = Router("시아야")
         sr = 16000
         t = np.arange(sr * 2) / sr
         audio = (np.sin(2 * np.pi * 440 * t) * 3000).astype(np.int16)

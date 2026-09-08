@@ -51,7 +51,7 @@ def selftest():
     assert ok
     ok, bad = match({"action": "open_app"}, {"action": "media", "is_command": True})
     assert not ok and bad[0].startswith("action")
-    ok, _ = match({"transcript~": "계산기"}, {"transcript": "자비스 계산기 켜줘"})
+    ok, _ = match({"transcript~": "계산기"}, {"transcript": "시아야 계산기 켜줘"})
     assert ok
     ok, _ = match({"transcript~": "계산기"}, {"transcript": "음악 틀어줘"})
     assert not ok

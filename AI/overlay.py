@@ -18,7 +18,7 @@ TOAST_W, TOAST_H = 760, 38
 PANEL_W, PANEL_H = 560, 300
 STATE_COLORS = {
     "PASSIVE": "#8a8a8a", "ACTIVE": "#7fd47f", "PINCH": "#7fb2ff", "DRAG": "#ffb27f",
-    # 자비스(assistant) 모드 상태
+    # 시아(assistant) 모드 상태
     "IDLE": "#8a8a8a", "LISTENING": "#ff9a9a", "THINKING": "#ffd47f",
 }
 

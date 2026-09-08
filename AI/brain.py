@@ -599,8 +599,8 @@ class Brain(threading.Thread):
         if not result.get("audio_is_speech", True):
             return  # 잡음/기계음 — 조용히 무시
         if not result.get("is_command"):
-            # "자비스" 하고 이름만 부른 경우 — 명령은 아니지만 세션을 열고 응답한다.
-            # (사람들은 "자비스, (쉬고) 크롬 켜줘"처럼 말해서 발화가 둘로 쪼개진다)
+            # "시아야" 하고 이름만 부른 경우 — 명령은 아니지만 세션을 열고 응답한다.
+            # (사람들은 "시아야, (쉬고) 크롬 켜줘"처럼 말해서 발화가 둘로 쪼개진다)
             if result.get("wake_heard") and t_utter >= self._session_until():
                 be = self._be()
                 if be:
