@@ -41,6 +41,12 @@ WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openW
 WAKE_THRESHOLD = 0.5      # NOTE(튜닝): predict_clip 최대 점수 하한. 노트북 마이크+Windows 오디오 향상
                           # 채널 실측 기준 인식 98.3%·본인 비호출 오발 0 — 채널이 바뀌면 재선정할 것
 WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정만 로그, 발화는 그대로 LLM으로 (실측용)
+SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(시동어 점수 최고점) 앞 1 s + 뒤 2 s 만 넣는다.
+                          # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
+                          # 앞을 1.7 s 로 늘리거나 앞뒤 1.5 s 씩 잡으면 배경음이 더 들어와 본인 호출을 놓친 사례 있음.
+                          # 발화가 3 s 이하거나 시동어를 못 넘은 발화(세션 안 명령)는 자르지 않는다.
+WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
+                          # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
 
 # LLM이 고른 앱만 허용 (임의 문자열 실행 금지 — 프롬프트 인젝션 방어선)
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
@@ -341,6 +347,21 @@ def load_wake_model():
         return None
 
 
+def speaker_input(audio, i_max, sr=16000):
+    """화자 인증에 넣을 오디오 → (audio, 시작 s, 끝 s). 시동어를 못 넘었거나(i_max None) 발화가 3 s 이하면 원본 그대로, (None, None).
+
+    발화 앞뒤(녹음 시작 전 여유분·말 끝난 뒤 꼬리)에 배경음이 길게 붙을수록 목소리 특징(임베딩)이 흐려져 본인 유사도가 내려간다.
+    그래서 화자 판정은 항상 호출어 끝 기준 3 s 만 보게 해 VAD 설정 변화와 떼어 놓는다. 호출어 없는 발화(세션 안 명령)는
+    시동어 최고점 위치가 아무 데나 찍히므로 기준점으로 쓰지 않는다.
+    """
+    win = int((SPEAKER_CROP_BEFORE_S + SPEAKER_CROP_AFTER_S) * sr)
+    if i_max is None or len(audio) <= win:
+        return audio, None, None
+    c = int((i_max * WAKE_FRAME_S - WAKE_PAD_S) * sr)
+    lo = min(max(c - int(SPEAKER_CROP_BEFORE_S * sr), 0), len(audio) - win)
+    return audio[lo:lo + win], round(lo / sr, 2), round((lo + win) / sr, 2)
+
+
 def wake_rejects(score, in_session, shadow=False):
     """게이트 판정 — True면 LLM에 보내지 않는다. 세션 안(호출어 불필요)과 섀도(로그만)는 항상 통과."""
     return score < WAKE_THRESHOLD and not in_session and not shadow
@@ -476,9 +497,12 @@ class Brain(threading.Thread):
                 # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
                 # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
                 # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
-                wake_score = None
+                wake_score, i_max = None, None
                 if self.wake is not None:
-                    wake_score = round(float(max(p[WAKE_MODEL.stem] for p in self.wake.predict_clip(audio))), 3)  # np.float32는 json 불가
+                    scores = [float(p[WAKE_MODEL.stem]) for p in self.wake.predict_clip(audio)]  # np.float32는 json 불가
+                    wake_score = round(max(scores), 3)
+                    if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
+                        i_max = int(np.argmax(scores))
                     if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
                         print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
                         log_utterance(gate="wake_reject", wake_score=wake_score,
@@ -486,13 +510,14 @@ class Brain(threading.Thread):
                         continue
                 # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
-                sim = None
+                sim, crop_t0, crop_t1 = None, None, None
                 if self.speaker is not None and self.speaker.enrolled:
-                    ok, sim = self.speaker.verify(audio)
+                    spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max)
+                    ok, sim = self.speaker.verify(spk_audio)
                     if not ok:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
-                                      wake_score=wake_score,
+                                      wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
                                       session=t_utter < self._session_until(), **audio_stats(audio))
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
@@ -509,6 +534,7 @@ class Brain(threading.Thread):
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
                               speaker_sim=round(sim, 3) if sim is not None else None,
                               wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
+                              i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
                               session=t_utter < self._session_until(),
                               audio_is_speech=result.get("audio_is_speech"),
                               wake_heard=result.get("wake_heard"),
