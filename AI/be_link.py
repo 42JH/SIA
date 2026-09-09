@@ -194,15 +194,19 @@ class AgentLink:
             return False
 
     # --- brain 이 부르는 API (모두 best-effort — 예외는 폴백으로 흡수) ---
+    def wake_detected(self):
+        """호출어 감지 → BE. FE 'listening' 중계 + 활성 세션 없으면 개시(openOnWakeword).
+        활성 세션 중 재수신은 BE 가 무시하므로 LLM 뒤 폴백 발신과 겹쳐도 무해."""
+        self._send({"type": "wakeword_detected", "data": {}})
+
     def renew(self, opening):
         """유효 명령 판정 후에만. opening=True 면 세션 개시, 아니면 연장(MCP session.extend).
         마감시각은 BE 의 session_state push 로 갱신된다.
         ponytail: WS session_renew 는 합의로 제거, 연장은 session.extend 로 통일."""
         if opening:
-            # 호출어 경로는 wakeword_detected 만. BE 가 이걸로 세션을 연다(openOnWakeword).
-            # session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고 새로 발급하므로
-            # 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
-            self._send({"type": "wakeword_detected", "data": {}})
+            # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
+            # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
+            self.wake_detected()
         else:
             self.call("session.extend")
 
