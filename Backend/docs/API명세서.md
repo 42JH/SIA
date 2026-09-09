@@ -592,7 +592,7 @@ GET /api/gestures?dangling=true
 **400 INVALID_REQUEST**
 
 ```json
-{ "code": "INVALID_REQUEST", "message": "기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다" }
+{ "code": "INVALID_REQUEST", "message": "기본 제공 제스처는 켜기/끄기만 가능합니다" }
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "이미 같은 이름의 제스처가 있어요" }
@@ -2192,7 +2192,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `등록되지 않은 도구입니다: <tool>` | `GET /api/tools` 에 없는 이름 |
 | `사용자 동의가 필요한 도구는 제스처로 실행할 수 없습니다: <tool>` | `window.close` · `files.delete` |
 | `기본 제공 제스처와 같은 이름은 쓸 수 없어요: <name>` | 신규 등록의 이름이 기본 제공 제스처와 같다 |
-| `기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다` | 재촬영 대상이 기본 제공 제스처 |
+| `기본 제공 제스처는 켜기/끄기만 가능합니다` | 재촬영 대상이 기본 제공 제스처 |
 | `이미 같은 이름의 제스처가 있어요` | 재촬영 경로에서 바꾼 이름이 다른 제스처와 겹친다 |
 
 ```json

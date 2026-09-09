@@ -339,7 +339,7 @@ public class GestureService {
                              Boolean repeatableOrNull, List<Step> stepsOrNull) {
         Row row = requireRow(id);
         if (!row.custom()) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다");
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처는 켜기/끄기만 가능합니다");
         }
         String oldName = row.name();
         String ctx = row.context();
@@ -373,7 +373,7 @@ public class GestureService {
     }
 
     /**
-     * 켜기/끄기 (기본 제스처 포함 — "기본 제스처는 켜기/끄기와 기능 변경만 가능합니다").
+     * 켜기/끄기 (기본 제스처 포함 — "기본 제공 제스처는 켜기/끄기만 가능합니다").
      * AI 에 gesture_toggled 를 보낸다 — 꺼진 제스처는 감지에서 제외되고, BE 실행도 막힌다.
      * 이어서 settings_changed 로 전체 상태를 다시 실어 보낸다 — AI 가 settings_changed 하나만 듣고 있어도
      * 토글을 놓치지 않게 하는 계약이다 (프로토콜 §4.2).
