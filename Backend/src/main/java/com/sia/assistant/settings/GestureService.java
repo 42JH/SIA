@@ -1,7 +1,5 @@
 package com.sia.assistant.settings;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Times;
@@ -20,6 +18,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * gesture / gesture_step 이 매핑의 원천이다 (설정 JSON 의 투영이 아니다).

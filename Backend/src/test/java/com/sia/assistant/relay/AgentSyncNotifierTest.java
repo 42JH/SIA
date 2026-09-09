@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.profile.CalibProfileService;
 import com.sia.assistant.profile.VoiceProfileService;
 import com.sia.assistant.settings.BlobService;
@@ -17,6 +16,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * AI 동기화 페이로드의 blobs 형식 — 커스텀 제스처 템플릿은 제스처별 참조 목록 gestures[] 이고

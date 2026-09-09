@@ -1,8 +1,5 @@
 package com.sia.assistant.api.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.JsonBody;
@@ -16,6 +13,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 통계 이벤트 배치 수신 (POST /api/agent/events).

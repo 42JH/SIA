@@ -1,10 +1,5 @@
 package com.sia.assistant.settings;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.NullNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Times;
@@ -21,6 +16,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.NullNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * app_settings 싱글턴(id=1)의 관리자.
@@ -71,7 +70,7 @@ public class SettingsService {
         body.put("agentSyncedAt", r.agentSyncedAt());
         body.put("agentVersion", r.agentVersion());
         body.put("settingsPending", r.agentSyncedVersion() == null || r.agentSyncedVersion() < r.version());
-        body.put("settings", asMap(r.json()));
+        body.put("settings", parse(r.json()));
         return body;
     }
 
@@ -187,25 +186,6 @@ public class SettingsService {
                         rs.getString("agent_version")));
     }
 
-    /**
-     * 응답용 변환. ★ Jackson2 {@code JsonNode} 를 응답 본문에 그대로 담으면 안 된다 —
-     * Boot 4 의 HTTP 컨버터는 Jackson 3 이라 그것을 모르는 POJO 로 보고 게터를 직렬화한다
-     * ({@code {"array":false,"nodeType":"OBJECT",…}}). 값은 정상이고 직렬화만 깨지므로
-     * 반환값을 단언하는 테스트로는 잡히지 않는다 (SettingsControllerJsonTest 가 그 층을 지킨다).
-     *
-     * <p>키 순서는 저장된 순서 그대로다 ({@code readValue} 가 LinkedHashMap 을 준다).
-     */
-    private Map<String, Object> asMap(String json) {
-        try {
-            return om.readValue(json, new TypeReference<Map<String, Object>>() {
-            });
-        } catch (Exception e) {
-            log.error("settings_json 파싱 실패 — null 로 반환합니다", e);
-            return null;
-        }
-    }
-
-    /** 내부 비교용(fillMissing 의 기존 값·시드) — 응답에는 쓰지 않는다. {@link #asMap} 참고. */
     private JsonNode parse(String json) {
         try {
             return om.readTree(json);

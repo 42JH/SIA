@@ -1,6 +1,5 @@
 package com.sia.assistant.registration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Sha256;
@@ -17,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 시선 보정 오케스트레이터 — 동시 진행 1건 (와이어프레임 시선 섹션, PROTOCOL.md §2.2).

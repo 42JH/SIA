@@ -28,8 +28,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-security'
 
-    // Boot 4 웹 스타터는 Jackson 을 전이시키지 않는다 — ObjectMapper 직접 사용(runtime.json 등)의 명시 의존성
-    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    // ObjectMapper 직접 사용(runtime.json·WS 봉투 등)의 명시 의존성. Boot 4·MCP SDK 와 같은 Jackson 3 이다
+    // — 버전이 갈리면 응답 직렬화가 조용히 깨진다 (S15P21D106-197)
+    implementation 'tools.jackson.core:jackson-databind'
 
     // MCP 서버 (LLM 도구 호출 경로)
     implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'

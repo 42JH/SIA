@@ -1,6 +1,5 @@
 package com.sia.assistant.gestureexec;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.context.ContextService;
 import com.sia.assistant.mcp.Caller;
 import com.sia.assistant.mcp.ToolCatalog;
@@ -21,6 +20,7 @@ import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 제스처 매크로 실행부 — 실행자는 BE 다 (다이어그램 01).

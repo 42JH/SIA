@@ -1,6 +1,5 @@
 package com.sia.assistant.wsroutes;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.bootstrap.AgentBootstrapper;
 import com.sia.assistant.gestureexec.GestureExecutor;
 import com.sia.assistant.model.ModelManager;
@@ -16,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * /ws/agent 수신 라우터 — PROTOCOL.md §1 의 AI→BE 이벤트 전부.

@@ -1,6 +1,5 @@
 package com.sia.assistant.registration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.Sha256;
@@ -15,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 보이스(화자) 등록 오케스트레이터 — 동시 진행 1건 (와이어프레임 보이스 녹음 5문장 흐름, PROTOCOL.md §2.1).

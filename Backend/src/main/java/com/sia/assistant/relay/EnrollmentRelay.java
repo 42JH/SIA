@@ -1,11 +1,11 @@
 package com.sia.assistant.relay;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.FeHub;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 온보딩 마이크 설정의 앞 두 단계 중계 (와이어프레임 온보딩 섹션):

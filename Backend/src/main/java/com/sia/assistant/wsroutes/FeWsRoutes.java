@@ -1,6 +1,5 @@
 package com.sia.assistant.wsroutes;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.registration.CalibrationOrchestrator;
 import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
@@ -12,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * /ws/fe 수신 라우터 — PROTOCOL.md §2 의 FE→BE 이벤트 전부.

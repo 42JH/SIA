@@ -1,12 +1,12 @@
 package com.sia.assistant.mcp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 내부 {@link ToolResult} → MCP {@code CallToolResult} 변환 (사양 2025-11-25, Tools §Tool Result·§Error Handling).

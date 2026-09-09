@@ -11,7 +11,6 @@ import static org.mockito.Mockito.startsWith;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.relay.AgentSyncNotifier;
@@ -25,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import tools.jackson.databind.ObjectMapper;
 
 class SettingsServiceTest {
 
@@ -76,9 +76,7 @@ class SettingsServiceTest {
         assertThat(body)
                 .containsEntry("version", 3)
                 .containsEntry("settingsPending", true);
-        // ★ settings 는 JsonNode 가 아니라 Map 이다 — 응답 직렬화가 Jackson 3 컨버터를 타기 때문이다
-        //   (SettingsService.asMap · SettingsControllerJsonTest 참고)
-        assertThat(body.get("settings")).isEqualTo(Map.of("wakeWord", "시아"));
+        assertThat(body.get("settings")).isEqualTo(om.valueToTree(Map.of("wakeWord", "시아")));
     }
 
     @Test

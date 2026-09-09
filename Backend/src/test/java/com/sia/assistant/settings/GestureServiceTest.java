@@ -7,7 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.Sha256;
 import com.sia.assistant.common.Times;
@@ -27,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 커스텀 제스처 템플릿은 제스처별 npz 다 (흐름도 03, 2026-09-02) — 행마다 npz·sha256, blobs.gestures 참조 목록,

@@ -2,13 +2,13 @@ package com.sia.assistant.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /** ToolResult -> CallToolResult 매핑 (MCP 사양 2025-11-25 Tools §Tool Result·§Error Handling). */
 class McpResultsTest {

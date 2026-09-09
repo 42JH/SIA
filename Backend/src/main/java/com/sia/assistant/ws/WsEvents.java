@@ -1,6 +1,6 @@
 package com.sia.assistant.ws;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * WS 수신을 스프링 ApplicationEvent 로 옮긴 것.

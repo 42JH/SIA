@@ -16,7 +16,7 @@
 | DB | SQLite (`sia.db`) + Flyway V1 | 전부 JdbcTemplate — JPA 엔티티 없음 (`starter-jdbc`) |
 | Windows 제어 | JNA 5.14 (`jna-platform`) | User32 SendInput·EnumWindows, 탐색기 항목은 COM 레이트 바인딩 + UIA, 휴지통은 `Desktop.moveToTrash` |
 | webm 인코딩 | JAVE2 번들 ffmpeg (win64) | 등록 미리보기. +약 30MB (배포 명세 합의) |
-| Jackson | Boot 4 기본은 Jackson 3 | 내부 라우팅은 Jackson 2 — `JacksonConfig` 가 `ObjectMapper` 빈을 직접 등록한다 (아래 함정 참고) |
+| Jackson | **3** (`tools.jackson`) | Boot 4 컨버터 · MCP SDK 와 같은 버전으로 통일(2026-09-09). `ObjectMapper` 는 Boot 가 등록한 빈을 주입받는다 |
 | API 문서 | springdoc-openapi 3.1.0 | `/swagger-ui.html` |
 
 ## 실행
@@ -78,7 +78,7 @@ com.sia.assistant
 ├── settings/      설정 싱글턴·blob(wakeword)·제스처 매핑(원천 테이블, 제스처별 템플릿 npz 포함)·전체 삭제
 ├── control/       JNA 창 제어·SendInput(휠·미디어 키)·앱 실행·휴지통·파일 저장·탐색기 항목(com/, explorer/)
 ├── logging/       tool_call 기록(REQUIRES_NEW)·usage_event 배치(멱등)·400일 보존
-├── config/        WS·보안·토큰·CORS·데이터 디렉터리·Jackson 2 빈
+├── config/        WS·보안·토큰·CORS·데이터 디렉터리
 └── api/           agent(blobs·gestures·profiles·events) + web(FE REST 전체)
 ```
 
@@ -108,8 +108,13 @@ com.sia.assistant
 
 ## 알려진 결정·함정
 
-- **★ REST 본문은 `@RequestBody String` 으로 받고 `JsonBody.parse` 로 푼다.** Boot 4 의 HTTP 컨버터는
-  Jackson 3 인데 내부 라우팅은 Jackson 2 `JsonNode` 라, `@RequestBody JsonNode` 는 500 으로 죽는다.
+- **★ REST 본문은 `@RequestBody String` 으로 받고 `JsonBody.parse` 로 푼다.** 빈 본문 · 깨진 JSON ·
+  객체가 아닌 본문의 400 메시지를 우리가 정한 문장(§0.4)으로 내기 위해서다. 컨버터에 맡기면 프레임워크
+  메시지가 나간다. 2026-09-09 이전에는 이유가 하나 더 있었다 — Jackson 버전이 갈려 `@RequestBody JsonNode`
+  가 500 으로 죽었다. Jackson 3 통일로 그 이유는 사라졌지만 규칙은 위 이유로 유지한다.
+- **응답 본문에는 라이브러리 타입을 담지 않는다** — DB 의 JSON 텍스트는 `readValue`/`convertValue` 로
+  `Map`·`List` 로 바꿔 담는 것이 안전하다. 직렬화가 깨져도 값은 정상이라 반환값 단언으로는 안 잡힌다 —
+  `SettingsControllerJsonTest` 처럼 **응답 JSON 을 보는 테스트**가 그 층을 지킨다.
 - **확인 게이트는 BE 에 없다.** 카탈로그의 C 플래그는 관문이 아니라 **AI 에게 주는 선언**이고 MCP
   `destructiveHint` 로 나간다. BE 는 승인이 끝난 요청으로 보고 실행한다 (`files.delete` 는 휴지통 이동만).
 - **도구 성공이 세션을 연장하지 않는다** — 연장 경로는 `session.extend` 하나뿐이다.

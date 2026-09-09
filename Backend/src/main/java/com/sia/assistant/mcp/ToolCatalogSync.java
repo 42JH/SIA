@@ -1,6 +1,5 @@
 package com.sia.assistant.mcp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.Times;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -14,6 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 기동 시 카탈로그 → tool 테이블 UPSERT — tool 행의 유일한 생성 경로다 (마이그레이션은 시드하지 않는다).

@@ -1,7 +1,5 @@
 package com.sia.assistant.ws;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -13,6 +11,9 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * WS 허브 공통 기반. 모든 메시지는 {"type": "...", "data": {...}} 봉투다.
@@ -78,7 +79,8 @@ public abstract class BaseHub extends TextWebSocketHandler {
             envelope.put("type", type);
             envelope.put("data", data == null ? Map.of() : data);
             msg = new TextMessage(om.writeValueAsString(envelope));
-        } catch (IOException e) {
+        } catch (JacksonException e) {
+            // Jackson 3 의 직렬화 예외는 unchecked 다 — 여기서 잡지 않으면 이벤트 하나가 호출자까지 터뜨린다
             log.error("[{}] '{}' 직렬화 실패", name(), type, e);
             return;
         }

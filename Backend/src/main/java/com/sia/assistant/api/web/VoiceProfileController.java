@@ -1,6 +1,5 @@
 package com.sia.assistant.api.web;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.JsonBody;
 import com.sia.assistant.profile.VoiceProfileService;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
@@ -14,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 보이스 프로필 REST (와이어프레임 보이스 섹션) — 목록·이름 변경·사용으로 설정·완전 삭제·재생.

@@ -1,7 +1,7 @@
 package com.sia.assistant.common;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * REST 본문을 Jackson 2 {@link JsonNode} 로 읽는 유일한 통로.

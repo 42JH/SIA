@@ -6,7 +6,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.registration.CalibrationOrchestrator;
 import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
@@ -17,6 +16,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * user_choice — AI 가 notice(kind:"choices")로 띄운 후보 목록의 클릭 응답 중계.
@@ -43,7 +43,7 @@ class FeWsRoutesTest {
                 om.readTree("{\"choiceId\":\"c-7f31\",\"n\":1}")));
 
         verify(agentHub).send(eq("user_choice"), argThat(d ->
-                d instanceof com.fasterxml.jackson.databind.JsonNode node
+                d instanceof tools.jackson.databind.JsonNode node
                         && "c-7f31".equals(node.path("choiceId").asText())
                         && node.path("n").asInt() == 1));
     }

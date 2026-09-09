@@ -1,6 +1,5 @@
 package com.sia.assistant.control.process;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.ws.ExtHub;
@@ -22,6 +21,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * browser.search 의 실행부. 여는 경로가 둘이고, 갈림은 브라우저 확장(/ws/ext) 연결 여부 하나다.

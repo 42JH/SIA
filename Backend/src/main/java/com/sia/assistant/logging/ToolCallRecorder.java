@@ -1,6 +1,5 @@
 package com.sia.assistant.logging;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.JsonTruncate;
 import com.sia.assistant.common.Times;
 import com.sia.assistant.mcp.Caller;
@@ -13,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * tool_call 기록의 유일한 통로. 명령 트랜잭션과 분리(REQUIRES_NEW)되어

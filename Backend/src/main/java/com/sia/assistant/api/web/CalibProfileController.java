@@ -1,6 +1,5 @@
 package com.sia.assistant.api.web;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.JsonBody;
 import com.sia.assistant.profile.CalibProfileService;
 import java.util.Map;
@@ -14,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 시선 보정 프로필 REST (와이어프레임 시선 섹션) — 목록·상세(산점도)·이름 변경·사용으로 설정·완전 삭제.

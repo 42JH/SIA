@@ -1,6 +1,5 @@
 package com.sia.assistant.logging;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.JsonTruncate;
 import com.sia.assistant.common.Times;
 import java.util.List;
@@ -9,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * usage_event 배치 기록. event_uid UNIQUE + INSERT OR IGNORE 로 재전송이 멱등이다.

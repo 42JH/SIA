@@ -1,9 +1,9 @@
 package com.sia.assistant.ws;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /** /ws/ext — 브라우저 확장(DOM 텍스트 공급원)과의 이벤트 채널. */
 @Component

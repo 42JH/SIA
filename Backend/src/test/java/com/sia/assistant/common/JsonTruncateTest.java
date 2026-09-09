@@ -3,9 +3,9 @@ package com.sia.assistant.common;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 절단의 계약은 "짧아진다"가 아니라 <b>"짧아져도 파싱된다"</b>이다.

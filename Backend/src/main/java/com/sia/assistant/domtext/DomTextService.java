@@ -1,6 +1,5 @@
 package com.sia.assistant.domtext;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.control.browser.BrowserTextService;
@@ -18,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * browser.dom_text 의 실행부 — 지금 보고 있는 페이지의 본문을 돌려준다. 공급원이 둘이다.

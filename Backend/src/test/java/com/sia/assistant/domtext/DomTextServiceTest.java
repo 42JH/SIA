@@ -10,7 +10,6 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.control.browser.BrowserTextService;
 import com.sia.assistant.ws.ExtHub;
@@ -22,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * browser.dom_text 의 공급원 갈림 — 확장이 붙어 있으면 /ws/ext 로 중계하고, 없으면 접근성으로 직접 읽는다.

@@ -1,8 +1,8 @@
 package com.sia.assistant.common;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * JSON 문자열을 컬럼 길이에 맞춘다.

@@ -1,11 +1,11 @@
 package com.sia.assistant.settings;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import java.util.ArrayList;
 import java.util.List;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 설정 JSON 의 <b>알려진 키</b>만 정의한다 — BE·AI 가 실제로 읽어서 동작이 달라지는 값들이다.

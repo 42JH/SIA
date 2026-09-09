@@ -1,6 +1,5 @@
 package com.sia.assistant.bootstrap;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.model.ModelManager;
 import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.settings.SettingsService;
@@ -13,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * AI 부팅 시퀀스의 지휘자 (다이어그램 03).

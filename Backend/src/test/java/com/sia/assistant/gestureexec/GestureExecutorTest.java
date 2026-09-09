@@ -9,7 +9,6 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.context.ContextService;
 import com.sia.assistant.mcp.Caller;
 import com.sia.assistant.mcp.ToolInvoker;
@@ -25,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 제스처 매크로 실행 규칙. 핵심은 세션 게이트가 <b>매크로 단위</b>라는 것 —
@@ -130,7 +130,7 @@ class GestureExecutorTest {
         return new GestureService.Step(tool, Map.of(), null);
     }
 
-    private static com.fasterxml.jackson.databind.JsonNode exec(String name) {
+    private static tools.jackson.databind.JsonNode exec(String name) {
         return new ObjectMapper().createObjectNode().put("name", name);
     }
 
