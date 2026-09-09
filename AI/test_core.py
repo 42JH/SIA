@@ -429,6 +429,45 @@ def test_speech_s():
     assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
 
 
+def test_speaker_accum():
+    """짧은 호출어 조각 이어붙이기(185) — 화자 모델 없이 합성 오디오로 버퍼 규칙만 확인.
+    조각 길이를 서로 다르게 줘서, 이어붙인 결과 길이만 봐도 어떤 조각이 들어갔는지 알 수 있게 했다."""
+    from brain import SPEAKER_ACCUM_MAX_AGE_S, SPEAKER_ACCUM_N, SpeakerAccum, speech_part
+    rng = np.random.default_rng(0)
+
+    def loud(sec):
+        return (rng.standard_normal(int(sec * 16000)) * 2000).astype(np.int16)   # rms ≈ 2000 > 350
+    quiet = np.zeros(16000, np.int16)
+
+    # 무음은 떨어지고 말소리 블록만 남는다 (경계 블록 하나는 소리가 섞여 살아남음)
+    assert abs(len(speech_part(np.concatenate([quiet, loud(1.0), quiet]))) / 16000 - 1.0) < 0.05
+    assert len(speech_part(quiet)) == 0
+    assert len(speech_part(np.zeros(0, np.int16))) == 0
+
+    a = SpeakerAccum()
+    p1, p2, p3 = speech_part(loud(0.5)), speech_part(loud(0.6)), speech_part(loud(0.7))
+    assert a.offer(p1, 0.19, 0.0) is None                      # 유사도 미달 → 이어붙임도 없고 버퍼에도 안 쌓임
+    assert a.offer(speech_part(loud(0.2)), 0.40, 0.0) is None  # 말소리 0.3 s 미만 → 같음
+    assert len(a.offer(p1, 0.40, 0.0)) == len(p1)              # 앞의 둘이 안 쌓였으니 이번 조각만
+    assert len(a.offer(p2, 0.40, 1.0)) == len(p1) + len(p2)
+    c = a.offer(p3, 0.40, 2.0)
+    assert len(c) == len(p1) + len(p2) + len(p3) and a.n_joined == 3
+    assert np.array_equal(c[:len(p1)], p1)                     # 오래된 순으로 앞에 붙는다
+
+    # 버퍼가 찬 뒤에는 가장 오래된 조각이 밀려난다
+    p4, p5 = speech_part(loud(0.8)), speech_part(loud(0.9))
+    assert len(a.offer(p4, 0.40, 3.0)) == len(p1) + len(p2) + len(p3) + len(p4)
+    assert a.n_joined == SPEAKER_ACCUM_N + 1                   # 보관 3개 + 이번 조각
+    assert len(a.offer(p5, 0.40, 4.0)) == len(p2) + len(p3) + len(p4) + len(p5)  # p1 은 빠짐
+
+    a.clear()
+    assert len(a.offer(p5, 0.40, 5.0)) == len(p5)              # 비운 뒤엔 이번 조각만
+
+    b = SpeakerAccum()
+    b.offer(p1, 0.40, 0.0)
+    assert len(b.offer(p2, 0.40, SPEAKER_ACCUM_MAX_AGE_S + 1)) == len(p2)  # 20 s 지난 조각은 이어붙임에서 빠짐
+
+
 def test_mouse_subpixel_accumulator():
     from main import Mouse
     m = Mouse(enabled=False)  # 로그만 — 실제 마우스 안 건드림
@@ -530,6 +569,7 @@ if __name__ == "__main__":
     test_mouse_subpixel_accumulator()
     test_wake_gate()
     test_speech_s()
+    test_speaker_accum()
     test_voice_bridge()
     test_be_dom_text()
-    print("OK - 17/17 통과")
+    print("OK - 19/19 통과")
