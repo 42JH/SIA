@@ -490,6 +490,24 @@ def test_voice_bridge():
     assert not vs.active
 
 
+def test_be_dom_text():
+    """BE browser.dom_text 채택 — 성공 payload 만 dom 으로, 세션 전·미접속·빈 본문은 None(스크린샷 폴백)."""
+    from brain import be_dom_text
+
+    class FakeBE:
+        def __init__(self, ok, payload): self.ok, self.payload = ok, payload
+        def call(self, tool, args=None):
+            assert tool == "browser.dom_text"
+            return self.ok, self.payload
+
+    page = {"via": "extension", "url": "https://x", "title": "T", "text": "본문", "truncated": False}
+    assert be_dom_text(FakeBE(True, page)) == page
+    assert be_dom_text(FakeBE(False, {"code": "SESSION_REQUIRED", "message": ""})) is None  # 세션 전 → 폴백
+    assert be_dom_text(FakeBE(None, {"code": "NO_BE", "message": ""})) is None              # BE 미접속
+    assert be_dom_text(FakeBE(True, {"via": "accessibility", "text": ""})) is None          # 빈 본문은 안 넣음
+    assert be_dom_text(None) is None                                                       # 링크 없음
+
+
 if __name__ == "__main__":
     import sys
     try:
@@ -513,4 +531,5 @@ if __name__ == "__main__":
     test_wake_gate()
     test_speech_s()
     test_voice_bridge()
-    print("OK - 16/16 통과")
+    test_be_dom_text()
+    print("OK - 17/17 통과")

@@ -110,6 +110,18 @@ def dom_context_part(dom):
             + json.dumps(dom, ensure_ascii=False)[:6000])
 
 
+def be_dom_text(link):
+    """BE browser.dom_text 로 포그라운드 브라우저 본문 → dom 컨텍스트 dict, 못 받으면 None.
+    크롬 확장은 BE /ws/ext 로만 붙어 로컬 DomBridge(:8765)는 실제로 무피드다 — 그래서 본문 소스는
+    이 BE 도구. 세션 도구(S)라 세션 전엔 SESSION_REQUIRED → None(스크린샷 폴백). via 는 BE 가 붙이는
+    출처(extension|accessibility) — accessibility 는 메뉴·사이드바 텍스트가 섞일 수 있다.
+    ponytail: 포그라운드가 브라우저인지 안 가려 LLM 호출마다 한 번 두드린다 — 지연 보이면 창 제목으로 가드."""
+    if not link:
+        return None
+    ok, payload = link.call("browser.dom_text")
+    return payload if ok is True and isinstance(payload, dict) and payload.get("text") else None
+
+
 def build_prompt(session_active, pending_q):
     p = [f'너는 사용자의 화면을 함께 보는 데스크톱 음성 비서다. 이름은 "{WAKE_WORD}".',
          "입력: (1) 방금 사용자의 발화 오디오, (2) 전체 화면 스크린샷, (3) 발화 시작 순간 사용자가 응시하던 영역의 크롭."]
@@ -573,6 +585,10 @@ class Brain(threading.Thread):
                     else:
                         stt_draft = r1  # STT 초안(승격 힌트) 또는 None(라우터 비활성)
                 if result is None:
+                    # DOM 본문은 LLM 경로에서만, 그리고 wake_detected 뒤(세션 개시 후)에 가져온다 —
+                    # 발화 시작에 잡은 dom(DomBridge, 실제론 무피드)이 없으면 BE browser.dom_text 로 보충.
+                    # 첫 명령("시아야 이거 요약해줘")도 여기선 세션이 열려 있어 본문이 붙는다.
+                    dom = dom or be_dom_text(self._be())
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
                               speaker_sim=round(sim, 3) if sim is not None else None,
