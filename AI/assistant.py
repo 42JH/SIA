@@ -149,12 +149,12 @@ def main():
     if not args.no_speaker:
         from speaker import SpeakerVerifier
 
-        sv = SpeakerVerifier(HERE / "models" / "speaker.npz")
-        if sv.enrolled:
-            speaker = sv
-            print(f"화자 인증 켜짐 — 등록된 목소리에만 반응 (임계 {sv.threshold}). 끄기: --no-speaker")
+        # 미등록이어도 넘긴다 — brain 은 enrolled 를 매번 확인하므로 FE 등록(65) 뒤 재시작 없이 게이트가 켜진다
+        speaker = SpeakerVerifier(HERE / "models" / "speaker.npz")
+        if speaker.enrolled:
+            print(f"화자 인증 켜짐 — 등록된 목소리에만 반응 (임계 {speaker.threshold}). 끄기: --no-speaker")
         else:
-            print("화자 미등록 → 아무 목소리나 허용. 내 목소리만 반응시키려면: python voice_enroll.py")
+            print("화자 미등록 → 아무 목소리나 허용. 내 목소리만 반응시키려면: 앱의 보이스 등록 또는 python voice_enroll.py")
 
     # BE 연결 계층 — runtime.json 있으면 WS/MCP 접속(백그라운드), 없거나 SIA_NO_BE 면
     # link=None 으로 오늘처럼 로컬 단독 동작. 실행/세션은 연결됐을 때만 BE 로 넘어간다.
@@ -168,6 +168,10 @@ def main():
             from calib_bridge import CalibSession
 
             link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
+            if speaker is not None:
+                from voice_bridge import VoiceSession
+
+                link.voice = VoiceSession(link, speaker, HERE / "models" / "speaker.npz")
         except Exception as e:
             print(f"BE 연결 계층 비활성: {e}")
 
@@ -231,6 +235,10 @@ def main():
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
                 elif ev[0] == "utter":
+                    if link and link.voice and link.voice.active:
+                        pending_capture = None
+                        link.voice.on_utter(ev[2])  # 화자 등록 중 — 낭독 샘플로만 쓰고 명령 처리는 안 한다
+                        continue
                     if pending_capture is None:
                         fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                         pending_capture = (*capture_screen(fix), foreground_hwnd())
