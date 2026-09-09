@@ -373,6 +373,18 @@ def test_wake_gate():
     assert not wake_rejects(0.001, in_session=False, shadow=True)  # 섀도: 로그만, 차단 없음
 
 
+def test_speech_s():
+    """유성 초 — voice_rejected 이벤트 가드. 2 s 소리 + 1 s 무음 → 2.0, 무음만 → 0, 빈 입력 → 0."""
+    from brain import SPEAKER_JUDGE_SPEECH_S, speech_s
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(2 * 16000) * 2000).astype(np.int16)   # rms ≈ 2000 > 350
+    quiet = np.zeros(16000, np.int16)
+    assert abs(speech_s(np.concatenate([loud, quiet])) - 2.0) < 0.05
+    assert speech_s(quiet) == 0.0
+    assert speech_s(np.zeros(0, np.int16)) == 0.0
+    assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
+
+
 def test_mouse_subpixel_accumulator():
     from main import Mouse
     m = Mouse(enabled=False)  # 로그만 — 실제 마우스 안 건드림
@@ -399,4 +411,5 @@ if __name__ == "__main__":
     test_one_euro()
     test_mouse_subpixel_accumulator()
     test_wake_gate()
+    test_speech_s()
     print("OK - 15/15 통과")

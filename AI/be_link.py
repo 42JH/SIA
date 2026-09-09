@@ -199,6 +199,11 @@ class AgentLink:
         활성 세션 중 재수신은 BE 가 무시하므로 LLM 뒤 폴백 발신과 겹쳐도 무해."""
         self._send({"type": "wakeword_detected", "data": {}})
 
+    def voice_rejected(self):
+        """화자 게이트 거부 → BE. BE 가 FE 에 voice_rejected{message} 로 중계(문구는 BE 소유).
+        판정할 만큼 유성이 긴 발화에서만 부른다 — 짧은 호출어 거부에서 쏘면 본인 호출마다 문구가 뜬다."""
+        self._send({"type": "voice_rejected", "data": {}})
+
     def renew(self, opening):
         """유효 명령 판정 후에만. opening=True 면 세션 개시, 아니면 연장(MCP session.extend).
         마감시각은 BE 의 session_state push 로 갱신된다.
