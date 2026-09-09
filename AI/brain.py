@@ -131,6 +131,17 @@ def be_dom_text(link):
     return payload if ok is True and isinstance(payload, dict) and payload.get("text") else None
 
 
+def notice_data(message, kind=None, **fields):
+    """FE 로 보낼 안내(notice) 한 건의 데이터. kind 는 FE 가 이 안내를 어떤 모양으로 그릴지 고르는 값 —
+    없으면 일반 안내, "confirm" 은 실행 전 확인 질문(초 카운트다운), "unknown_command" 는 못 알아들은 명령
+    (인식된 말을 transcript 로 같이 보낸다). 값이 없는 항목은 아예 빼고 보낸다 — FE 가 빈 칸을 그리지 않게."""
+    data = {"message": message}
+    if kind:
+        data["kind"] = kind
+    data.update({k: v for k, v in fields.items() if v not in (None, "")})
+    return data
+
+
 def build_prompt(session_active, pending_q):
     p = [f'너는 사용자의 화면을 함께 보는 데스크톱 음성 비서다. 이름은 "{WAKE_WORD}".',
          "입력: (1) 방금 사용자의 발화 오디오, (2) 전체 화면 스크린샷, (3) 발화 시작 순간 사용자가 응시하던 영역의 크롭."]
@@ -560,7 +571,7 @@ class Brain(threading.Thread):
         ok, payload = be.call(tool, args or {})
         if ok is True:
             msg = payload.get("message") if isinstance(payload, dict) else ""
-            self.overlay.toast(ok_say or msg or "완료")
+            self._say(ok_say or msg or "완료")
             return True
         if ok is False and isinstance(payload, dict):
             print(f"[BE {tool} → 로컬 폴백] {payload.get('code')}: {payload.get('message')}")
@@ -678,7 +689,7 @@ class Brain(threading.Thread):
                               had_dom=dom is not None, **audio_stats(audio))
                 self._execute(result, crop_img, t_utter, hwnd, full_img)
             except Exception as e:
-                self.overlay.toast(f"오류: {e}")
+                self._say(f"오류: {e}")
                 print(f"[brain 오류] {e}")
             finally:
                 self.busy -= 1
@@ -753,6 +764,21 @@ class Brain(threading.Thread):
               f"{result.get('action')} (명령={result.get('is_command')})")
         return result
 
+    # 사용자에게 보이는 문구는 내 화면(오버레이)과 FE 화면 양쪽에 띄운다. AI 는 FE 와 직접 연결되지
+    # 않으므로 BE 에 notice 를 보내면 BE 가 FE 로 그대로 넘긴다(프로토콜 §4.1). 오버레이는 60자 넘으면 패널.
+    def _say(self, message, kind=None, seconds=None, **fields):
+        if len(message) > 60:
+            self.overlay.panel(message)
+        elif seconds is None:
+            self.overlay.toast(message)
+        else:
+            self.overlay.toast(message, seconds)
+        be = self._be()
+        if be:
+            data = notice_data(message, kind, **fields)
+            be._send({"type": "notice", "data": data})
+            print(f"[AI→BE] notice {json.dumps(data, ensure_ascii=False)}")
+
     # --- 액션 실행 ---
     def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None):
         t_utter = t_utter or time.monotonic()
@@ -766,7 +792,7 @@ class Brain(threading.Thread):
                 if be:
                     be.renew(opening=True)  # BE 가 세션 개시 → session_state 로 마감시각 회신
                 self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
-                self.overlay.toast("네, 듣고 있어요")
+                self._say("네, 듣고 있어요")
             return
         # 코드 차원 호출어 게이트: 세션이 없을 땐 wake_heard 없이는 절대 통과 못 함 —
         # 환각 한 번이 90초 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
@@ -781,7 +807,7 @@ class Brain(threading.Thread):
                 be.end()
             self.session_until = 0.0
             self._pending = None
-            self.overlay.toast(say or "대기 모드로 전환합니다")
+            self._say(say or "대기 모드로 전환합니다")
             return
         be = self._be()
         if be:  # 유효 명령 판정 후에만 — 미활성이면 개시(session_open), 활성이면 연장(session.extend)
@@ -797,7 +823,7 @@ class Brain(threading.Thread):
                 self._pending = None
                 if kind == "window_close":
                     close_window(target)  # 확인 요청 당시의 그 창만 닫힌다 (포커스 무관)
-                    self.overlay.toast("창을 닫았습니다")
+                    self._say("창을 닫았습니다")
                 elif kind == "delete_file":
                     # BE 연결 시 files.delete(휴지통 이동)로 이관 — 확인은 AI 가 이미 받았고
                     # BE 는 재확인 없이 실행(§1). 실패·미연결이면 로컬 send2trash 폴백.
@@ -812,47 +838,48 @@ class Brain(threading.Thread):
                                 ok += 1
                             except Exception as e:
                                 print(f"[삭제 실패] {p}: {e}")
-                        self.overlay.toast(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                        self._say(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
             else:
-                self.overlay.toast("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
+                self._say("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
             self._pending = None
-            self.overlay.toast("취소했습니다")
+            self._say("취소했습니다")
         elif action == "open_app":
             key = str(result.get("app", "")).lower()
             app = APPS.get(key)
             if not app:
-                self.overlay.toast(f"지원하지 않는 앱: {result.get('app')}")
+                self._say(f"지원하지 않는 앱: {result.get('app')}")
             # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
             elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
                 subprocess.Popen(["cmd", "/c", "start", "", app])
-                self.overlay.toast(say or f"{app} 실행")
+                self._say(say or f"{app} 실행")
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
             # BE 가 막았거나(세션 전) 미접속이면 ok False/None → 기존 로컬 경로로 폴백(open_app 과 같은 패턴).
             if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
                 webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(q))
-                self.overlay.toast(say or f"'{q}' 검색")
+                self._say(say or f"'{q}' 검색")
         elif action == "find_file":
             q = (result.get("query") or "").strip()
             if q:  # Windows 검색 인덱스 사용 — cmd dir /s보다 수십 배 빠름
                 os.startfile(f"search-ms:query={urllib.parse.quote(q)}"
                              f"&crumb=location:{urllib.parse.quote(str(Path.home()))}")
-                self.overlay.toast(say or f"'{q}' 파일 검색")
+                self._say(say or f"'{q}' 파일 검색")
         elif action == "window":
             # 대상 = 발화 순간의 포커스 창(hwnd). 실행 시점 포커스를 쓰면 API 지연
             # 몇 초 사이에 다른 창(우리 HUD, 방금 연 탐색기)이 당한다.
             op = result.get("window_op")
             if not hwnd:
-                self.overlay.toast("대상 창을 찾지 못했습니다")
+                self._say("대상 창을 찾지 못했습니다")
             elif op == "close":  # 파괴적 동작 — 즉시 실행하지 않고 재확인
                 q = f'창 "{window_title_of(hwnd)[:24]}"을(를) 닫을까요?'
                 self._pending = (q, "window_close", time.monotonic() + CONFIRM_TIMEOUT_S, hwnd)
-                self.overlay.toast(q + ' — "응, 닫아" / "취소"로 답하세요', CONFIRM_TIMEOUT_S)
+                self._say(q + ' — "응, 닫아" / "취소"로 답하세요', "confirm", CONFIRM_TIMEOUT_S,
+                          timeoutSec=int(CONFIRM_TIMEOUT_S))
             elif op in ("maximize", "minimize"):
                 show_window(hwnd, op)
-                self.overlay.toast(say or ("창 최대화" if op == "maximize" else "창 최소화"))
+                self._say(say or ("창 최대화" if op == "maximize" else "창 최소화"))
             elif op in ("scroll_down", "scroll_up"):
                 focus_window(hwnd)  # 키 스크롤은 포커스가 필요 — 말하던 그 창으로 되돌린 뒤
                 press_keys("pagedown" if op == "scroll_down" else "pageup")
@@ -861,12 +888,13 @@ class Brain(threading.Thread):
             # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
             sel = resolve_files_by_name(result.get("query")) or explorer_selection()
             if not sel:
-                self.overlay.toast("삭제할 파일을 못 찾았습니다 — 이름을 다시 말하거나 탐색기에서 선택하세요")
+                self._say("삭제할 파일을 못 찾았습니다 — 이름을 다시 말하거나 탐색기에서 선택하세요")
             else:
                 names = ", ".join(Path(p).name for p in sel)[:60]
                 q = f"{len(sel)}개 파일 삭제(휴지통): {names} — 삭제할까요?"
                 self._pending = (q, "delete_file", time.monotonic() + CONFIRM_TIMEOUT_S, sel)
-                self.overlay.toast(q + ' — "응, 삭제" / "취소"', CONFIRM_TIMEOUT_S)
+                self._say(q + ' — "응, 삭제" / "취소"', "confirm", CONFIRM_TIMEOUT_S,
+                          timeoutSec=int(CONFIRM_TIMEOUT_S))
         elif action == "media":
             self._media(result.get("media_key"), say, hwnd)
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
@@ -882,7 +910,7 @@ class Brain(threading.Thread):
                     return
                 path = SAVE_DIR / name
                 path.write_text(text + "\n", encoding="utf-8")
-                self.overlay.toast(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
+                self._say(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
                 return
             box = bbox_to_box(full_img.size, result.get("bbox")) if full_img is not None else None
             if box:
@@ -900,15 +928,13 @@ class Brain(threading.Thread):
                 print("[bbox] 없음 → 응시 영역 크롭 폴백")
             path = SAVE_DIR / f"저장_{ts}.png"
             img.save(path)
-            self.overlay.toast(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
-        else:  # answer / none — 짧으면 토스트, 길면 플로팅 패널
-            be = self._be()
-            if be and say:
-                be.notice(say)  # 지능형 결과를 FE 에도 표시(§1 notice)
-            if len(say) > 60:
-                self.overlay.panel(say)
-            else:
-                self.overlay.toast(say or "…")
+            self._say(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
+        elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
+            self._say(say or "명령을 이해하지 못했습니다.", "unknown_command", transcript=result.get("transcript"))
+        elif say:  # answer — 짧으면 토스트, 길면 플로팅 패널
+            self._say(say)
+        else:
+            self.overlay.toast("…")
 
     def _media(self, key, say="", hwnd=0):
         # BE 연결 시 미디어/볼륨은 MCP 도구로 이관(유튜브 여부는 BE 가 포그라운드로 판별).
@@ -925,8 +951,8 @@ class Brain(threading.Thread):
         else:
             spec = GLOBAL_MEDIA_KEYS.get(key)
             if spec is None:
-                self.overlay.toast("10초 이동은 유튜브 창에서만 됩니다")
+                self._say("10초 이동은 유튜브 창에서만 됩니다")
                 return
             press_keys(spec)  # OS 전역 미디어 키 — 포커스 무관
         if say:
-            self.overlay.toast(say)
+            self._say(say)
