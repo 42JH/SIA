@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  *     PUT /api/agent/blobs/wakeword 로 올린다.
  *  2) 명령 문장 말하기 — 문장 5개의 원문은 FE·AI 가 동일한 상수로 보유한다(불변, 하드코딩).
  *     BE 는 원문을 보내지 않고 순번(n)만 정해 FE(command_sentence)·AI(command_collect) 양쪽에 준다.
- * 세 번째 단계(보이스 녹음 3문장)는 VoiceRegistrationOrchestrator 가 맡는다.
+ * 세 번째 단계(보이스 녹음 5문장)는 VoiceRegistrationOrchestrator 가 맡는다.
  */
 @Component
 public class EnrollmentRelay {

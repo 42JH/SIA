@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * 보이스 등록 — 3문장 핸드셰이크, 문장 재시도, 커밋 전 임시본, 한도(4개) 거절 (와이어프레임 보이스 섹션).
+ * 보이스 등록 — 5문장 핸드셰이크, 문장 재시도, 커밋 전 임시본, 한도(4개) 거절 (와이어프레임 보이스 섹션).
  */
 class VoiceRegistrationOrchestratorTest {
 
@@ -50,13 +50,13 @@ class VoiceRegistrationOrchestratorTest {
         orchestrator.start();
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(agentHub).send(eq("voice_reg_start"), captor.capture());
-        assertThat(captor.getValue()).containsEntry("total", 3);
+        assertThat(captor.getValue()).containsEntry("total", 5);
         return (String) captor.getValue().get("tempId");
     }
 
     @Test
-    @DisplayName("문장은 3개 — ready 에 1번, progress n 에 n+1 번 문장이 FE·AI 양쪽으로 나간다")
-    void threeSentenceHandshake() {
+    @DisplayName("문장은 5개 — ready 에 1번, progress n 에 n+1 번 문장이 FE·AI 양쪽으로 나간다")
+    void fiveSentenceHandshake() {
         String tempId = startAndGetTempId();
 
         orchestrator.onReady(tempId);
@@ -67,8 +67,8 @@ class VoiceRegistrationOrchestratorTest {
         verify(feHub).send(eq("voice_progress"), argThatMap("n", 1));
         verify(feHub).send(eq("voice_sentence"), argThatMap("n", 2));
 
-        orchestrator.onProgress(tempId, 3); // 마지막 문장 — 다음 문장 없음
-        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 4));
+        orchestrator.onProgress(tempId, 5); // 마지막 문장 — 다음 문장 없음
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 6));
     }
 
     @Test

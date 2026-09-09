@@ -2194,7 +2194,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `command_sentence` | `{n: int, total: int}` | 읽을 명령 문장의 순번 (total 5). 원문은 FE 상수 |
 | `command_progress` | `{n: int, total: int}` | 명령 문장 n 완료 |
 | `command_done` | `{}` | 명령 문장 수집 완료 |
-| `voice_sentence` | `{n: int, total: int}` | 읽을 낭독 문장의 순번 (total 3). 원문은 FE 상수 |
+| `voice_sentence` | `{n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수 |
 | `voice_progress` | `{n: int, total: int}` | 문장 n 낭독 완료 |
 | `voice_quality_warn` | `{tempId: string, reason: string, noise: 낮음 \| 높음 \| null}` | 음질 미달 |
 | `voice_review` | `{tempId: string, sampleUrl: string \| null, durationSec: number \| null, quality: string \| null, noise: string \| null}` | 녹음 확인. `sampleUrl` 은 `/api/voice-reg/{tempId}/sample` |
@@ -2438,7 +2438,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `wakeword_enroll_start` | `{}` | 이름 불러보기 시작 지시 |
 | `command_enroll_start` | `{}` | 명령 문장 말하기 시작 지시 |
 | `command_collect` | `{n: int}` | 명령 문장 n 수집 시작. 원문은 AI 상수의 n 번째 |
-| `voice_reg_start` | `{tempId: string, total: int}` | 보이스 등록 모드 진입. `total` 은 3 |
+| `voice_reg_start` | `{tempId: string, total: int}` | 보이스 등록 모드 진입. `total` 은 5 |
 | `voice_collect` | `{tempId: string, n: int}` | 문장 n 수집 시작. 같은 n 이 다시 오면 교체 수집 |
 | `voice_finalize` | `{tempId: string}` | 음질 경고 무시. 현재 수집분으로 마무리 |
 | `voice_reg_cancel` | `{tempId: string}` | 등록 중단. 수집물 폐기 |

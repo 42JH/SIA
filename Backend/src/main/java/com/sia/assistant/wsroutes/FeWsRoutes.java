@@ -50,7 +50,7 @@ public class FeWsRoutes {
             // ---- 온보딩: 이름 불러보기 · 명령 문장 말하기
             case "wakeword_enroll_start" -> enrollment.startWakeword();
             case "command_enroll_start" -> enrollment.startCommand();
-            // ---- 보이스 등록 (3문장 → 녹음 확인 → 등록)
+            // ---- 보이스 등록 (5문장 → 녹음 확인 → 등록)
             case "voice_reg_start" -> voiceRegistration.start();
             case "voice_sentence_retry" -> voiceRegistration.retrySentence(d.path("tempId").asText());
             case "voice_reg_retry" -> voiceRegistration.retryAll(d.path("tempId").asText());

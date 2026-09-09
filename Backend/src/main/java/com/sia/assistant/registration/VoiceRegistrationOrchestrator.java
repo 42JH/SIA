@@ -17,8 +17,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 보이스(화자) 등록 오케스트레이터 — 동시 진행 1건 (와이어프레임 보이스 녹음 3문장 흐름, PROTOCOL.md §2.1).
- * 낭독 문장 3개의 원문은 FE·AI 가 동일한 상수로 보유한다(불변, 하드코딩) — BE 는 순번(n)만 정해 양쪽에 보낸다.
+ * 보이스(화자) 등록 오케스트레이터 — 동시 진행 1건 (와이어프레임 보이스 녹음 5문장 흐름, PROTOCOL.md §2.1).
+ * 낭독 문장 5개의 원문은 FE·AI 가 동일한 상수로 보유한다(불변, 하드코딩) — BE 는 순번(n)만 정해 양쪽에 보낸다.
  * AI 는 문장 단위로 수집하고(voice_collect), 같은 n 이 다시 오면 그 문장을 교체한다.
  * 임시본(npz·샘플 오디오)은 메모리에만 있다가 사용자의 "등록"(voice_commit)에서 프로필로 확정된다 —
  * 재시작하면 진행 중이던 등록은 사라지는 게 맞고, DB 에 청소할 고아도 남지 않는다.
@@ -27,7 +27,7 @@ import org.springframework.stereotype.Component;
 public class VoiceRegistrationOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(VoiceRegistrationOrchestrator.class);
-    private static final int TOTAL_SENTENCES = 3;
+    private static final int TOTAL_SENTENCES = 5;
     private static final long MAX_UPLOAD_BYTES = 10L * 1024 * 1024;
 
     private final AgentHub agentHub;
