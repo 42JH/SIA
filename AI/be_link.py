@@ -123,6 +123,7 @@ class AgentLink:
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
         self.be_session_id = None
         self.calib = None               # CalibSession 또는 None (assistant가 주입)
+        self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -178,6 +179,14 @@ class AgentLink:
             elif t == "calib_registered":  c.on_registered(d.get("id"), d.get("active"))
             elif t == "calib_changed":     c.on_changed(d)
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
+        elif self.voice and t and t.startswith("voice_"):
+            v = self.voice
+            if t == "voice_reg_start":     v.on_start(d.get("tempId"), d.get("total"))
+            elif t == "voice_collect":     v.on_collect(d.get("tempId"), d.get("n"))
+            elif t == "voice_finalize":    v.on_finalize(d.get("tempId"))
+            elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
+            elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
+            elif t == "voice_changed":     v.on_changed(d)
         # ponytail: hello_ack/recognition_start/settings_changed/wipe 는 로그만.
         # 설정·blob 동기화는 9/11 MVP 합류 후 붙인다(-61). 모르는 type 은 무시(§0).
 
