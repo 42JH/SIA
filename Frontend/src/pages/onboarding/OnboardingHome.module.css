@@ -14,7 +14,7 @@
 .footer { margin-top: auto; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--spacing-sm); padding-top: var(--spacing-lg); }
 .actions { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; justify-content: center; }
 .preview { width: 100%; background: var(--setup-panel); padding: var(--spacing-lg); border: var(--setup-border); line-height: 1.8; }
-.card progress, .card audio { width: 100%; accent-color: var(--color-accent); }
+.card audio { width: 100%; accent-color: var(--color-accent); }
 .card blockquote { margin: 0; padding: var(--spacing-lg); background: var(--setup-panel); width: 100%; }
 .card .error { color: var(--color-danger); }
 .connection { color: var(--setup-muted); font-size: var(--font-size-sm); }

@@ -24,17 +24,23 @@ export function useOnboarding() {
     poll();
     const stop = subscribeOnboarding({
       __connection__: ({ status }) => {
-        if (status === 'closed' && ['wake', ...voiceSteps, ...gazeSteps].includes(state().step)) {
+        if (status === 'closed' && ['wake', 'command', ...voiceSteps, ...gazeSteps].includes(state().step)) {
           change({ interrupted: true, pending: false, error: '연결이 끊겼습니다. 재연결 후 설정을 다시 시작해주세요.' });
         }
       },
       wakeword_progress: (wake) => { if (state().step === 'wake') change({ wake }); },
       wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, pending: false }); },
+      command_sentence: (commandSentence) => {
+        if (state().step === 'command') change({ commandSentence, pending: false,
+          error: commandSentence.total !== 5 ? '서버의 문장 수가 등록 기준 5문장과 다릅니다.' : '' });
+      },
+      command_progress: ({ n }) => { if (state().step === 'command') change({ commandCompleted: n }); },
+      command_done: () => { if (state().step === 'command') change({ commandDone: true, pending: false }); },
       voice_sentence: (sentence) => {
         if (!voiceSteps.includes(state().step)) return;
-        // TODO(BE): 보이스 등록을 5문장으로 변경하고 추가 2문장 원문과 시작 시 tempId를 제공해야 함
+        // TODO(BE): 보이스 시작 시 재시도·취소에 필요한 tempId를 FE에도 제공해야 함
         change({ sentence, step: 'voice', pending: false,
-          error: sentence.total !== 5 ? '보이스 등록은 5문장이 필요하지만 서버는 현재 3문장 계약입니다.' : '' });
+          error: sentence.total !== 5 ? '서버의 문장 수가 등록 기준 5문장과 다릅니다.' : '' });
       },
       voice_progress: ({ n }) => { if (state().step === 'voice') change({ completed: n }); },
       voice_quality_warn: (warning) => { if (voiceSteps.includes(state().step)) change({ warning, pending: false }); },
@@ -48,7 +54,7 @@ export function useOnboarding() {
       calib_denied: ({ message }) => { if (gazeSteps.includes(state().step)) change({ step: 'gazeStart', error: message, pending: false }); },
       calib_limit: ({ message }) => change({ error: message, pending: false, result: state().result ? { ...state().result, remeasuresLeft: 0 } : null }),
       error: ({ message, of }) => {
-        if (/^(voice_|calib_|wakeword_)/.test(of ?? '')) change({ error: message, pending: false });
+        if (/^(voice_|command_|calib_|wakeword_)/.test(of ?? '')) change({ error: message, pending: false });
       },
     });
     return () => { disposed = true; clearTimeout(timer); stop(); };

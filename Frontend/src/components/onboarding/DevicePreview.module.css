@@ -1,4 +1,0 @@
-.preview { width: 100%; border: var(--setup-border); background: var(--setup-panel); color: var(--setup-muted); }
-.preview canvas { width: 100%; height: var(--setup-audio-height); }
-.preview video { display: block; width: 100%; height: var(--setup-video-height); object-fit: contain; }
-.preview p { padding: var(--spacing-sm); }
