@@ -49,8 +49,17 @@ WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수
                         # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
                           # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
-SPEAKER_JUDGE_SPEECH_S = 1.0  # NOTE(튜닝): 유성(말소리)이 이보다 짧으면 화자 판정을 못 믿는다(화자 연구소 r10: 1.0 s 이하에선 본인 최저 < 타인 최고).
-                              # 거부해도 BE 이벤트(voice_rejected)는 안 보낸다 — 단독 "시아야"(유성 0.5~0.7 s)가 조용해도 85% 거부라 쏘면 본인 호출마다 문구가 뜬다.
+SPEAKER_JUDGE_SPEECH_S = 1.0  # NOTE(튜닝): 말소리가 이보다 짧으면 화자 판정을 못 믿는다 — 실측에서 말소리 1 s 이하 구간은
+                              # 본인의 가장 낮은 유사도가 타인의 가장 높은 유사도보다 낮아, 어떤 값으로도 둘을 가를 수 없었다.
+                              # 거부해도 BE 이벤트(voice_rejected)는 안 보낸다 — 단독 "시아야"(말소리 0.5~0.7 s)가 조용해도 85% 거부라 쏘면 본인 호출마다 문구가 뜬다.
+SPEAKER_ACCUM_N = 3  # NOTE(튜닝): 거부된 조각을 최근 몇 개까지 들고 있을지. 한 번 부르고 다시 부르고 명령까지 세 마디면
+                     # 충분하고, 더 들고 있어 봐야 옛 조각이 남아 엉뚱한 발화에 붙는다.
+SPEAKER_ACCUM_MAX_AGE_S = 20.0  # NOTE(튜닝): 이보다 오래된 조각은 버린다. 세션 90 s 보다 훨씬 짧게 잡은 이유는,
+                                # 한 호출에서 이어지는 말은 대개 20 s 안에 끝나고 그 뒤 조각은 남이 말했을 수 있어서다.
+SPEAKER_ACCUM_MIN_SIM = 0.20  # NOTE(튜닝): 단독 유사도가 이보다 낮은 조각은 쌓지도, 이어붙이지도 않는다.
+                              # 타인·유튜브 소리가 본인 조각에 업혀 통과하는 것을 막는 선 (임계 0.45 의 절반 아래).
+SPEAKER_ACCUM_MIN_SPEECH_S = 0.3  # NOTE(튜닝): 말소리가 이보다 짧은 조각도 같다. 기침·문 닫는 소리 같은 한 토막은
+                                  # 목소리 특징이 거의 없어서, 이어붙이면 길이만 늘고 판정은 오히려 흐려진다.
 
 # LLM이 고른 앱만 허용 (임의 문자열 실행 금지 — 프롬프트 인젝션 방어선)
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
@@ -329,13 +338,59 @@ def audio_stats(audio_i16):
 
 
 def speech_s(audio_i16, sr=16000, floor=350.0, block=480):
-    """유성 초 = 30 ms 블록 rms 가 floor 를 넘는 블록 수 × 0.03. floor 350 은 VadSegmenter 시작 임계의 하한과 같은 값
-    (화자 연구소 speech_s 정의). NOTE(한계): 에너지 기준이라 유튜브 같은 연속 배경음도 유성으로 센다."""
+    """말소리 초 = 30 ms 블록 rms 가 floor 를 넘는 블록 수 × 0.03. floor 350 은 VadSegmenter 시작 임계의 하한과 같은 값
+    — 말소리를 세는 기준을 VAD 와 맞춰 둔 것이다. NOTE(한계): 에너지 기준이라 유튜브 같은 연속 배경음도 말소리로 센다."""
     n = len(audio_i16) // block
     if n == 0:
         return 0.0
     rms = np.sqrt(np.mean(np.asarray(audio_i16[:n * block], dtype=np.float32).reshape(n, block) ** 2, axis=1))
     return float(np.sum(rms > floor)) * block / sr
+
+
+def speech_part(audio_i16, floor=350.0, block=480):
+    """말소리 블록만 남겨 이어붙인 오디오 — 기준은 speech_s 와 같다(30 ms 블록, rms 가 floor 초과).
+
+    조각을 이어붙일 때 녹음 앞의 침묵과 말 끝난 뒤 배경까지 같이 쌓이면 목소리 특징이 흐려지므로
+    미리 떼어 낸다. 순수 함수 — 입력은 그대로 두고 새 배열을 만든다."""
+    n = len(audio_i16) // block
+    if n == 0:
+        return np.zeros(0, np.int16)
+    blocks = np.asarray(audio_i16[:n * block]).reshape(n, block)
+    loud = np.sqrt(np.mean(blocks.astype(np.float32) ** 2, axis=1)) > floor
+    return blocks[loud].reshape(-1).astype(np.int16)
+
+
+class SpeakerAccum:
+    """화자 인증에서 거부된 짧은 조각을 모아 뒀다가 다음 발화 앞에 이어붙이는 버퍼.
+
+    "시아야" 한 마디는 짧아서 등록된 본인도 대부분 거부된다(얼마나 짧으면 못 믿는지는 SPEAKER_JUDGE_SPEECH_S 주석).
+    거부된 조각을 버리지 않고 다음 발화와 이어붙이면 판정에 쓸 목소리가 길어져 다시 볼 수 있다.
+    판정 자체는 이 클래스 밖(Brain)에서 한다 — 여기는 오디오만 다루고 화자 모델을 모른다.
+
+    NOTE(한계): 단독 유사도가 SPEAKER_ACCUM_MIN_SIM~임계(0.20~0.45) 인 애매한 본인만 살린다.
+    그날 단독 점수가 그보다 더 낮게 나오면 이 버퍼로는 못 살리고 임계·등록 쪽(28, 65)과 같이 가야 한다.
+    """
+
+    def __init__(self):
+        self._items = []   # (조각을 받은 시각, 말소리만 남긴 오디오) 오래된 순
+        self.n_joined = 0  # 마지막 offer 가 이어붙인 조각 수 (로그용, 이어붙임이 없었으면 0)
+
+    def clear(self):
+        self._items = []
+        self.n_joined = 0
+
+    def offer(self, piece, sim, t):
+        """조각 하나를 받아 (앞서 모아 둔 조각들 + 이번 조각) 을 이어붙인 오디오를 돌려준다.
+
+        조각이 기준(유사도·말소리 길이)에 못 미치면 None 이고 버퍼도 건드리지 않는다 —
+        타인이나 소음이 본인 조각에 업혀 통과하는 것을 막는다. t 는 발화 시작 시각(모노토닉)."""
+        if sim is None or sim < SPEAKER_ACCUM_MIN_SIM or len(piece) < SPEAKER_ACCUM_MIN_SPEECH_S * 16000:
+            return None
+        self._items = [it for it in self._items if t - it[0] <= SPEAKER_ACCUM_MAX_AGE_S]  # 오래된 조각 먼저 버림
+        pieces = [it[1] for it in self._items] + [piece]
+        self._items = (self._items + [(t, piece)])[-SPEAKER_ACCUM_N:]
+        self.n_joined = len(pieces)
+        return np.concatenate(pieces)
 
 
 def load_api_keys():
@@ -468,6 +523,7 @@ class Brain(threading.Thread):
         self._keys = load_api_keys()
         self._key_i = 0
         self.wake = None  # 시동어 모델 (openwakeword Model) 또는 None
+        self._accum = SpeakerAccum()  # 화자 인증에서 거부된 짧은 조각 모음 (다음 발화와 이어붙여 재판정)
         if self._keys:
             from google import genai
 
@@ -546,6 +602,8 @@ class Brain(threading.Thread):
                     wake_score = round(max(scores), 3)
                     if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
                         i_max = int(np.argmax(scores))
+                        if t_utter >= self._session_until():
+                            self._accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
                         # 63: 감지 즉시 BE 에 알린다(FE "듣고 있어요" + 세션 개시). 화자 게이트보다 앞 — 호출어 발화는
                         # 짧아서 아직 미인증인 게 정상(다음 발화와 이어붙여 판정). 섀도는 로그만이라 안 보냄.
                         # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
@@ -560,17 +618,32 @@ class Brain(threading.Thread):
                 # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
                 sim, crop_t0, crop_t1 = None, None, None
+                accum_n, accum_sim = 0, None  # 이어붙인 조각 수 / 이어붙여 다시 낸 유사도 (로그 근거)
                 if self.speaker is not None and self.speaker.enrolled:
                     spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
                     ok, sim = self.speaker.verify(spk_audio)
                     if not ok:
-                        print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
+                        # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
+                        # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
+                        combined = self._accum.offer(speech_part(spk_audio), sim, t_utter)
+                        if combined is not None:
+                            accum_n = self._accum.n_joined
+                            ok, accum_sim = self.speaker.verify(combined)
+                    if ok:
+                        if accum_sim is not None:
+                            sim = accum_sim  # 통과시킨 값은 이어붙여 낸 유사도
+                        self._accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
+                    else:
+                        print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}"
+                              + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
                         sp = speech_s(audio)
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
+                                      accum_n=accum_n,
+                                      accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
                                       wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
                                       speech_s=round(sp, 2), session=t_utter < self._session_until(), **audio_stats(audio))
                         # BE 이벤트(→ FE "등록된 목소리로 한 명령이 아닙니다", 프로토콜 4.1 voice_rejected {})는
-                        # 판정할 만큼 유성이 긴 발화에서만. 짧은 호출어는 보류(화자 연구소 03 §3-1) — 지금은 조용히 버린다.
+                        # 판정할 만큼 말소리가 긴 발화에서만 — 짧은 호출어는 지금은 조용히 버린다(사유는 SPEAKER_JUDGE_SPEECH_S 주석).
                         be = self._be()
                         if be and sp >= SPEAKER_JUDGE_SPEECH_S:
                             be.voice_rejected()
@@ -592,6 +665,8 @@ class Brain(threading.Thread):
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
                               speaker_sim=round(sim, 3) if sim is not None else None,
+                              accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0
+                              accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
                               wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
                               i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
                               session=t_utter < self._session_until(),
