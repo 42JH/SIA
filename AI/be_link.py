@@ -21,7 +21,6 @@ import sys
 import threading
 import time
 import urllib.request
-from collections import deque
 from pathlib import Path
 
 PROTOCOL_VERSION = "2025-11-25"
@@ -124,9 +123,6 @@ class AgentLink:
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
         self.be_session_id = None
         self.calib = None               # CalibSession 또는 None (assistant가 주입)
-        self._events = deque(maxlen=256)
-        self._event_lock = threading.Lock()
-        self.gesture_ready = False
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -146,7 +142,6 @@ class AgentLink:
                 with connect(url, open_timeout=4) as ws:
                     self.ws = ws
                     self.connected = True
-                    self.gesture_ready = False
                     backoff = 1.0
                     self._send({"type": "hello", "data": {"agentVersion": AGENT_VERSION}})
                     print(f"[BE] /ws/agent 연결됨 (port {self.rt['port']})")
@@ -154,7 +149,6 @@ class AgentLink:
                         self._on_event(ws.recv())  # recv 는 종료 시 예외
             except Exception as e:
                 self.connected = False
-                self.gesture_ready = False
                 self.ws = None
                 if self._stop:
                     break
@@ -186,65 +180,6 @@ class AgentLink:
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
         # ponytail: hello_ack/recognition_start/settings_changed/wipe 는 로그만.
         # 설정·blob 동기화는 9/11 MVP 합류 후 붙인다(-61). 모르는 type 은 무시(§0).
-
-        # Calibration events are handled above. Gesture events are consumed by
-        # assistant.py on its main camera loop, not the WebSocket worker thread.
-        if t == "recognition_start":
-            self.gesture_ready = True
-        if t in {"hello_ack", "recognition_start", "settings_changed", "gesture_toggled",
-                 "gesture_registered", "gesture_renamed", "gesture_removed", "gesture_result",
-                 "reg_mode_start", "reg_finish", "model_load"}:
-            with self._event_lock:
-                self._events.append((t, d))
-
-    def take_events(self):
-        """BE 이벤트를 메인 루프에서 순서대로 소비한다."""
-        with self._event_lock:
-            items = list(self._events)
-            self._events.clear()
-        return items
-
-    def send_event(self, event_type, data=None):
-        return self._send({"type": event_type, "data": data or {}})
-
-    def _agent_request(self, path, method="GET", payload=None, headers=None):
-        if not self.rt:
-            raise RuntimeError("BE runtime.json이 없습니다")
-        data = payload if isinstance(payload, (bytes, bytearray)) else (
-            json.dumps(payload).encode("utf-8") if payload is not None else None)
-        req = urllib.request.Request(f"http://127.0.0.1:{self.rt['port']}{path}",
-                                     data=data, method=method)
-        req.add_header("Authorization", f"Bearer {self.rt['token']}")
-        req.add_header("X-Caller", "AI")
-        for key, value in (headers or {}).items():
-            req.add_header(key, value)
-        return urllib.request.urlopen(req, timeout=15)
-
-    def get_gesture_npz(self, gesture_id, etag=None):
-        headers = {"Accept": "application/octet-stream"}
-        if etag:
-            headers["If-None-Match"] = f'"{etag}"'
-        try:
-            with self._agent_request(f"/api/agent/gestures/{gesture_id}/npz", headers=headers) as response:
-                digest = response.headers.get("ETag", "").strip('"') or None
-                return response.read(), digest
-        except urllib.error.HTTPError as e:
-            if e.code == 304:
-                return None, etag
-            raise
-
-    def put_gesture_npz(self, temp_id, payload):
-        with self._agent_request(f"/api/agent/gestures/{temp_id}/npz", method="PUT",
-                                 payload=payload,
-                                 headers={"Content-Type": "application/octet-stream"}):
-            return True
-
-    def post_usage_events(self, events):
-        if not events:
-            return None
-        with self._agent_request("/api/agent/events", method="POST", payload={"events": events},
-                                 headers={"Content-Type": "application/json"}) as response:
-            return json.loads(response.read().decode("utf-8"))
 
     def _send(self, obj):
         ws = self.ws
