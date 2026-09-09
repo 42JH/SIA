@@ -23,7 +23,7 @@ SIA 백엔드의 데이터 모델이다. 통신 계약은 [프로토콜.md](프�
 |---|---|
 | DBMS | SQLite (WAL 모드, `foreign_keys = ON`, `busy_timeout = 5000`) |
 | DB 파일 | `sia.db`. 환경변수 `SIA_DB_URL` 로 JDBC URL 을 대체할 수 있다 (기본 `jdbc:sqlite:sia.db`) |
-| 스키마 관리 | Flyway. `src/main/resources/db/migration/V1__init_schema.sql` 이 스키마의 정의다 |
+| 스키마 관리 | Flyway. `src/main/resources/db/migration/` 의 `V1__init_schema.sql` · `V2__calib_grade.sql` 을 순서대로 적용한 결과가 스키마의 정의다 |
 | 접근 방식 | JdbcTemplate 직접 SQL. ORM 을 쓰지 않는다 |
 | 테이블 수 | 11 |
 
@@ -147,8 +147,8 @@ erDiagram
     }
 
     gesture_step {
-        INTEGER gesture_id PK, FK
-        INTEGER step_no PK
+        INTEGER gesture_id FK, UK
+        INTEGER step_no UK
         TEXT tool_name FK
         TEXT args_json
         INTEGER delay_ms
@@ -335,7 +335,7 @@ erDiagram
 | `id` | INTEGER | N | 자동 | PK. AI 가 템플릿을 내려받는 키 (`GET /api/agent/gestures/{id}/npz`) |
 | `custom` | INTEGER | N | `0` | `CHECK (0, 1)`. 1 = 사용자 등록 (템플릿 보유), 0 = 기본 제공 |
 | `kind` | TEXT | N | — | `CHECK ('HAND' \| 'FACE')` |
-| `context` | TEXT | Y | — | 적용 컨텍스트 (`video` \| `youtube`). NULL = 컨텍스트 제약 없는 기본 매핑 |
+| `context` | TEXT | Y | — | 적용 컨텍스트. 현재 쓰이는 값은 `video` · `youtube` 이고 CHECK 로 강제하지 않는다. NULL = 컨텍스트 제약 없는 기본 매핑 |
 | `name` | TEXT | N | — | 제스처 이름. 기본 제공은 MediaPipe 이름, 커스텀은 사용자 지정 |
 | `label` | TEXT | Y | — | UI 표시용 이름 |
 | `description` | TEXT | Y | — | 설명 |
@@ -470,7 +470,7 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 | `blob.name` | `wakeword` |
 | `session.end_reason` | `EXPIRED` · `STOPPED` · `WATCHDOG` · `SHUTDOWN` |
 | `gesture.kind` | `HAND` · `FACE` |
-| `gesture.context` | NULL(기본) · `video` · `youtube` |
+| `gesture.context` | NULL(기본) · `video` · `youtube` (현재 쓰이는 값. CHECK 없음) |
 | `tool_call.caller` | `LLM` · `GESTURE` (`UI` 는 CHECK 에만 있는 예약값) |
 | `tool_call.outcome` | `EXECUTED` · `BLOCKED` · `FAILED` |
 | `usage_event.kind` (대시보드 축) | `voice` · `gaze` · `gesture` · `command` · `voice-rejected` · `calibration` |
@@ -484,11 +484,13 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 
 ### 5.1 마이그레이션 시드 — `app_settings`
 
-V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다.
+V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다. V1 이 넣는 키는 아래 6개다.
 
 ```json
-{"wakeWord":"시아","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null,"micDeviceId":null,"cameraDeviceId":null}
+{"wakeWord":"시아","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null}
 ```
+
+`micDeviceId` · `cameraDeviceId` 는 코드 시드(`resources/seed/default-settings.json`)에만 있다. 첫 `PUT /api/settings` 의 완전성 규칙이나 전체 삭제(`DELETE /api/data`)가 시드값 `null` 로 채운다.
 
 ### 5.2 기동 시 코드가 넣는 데이터
 
@@ -496,14 +498,17 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다.
 |---|---|---|---|
 | 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 30개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
 | 2 | `gesture` · `gesture_step` | `gesture` 가 비어 있을 때만 | 기본 제스처 매핑 11건 |
+| 3 | `app_target` | 없는 `app_key` 만 | Windows 기본 앱 `notepad` · `calc` 2건 (§2.7) |
 
-`tool` 28행:
+`tool` 30행:
 
 | name | S | C |
 |---|:-:|:-:|
 | `context.get` | 0 | 0 |
 | `app.list` | 0 | 0 |
 | `app.launch` | 1 | 0 |
+| `browser.search` | 1 | 0 |
+| `browser.dom_text` | 1 | 0 |
 | `window.list` | 0 | 0 |
 | `window.focus` | 1 | 0 |
 | `window.minimize` | 1 | 0 |
@@ -548,7 +553,7 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다.
 
 FACE 2건은 단계가 없다. 확인 응답(예/아니오)은 AI 가 직접 처리하므로 BE 쪽 실행 대상이 없다. `GET /api/gestures?dangling=true` 에 `runnable: false` 로 나타난다.
 
-전체 삭제(`DELETE /api/data`) 후에도 같은 11건이 복원된다.
+전체 삭제(`DELETE /api/data`) 후에도 같은 11건과 기본 앱 2건(`notepad` · `calc`)이 복원된다.
 
 ---
 
@@ -701,7 +706,7 @@ CREATE TABLE `tool_call` (
 	`tool_name`	VARCHAR(64)	NOT NULL	COMMENT 'tool.name',
 	`ts`	TIMESTAMPTZ	NOT NULL	COMMENT '호출 시각 (BE 시계)',
 	`args_json`	VARCHAR(500)	NOT NULL	DEFAULT '{}'	COMMENT '500자 초과 시 {"_truncated","_preview"} 객체로 대체',
-	`caller`	VARCHAR(8)	NOT NULL	COMMENT 'LLM | GESTURE',
+	`caller`	VARCHAR(8)	NOT NULL	COMMENT 'LLM | GESTURE | UI(예약)',
 	`outcome`	VARCHAR(16)	NOT NULL	COMMENT 'EXECUTED | BLOCKED | FAILED',
 	`reason`	VARCHAR(255)	NULL	COMMENT '차단·실패 사유. 성공은 NULL',
 	`latency_ms`	INT	NULL
@@ -730,18 +735,18 @@ ALTER TABLE `tool` ADD CONSTRAINT `PK_TOOL` PRIMARY KEY (`name`);
 ALTER TABLE `session` ADD CONSTRAINT `PK_SESSION` PRIMARY KEY (`id`);
 ALTER TABLE `app_target` ADD CONSTRAINT `PK_APP_TARGET` PRIMARY KEY (`id`);
 ALTER TABLE `gesture` ADD CONSTRAINT `PK_GESTURE` PRIMARY KEY (`id`);
-ALTER TABLE `gesture_step` ADD CONSTRAINT `PK_GESTURE_STEP` PRIMARY KEY (`gesture_id`, `step_no`);
 ALTER TABLE `tool_call` ADD CONSTRAINT `PK_TOOL_CALL` PRIMARY KEY (`id`);
 ALTER TABLE `usage_event` ADD CONSTRAINT `PK_USAGE_EVENT` PRIMARY KEY (`id`);
 
 ALTER TABLE `app_target` ADD CONSTRAINT `UQ_APP_TARGET_APP_KEY` UNIQUE (`app_key`);
 ALTER TABLE `gesture` ADD CONSTRAINT `UQ_GESTURE_KIND_CONTEXT_NAME` UNIQUE (`kind`, `context`, `name`);
 ALTER TABLE `usage_event` ADD CONSTRAINT `UQ_USAGE_EVENT_EVENT_UID` UNIQUE (`event_uid`);
+ALTER TABLE `gesture_step` ADD CONSTRAINT `UQ_GESTURE_STEP_GESTURE_ID_STEP_NO` UNIQUE (`gesture_id`, `step_no`);
 
-ALTER TABLE `gesture_step` ADD CONSTRAINT `FK_gesture_TO_gesture_step_1` FOREIGN KEY (`gesture_id`) REFERENCES `gesture` (`id`);
+ALTER TABLE `gesture_step` ADD CONSTRAINT `FK_gesture_TO_gesture_step_1` FOREIGN KEY (`gesture_id`) REFERENCES `gesture` (`id`) ON DELETE CASCADE;
 ALTER TABLE `gesture_step` ADD CONSTRAINT `FK_tool_TO_gesture_step_1` FOREIGN KEY (`tool_name`) REFERENCES `tool` (`name`);
-ALTER TABLE `tool_call` ADD CONSTRAINT `FK_session_TO_tool_call_1` FOREIGN KEY (`session_id`) REFERENCES `session` (`id`);
-ALTER TABLE `tool_call` ADD CONSTRAINT `FK_app_target_TO_tool_call_1` FOREIGN KEY (`app_target_id`) REFERENCES `app_target` (`id`);
+ALTER TABLE `tool_call` ADD CONSTRAINT `FK_session_TO_tool_call_1` FOREIGN KEY (`session_id`) REFERENCES `session` (`id`) ON DELETE SET NULL;
+ALTER TABLE `tool_call` ADD CONSTRAINT `FK_app_target_TO_tool_call_1` FOREIGN KEY (`app_target_id`) REFERENCES `app_target` (`id`) ON DELETE SET NULL;
 ALTER TABLE `tool_call` ADD CONSTRAINT `FK_tool_TO_tool_call_1` FOREIGN KEY (`tool_name`) REFERENCES `tool` (`name`);
-ALTER TABLE `usage_event` ADD CONSTRAINT `FK_session_TO_usage_event_1` FOREIGN KEY (`session_id`) REFERENCES `session` (`id`);
+ALTER TABLE `usage_event` ADD CONSTRAINT `FK_session_TO_usage_event_1` FOREIGN KEY (`session_id`) REFERENCES `session` (`id`) ON DELETE SET NULL;
 ```
