@@ -417,6 +417,18 @@ def test_wake_gate():
     assert not wake_rejects(0.001, in_session=False, shadow=True)  # 섀도: 로그만, 차단 없음
 
 
+def test_speech_s():
+    """유성 초 — voice_rejected 이벤트 가드. 2 s 소리 + 1 s 무음 → 2.0, 무음만 → 0, 빈 입력 → 0."""
+    from brain import SPEAKER_JUDGE_SPEECH_S, speech_s
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(2 * 16000) * 2000).astype(np.int16)   # rms ≈ 2000 > 350
+    quiet = np.zeros(16000, np.int16)
+    assert abs(speech_s(np.concatenate([loud, quiet])) - 2.0) < 0.05
+    assert speech_s(quiet) == 0.0
+    assert speech_s(np.zeros(0, np.int16)) == 0.0
+    assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
+
+
 def test_mouse_subpixel_accumulator():
     from main import Mouse
     m = Mouse(enabled=False)  # 로그만 — 실제 마우스 안 건드림
@@ -425,6 +437,57 @@ def test_mouse_subpixel_accumulator():
     assert abs(m._acc[0] - 0.8) < 1e-9      # 1px 미만은 누적
     m.move_rel(0.4, 0.0)                    # 1.2 → 1px 이동 + 잔여 0.2
     assert abs(m._acc[0] - 0.2) < 1e-9
+
+
+def test_voice_bridge():
+    """화자 등록 이벤트 흐름(65) — ready → 문장 3개 collect/progress → 샘플·npz 업로드 → captured.
+    짧은 발화는 같은 문장을 다시 기다리고, 샘플이 서로 안 닮으면 voice_quality_warn 뒤 voice_finalize 가 와야 올린다."""
+    from speaker import SpeakerVerifier
+    from voice_bridge import SENTENCES, VoiceSession
+
+    class FakeLink:
+        rt = {"port": 0}
+        def __init__(self): self.sent = []
+        def _send(self, o): self.sent.append((o["type"], o["data"]))
+
+    class FakeSpeaker(SpeakerVerifier):  # 임베딩만 가짜 — centroid·npz 직렬화는 진짜 코드
+        def _model(self): return None
+        def embed(self, a): return np.array([1.0, 0.0]) if a[0] == 7 else np.array([0.0, 1.0])  # 첫 샘플 값 = 화자 표식
+
+    rng = np.random.default_rng(0)
+    def loud(marker, s=2.0):
+        a = (rng.standard_normal(int(s * 16000)) * 2000).astype(np.int16)
+        a[0] = marker
+        return a
+
+    link = FakeLink()
+    vs = VoiceSession(link, FakeSpeaker("_no_such_profile.npz"), "_selftest_speaker.npz")
+    vs._put = lambda url, body, ctype: link.sent.append(("PUT", ctype))
+    assert len(SENTENCES) >= 3                                 # BE 가 total(현재 3)을 정한다 — 상수는 그 이상이면 된다
+    vs.on_start("t1", 3)
+    assert link.sent[-1] == ("voice_ready", {"tempId": "t1"})
+    vs.on_collect("t1", 1)
+    vs.on_utter(loud(7, 0.5))                                  # 말소리 0.5 s — 낭독 아님, 문장 1 그대로
+    assert "voice_progress" not in [t for t, _ in link.sent]
+    for n in (1, 2, 3):
+        vs.on_collect("t1", n)
+        vs.on_utter(loud(7))
+    types = [t for t, _ in link.sent]
+    assert types.count("voice_progress") == 3 and types[-3:] == ["PUT", "PUT", "voice_captured"]
+    assert [c for t, c in link.sent if t == "PUT"] == ["audio/wav", "application/octet-stream"]
+    d = link.sent[-1][1]
+    assert d["tempId"] == "t1" and d["quality"] == "양호" and d["noise"] in ("낮음", "높음") and d["durationSec"] > 5
+    # 3번 문장만 다른 목소리 → 샘플 일관성 0.45 < 0.5 → 경고 후 멈춤, finalize 가 와야 업로드
+    link.sent.clear()
+    vs.on_start("t2", 3)
+    for n, marker in ((1, 7), (2, 7), (3, 9)):
+        vs.on_collect("t2", n)
+        vs.on_utter(loud(marker))
+    assert link.sent[-1][0] == "voice_quality_warn" and link.sent[-1][1]["tempId"] == "t2"
+    vs.on_finalize("t2")
+    assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "낮음"
+    vs.on_cancel("t2")
+    assert not vs.active
 
 
 if __name__ == "__main__":
@@ -443,4 +506,6 @@ if __name__ == "__main__":
     test_one_euro()
     test_mouse_subpixel_accumulator()
     test_wake_gate()
-    print("OK - 15/15 통과")
+    test_speech_s()
+    test_voice_bridge()
+    print("OK - 16/16 통과")

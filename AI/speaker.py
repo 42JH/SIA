@@ -8,6 +8,8 @@ ECAPA-TDNN(SpeechBrain, voxceleb 사전학습)으로 발화를 192차원 임베�
 한계(정직하게): 배경 소음이 크면 임베딩이 오염돼 본인이 거부되거나 남이 통과할 수
 있다. 그래서 임계는 실측 튜닝 노브이고, 입술 검증과 병행하면 더 강하다.
 """
+import io
+
 import numpy as np
 
 MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
@@ -24,12 +26,16 @@ class SpeakerVerifier:
         self.threshold = threshold
         self._clf = None
         self.centroid = None
+        self.reload()
+
+    def reload(self):
+        """프로필 파일을 다시 읽는다 — 없거나 깨졌으면 미등록. BE 가 활성 보이스를 바꿨을 때(voice_changed) 재시작 없이 갱신용."""
         try:
             d = np.load(self.profile_path)
             self.centroid = d["centroid"]
-            self.threshold = float(d["threshold"]) if "threshold" in d.files else threshold
+            self.threshold = float(d["threshold"]) if "threshold" in d.files else self.threshold
         except Exception:
-            pass
+            self.centroid = None
 
     @property
     def enrolled(self):
@@ -53,15 +59,25 @@ class SpeakerVerifier:
             e = clf.encode_batch(self._torch.tensor(sig).unsqueeze(0)).squeeze().cpu().numpy()
         return e / (np.linalg.norm(e) + 1e-9)
 
-    def enroll(self, audio_list):
-        """여러 발화 → 평균 임베딩(centroid) 저장. 등록 샘플 간 최소 유사도 반환
-        (일관성 지표 — 낮으면 녹음이 지저분한 것)."""
+    def centroid_of(self, audio_list):
+        """여러 발화 → (평균 임베딩 L2 정규화, 샘플 간 최소 유사도). 최소 유사도는 일관성 지표 — 낮으면 녹음이 지저분한 것."""
         embs = np.array([self.embed(a) for a in audio_list])
         c = embs.mean(axis=0)
-        self.centroid = c / (np.linalg.norm(c) + 1e-9)
-        np.savez(self.profile_path, centroid=self.centroid, threshold=self.threshold)
-        sims = embs @ self.centroid
-        return float(sims.min())
+        c = c / (np.linalg.norm(c) + 1e-9)
+        return c, float((embs @ c).min())
+
+    def npz_bytes(self, centroid):
+        """프로필 npz 직렬화 — 로컬 파일과 BE 업로드(65)가 같은 형식을 쓴다."""
+        buf = io.BytesIO()
+        np.savez(buf, centroid=centroid, threshold=self.threshold)
+        return buf.getvalue()
+
+    def enroll(self, audio_list):
+        """여러 발화 → centroid 를 프로필 파일로 저장(CLI 등록). 샘플 간 최소 유사도 반환."""
+        self.centroid, min_sim = self.centroid_of(audio_list)
+        with open(self.profile_path, "wb") as f:
+            f.write(self.npz_bytes(self.centroid))
+        return min_sim
 
     def verify(self, audio_i16):
         """(통과여부, 유사도). 미등록이면 (True, 1.0) — 게이트 자체를 끔."""

@@ -127,6 +127,7 @@ class AgentLink:
         self._events = deque(maxlen=256)
         self._event_lock = threading.Lock()
         self.gesture_ready = False
+        self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -184,6 +185,14 @@ class AgentLink:
             elif t == "calib_registered":  c.on_registered(d.get("id"), d.get("active"))
             elif t == "calib_changed":     c.on_changed(d)
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
+        elif self.voice and t and t.startswith("voice_"):
+            v = self.voice
+            if t == "voice_reg_start":     v.on_start(d.get("tempId"), d.get("total"))
+            elif t == "voice_collect":     v.on_collect(d.get("tempId"), d.get("n"))
+            elif t == "voice_finalize":    v.on_finalize(d.get("tempId"))
+            elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
+            elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
+            elif t == "voice_changed":     v.on_changed(d)
         # ponytail: hello_ack/recognition_start/settings_changed/wipe 는 로그만.
         # 설정·blob 동기화는 9/11 MVP 합류 후 붙인다(-61). 모르는 type 은 무시(§0).
 
@@ -259,15 +268,24 @@ class AgentLink:
             return False
 
     # --- brain 이 부르는 API (모두 best-effort — 예외는 폴백으로 흡수) ---
+    def wake_detected(self):
+        """호출어 감지 → BE. FE 'listening' 중계 + 활성 세션 없으면 개시(openOnWakeword).
+        활성 세션 중 재수신은 BE 가 무시하므로 LLM 뒤 폴백 발신과 겹쳐도 무해."""
+        self._send({"type": "wakeword_detected", "data": {}})
+
+    def voice_rejected(self):
+        """화자 게이트 거부 → BE. BE 가 FE 에 voice_rejected{message} 로 중계(문구는 BE 소유).
+        판정할 만큼 유성이 긴 발화에서만 부른다 — 짧은 호출어 거부에서 쏘면 본인 호출마다 문구가 뜬다."""
+        self._send({"type": "voice_rejected", "data": {}})
+
     def renew(self, opening):
         """유효 명령 판정 후에만. opening=True 면 세션 개시, 아니면 연장(MCP session.extend).
         마감시각은 BE 의 session_state push 로 갱신된다.
         ponytail: WS session_renew 는 합의로 제거, 연장은 session.extend 로 통일."""
         if opening:
-            # 호출어 경로는 wakeword_detected 만. BE 가 이걸로 세션을 연다(openOnWakeword).
-            # session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고 새로 발급하므로
-            # 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
-            self._send({"type": "wakeword_detected", "data": {}})
+            # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
+            # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
+            self.wake_detected()
         else:
             self.call("session.extend")
 

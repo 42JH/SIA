@@ -49,6 +49,8 @@ WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수
                         # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
                           # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
+SPEAKER_JUDGE_SPEECH_S = 1.0  # NOTE(튜닝): 유성(말소리)이 이보다 짧으면 화자 판정을 못 믿는다(화자 연구소 r10: 1.0 s 이하에선 본인 최저 < 타인 최고).
+                              # 거부해도 BE 이벤트(voice_rejected)는 안 보낸다 — 단독 "시아야"(유성 0.5~0.7 s)가 조용해도 85% 거부라 쏘면 본인 호출마다 문구가 뜬다.
 
 # LLM이 고른 앱만 허용 (임의 문자열 실행 금지 — 프롬프트 인젝션 방어선)
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
@@ -314,6 +316,16 @@ def audio_stats(audio_i16):
             "rms": round(float(np.sqrt(np.mean(a ** 2))), 1)}
 
 
+def speech_s(audio_i16, sr=16000, floor=350.0, block=480):
+    """유성 초 = 30 ms 블록 rms 가 floor 를 넘는 블록 수 × 0.03. floor 350 은 VadSegmenter 시작 임계의 하한과 같은 값
+    (화자 연구소 speech_s 정의). NOTE(한계): 에너지 기준이라 유튜브 같은 연속 배경음도 유성으로 센다."""
+    n = len(audio_i16) // block
+    if n == 0:
+        return 0.0
+    rms = np.sqrt(np.mean(np.asarray(audio_i16[:n * block], dtype=np.float32).reshape(n, block) ** 2, axis=1))
+    return float(np.sum(rms > floor)) * block / sr
+
+
 def load_api_keys():
     """API 키 목록 — 환경변수 GEMINI_API_KEY(콤마 구분 가능) 또는
     gemini_api_key.txt(줄당 하나). 무료 티어 쿼터에 걸리면 다음 키로 넘어간다."""
@@ -522,6 +534,12 @@ class Brain(threading.Thread):
                     wake_score = round(max(scores), 3)
                     if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
                         i_max = int(np.argmax(scores))
+                        # 63: 감지 즉시 BE 에 알린다(FE "듣고 있어요" + 세션 개시). 화자 게이트보다 앞 — 호출어 발화는
+                        # 짧아서 아직 미인증인 게 정상(다음 발화와 이어붙여 판정). 섀도는 로그만이라 안 보냄.
+                        # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
+                        be = self._be()
+                        if be and not WAKE_SHADOW:
+                            be.wake_detected()
                     if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
                         print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
                         log_utterance(gate="wake_reject", wake_score=wake_score,
@@ -535,9 +553,15 @@ class Brain(threading.Thread):
                     ok, sim = self.speaker.verify(spk_audio)
                     if not ok:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
+                        sp = speech_s(audio)
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
                                       wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
-                                      session=t_utter < self._session_until(), **audio_stats(audio))
+                                      speech_s=round(sp, 2), session=t_utter < self._session_until(), **audio_stats(audio))
+                        # BE 이벤트(→ FE "등록된 목소리로 한 명령이 아닙니다", 프로토콜 4.1 voice_rejected {})는
+                        # 판정할 만큼 유성이 긴 발화에서만. 짧은 호출어는 보류(화자 연구소 03 §3-1) — 지금은 조용히 버린다.
+                        be = self._be()
+                        if be and sp >= SPEAKER_JUDGE_SPEECH_S:
+                            be.voice_rejected()
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
