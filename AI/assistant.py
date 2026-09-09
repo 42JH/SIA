@@ -579,8 +579,16 @@ def main():
             pose_landmarks = pose.update(frame, now) if pose else None
             raw_gesture = hand["gesture"] if hand else None
             # 내장 분류(7종)가 못 알아본 손모양만 커스텀 분류기가 2차 판정
-            if hand and raw_gesture in (None, "None") and active_custom.n:
-                raw_gesture = active_custom.classify(hand["landmarks"]) or "None"
+            if hand and active_custom.n:
+                # Registered templates passed collision checks during capture.
+                # A close kNN match therefore takes precedence over a weak
+                # built-in guess; otherwise Promise is never evaluated when
+                # MediaPipe assigns a borderline built-in label first.
+                custom_label, _ = active_custom.classify_with_distance(hand["landmarks"])
+                if custom_label:
+                    raw_gesture = custom_label
+                elif raw_gesture in (None, "None"):
+                    raw_gesture = "None"
             gesture = stable.update(raw_gesture, now)
             if registration and registration.active:
                 registration.tick(frame, hand, now)

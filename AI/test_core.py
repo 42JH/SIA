@@ -227,10 +227,13 @@ def test_swipe_detector():
     assert feed([0.5] * 15) == []                                  # 정지 → 무장
     assert feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
     assert feed([0.82 - i * 0.04 for i in range(1, 9)]) == []      # 되돌아오는 손 — 무시
-    assert feed([0.2] * 15) == []      # 위치 점프 후 정지 → 재무장 (소급 발동 없어야 함)
+    assert feed([0.2] * 15) == []      # 다른 위치에서 정지해도 방향 잠금은 유지
+    # Reverse direction is accepted only after a neutral hold at the
+    # original anchor.  This prevents the return path from issuing -10 s.
+    assert feed([0.5] * 18) == []
     assert feed([0.2 - i * 0.04 for i in range(1, 8)]) == ["Swipe_Left"]
     # 수직 이동은 스와이프가 아니다
-    s2 = SwipeDetector()
+    s2 = SwipeDetector(vertical=False)
     t2 = 0.0
     for _ in range(15):
         t2 += 1 / 30
@@ -275,6 +278,8 @@ def test_custom_gestures():
     store.add("shakaA", A)
     store.add("shakaB", B)
     assert store.classify(base + rng.normal(0, 0.01, (21, 2))) == "shakaA"
+    label, distance = store.classify_with_distance(base + rng.normal(0, 0.01, (21, 2)))
+    assert label == "shakaA" and distance < store.thresh
     assert store.classify(hand_shape(9)) == "shakaB"
     assert store.classify(hand_shape(77)) is None  # 미등록 손모양 → 기권
     # 혼동도: A와 거의 같은 샘플 묶음은 A에 가깝다고 보고돼야 함

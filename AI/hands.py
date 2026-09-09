@@ -329,6 +329,26 @@ class CustomGestures:
         self.names = [self.names[i] for i in keep]
         self._save()
 
+    def classify_with_distance(self, lm_xy, k=5):
+        """Return a custom label and its nearest template distance.
+
+        The normal rejection threshold remains unchanged.  Callers can use a
+        successful result to distinguish a confident registered pose from a
+        weak built-in classifier guess.
+        """
+        if self.n == 0:
+            return None, float("inf")
+        f = normalize_landmarks(lm_xy)
+        d = np.linalg.norm(self.X - f, axis=1)
+        idx = np.argsort(d)[:k]
+        nearest = float(d[idx[0]])
+        if nearest > self.thresh:
+            return None, nearest
+        weights = {}
+        for i in idx:
+            weights[self.names[i]] = weights.get(self.names[i], 0.0) + 1.0 / (float(d[i]) + 1e-6)
+        return max(weights, key=weights.get), nearest
+
     def classify(self, lm_xy, k=5):
         """랜드마크 → 커스텀 제스처 이름 또는 None.
 
