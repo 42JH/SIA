@@ -10,7 +10,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 | [0](#0-공통-규약) | 공통 규약 — 주소 · 인증 · 시각 · 오류 응답 · 목록 형식 |
 | [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장비 맵핑 |
 | [2](#2-rest--ai-용) | REST (AI) — npz · 오디오 업/다운로드, 통계 배치 |
-| [3](#3-mcp-도구-29개) | MCP 도구 29개 — 인자 · 응답 · 실패 코드 |
+| [3](#3-mcp-도구-30개) | MCP 도구 30개 — 인자 · 응답 · 실패 코드 |
 | [4](#4-websocket-메시지-양식) | WebSocket 메시지 양식 — 봉투 · 채널별 이벤트의 필드 타입 · 예시 |
 | [5](#5-부록--엔드포인트--이벤트-색인) | 부록 — 엔드포인트 · 이벤트 색인 |
 
@@ -1454,7 +1454,7 @@ If-None-Match: "8c22b1de44a0…"
 
 ---
 
-## 3. MCP 도구 29개
+## 3. MCP 도구 30개
 
 ### 3.1 호출 · 반환 형식 요약
 
@@ -1986,7 +1986,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `url` | 실제로 연 주소 |
 | `title` | 확장 경로에서만 온다. 2.5초 안에 로딩이 끝나지 않으면 `null` |
 | `tabId` | 확장 경로에서만 온다. 크롬 탭 id — 참고값이고 BE 가 이 값으로 뭘 하지는 않는다 |
-| `domAvailable` | `true` 면 이어서 `dom_text_request`(§4.5)로 그 페이지 본문을 읽을 수 있다. `false` 면 열어 준 것까지만 확실하다 — **AI 는 이때 본문을 읽었다고 말하지 않는다** |
+| `domAvailable` | `true` 면 이어서 `browser.dom_text`(§3.24)로 그 페이지 본문을 읽을 수 있다. `false` 면 열어 준 것까지만 확실하다 — **AI 는 이때 본문을 읽었다고 말하지 않는다** |
 
 확장이 연결돼 있어도 4초 안에 회신하지 않거나 실패를 보고하면 OS 경로로 폴백해 `via: "os"` 로 답한다. "검색해줘"가 조용히 실패하지 않게 하기 위한 것이고, 그 창은 이미 확장이 응답하지 못하는 상태라 탭이 둘 열리지는 않는다.
 
@@ -1997,6 +1997,43 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `http(s)` 가 아닌 스킴 | `INVALID_REQUEST` | http(s) 가 아닌 주소는 열 수 없습니다. 검색어를 넘기세요 |
 | host 가 없는 `http(s)` 주소 | `INVALID_REQUEST` | 열 수 없는 주소입니다. 올바른 http(s) 주소이거나 검색어여야 합니다 |
 | 두 경로 다 브라우저를 못 띄움 | `FAILED` | 브라우저를 열지 못했습니다. 잠시 후 다시 시도해주세요 |
+
+### 3.24 `browser.dom_text` — 보고 있는 페이지 본문 · S
+
+사용자가 지금 보고 있는 웹페이지의 본문을 읽어 돌려준다. 인자가 없다 — **어느 페이지를 읽을지는 AI 가 고르지 않고 BE 가 정한다.** `browser.search`(§3.23)와 마찬가지로 갈림은 브라우저 확장(§4.6) 연결 여부 하나이고, 차이는 `via` 로만 드러난다.
+
+| 확장 | 대상 | 본문의 질 |
+|---|---|---|
+| 연결됨 | 크롬의 마지막 활성 창의 활성 탭 | `article` → `main` → `[role=main]` → `body` 순으로 **본문만** 추출 |
+| 미연결 | 포그라운드 브라우저 창, 없으면 Z 순서상 가장 앞의 브라우저 창 | 접근성 트리 텍스트 전체 — 메뉴 · 사이드바가 섞인다 |
+
+```json
+{}
+```
+
+```json
+{ "content": [{ "type": "text", "text": "{\"via\":\"extension\",\"url\":\"https://news.example.com/article/12345\", …}" }], "isError": false, "structuredContent": { "via": "extension", "url": "https://news.example.com/article/12345", "title": "반도체 수출 3개월 연속 증가", "text": "지난달 반도체 수출액이 …", "truncated": false } }
+```
+
+| 필드 | 설명 |
+|---|---|
+| `via` | `extension` 또는 `accessibility`. 본문을 어디서 얻었는지 — `accessibility` 면 본문 아닌 텍스트가 섞여 있다 |
+| `url` | 페이지 주소. 접근성 경로에서는 브라우저 엔진에 따라 `null` 일 수 있다 |
+| `title` | 페이지 제목. 없으면 `null` |
+| `text` | 본문. 20,000자 이하 |
+| `truncated` | 20,000자에서 잘렸으면 `true` |
+
+읽지 못한 경우는 빈 결과가 아니라 실패다 — `available: false` 같은 별도 어휘를 두지 않는다.
+
+| 실패 | `code` | `message` |
+|---|---|---|
+| 확장이 4초 안에 무응답 | `FAILED` | 브라우저 확장이 응답하지 않습니다 |
+| 확장이 실패 보고 | `FAILED` | 활성 탭이 웹 페이지가 아닙니다 · 페이지에서 읽을 본문이 없습니다 · 이 페이지에서는 본문을 읽을 수 없습니다 중 하나. 확장이 생략하면 `본문을 추출하지 못했습니다` |
+| 브라우저 창이 없음 (접근성) | `FAILED` | 열려 있는 브라우저 창을 찾지 못했습니다 |
+| UIA 실패 · 제한 시간 초과 (접근성) | `FAILED` | 브라우저에서 본문을 읽지 못했습니다 |
+| 읽었지만 비어 있음 (접근성) | `FAILED` | 페이지에서 읽을 본문이 없습니다 |
+
+접근성 경로일 때는 BE 가 FE 에 `notice` 를 직접 보내 확장 부재를 알린다 (60초 1회, 프로토콜.md §6.6). 도구 호출 하나가 최대 4초(확장) · 4.5초(접근성) 걸린다.
 
 ---
 
@@ -2302,7 +2339,6 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `gesture_exec` | `{name: string, hwnd?: long, context?: string}` | 제스처 매크로 실행 요청. AI 는 인식한 이름만 보내고 매핑 조회는 BE 가 한다. 즉시 응답 없음. 결과는 `gesture_result` |
-| `dom_text_request` | `{}` | 활성 탭 본문 요청. 회신은 `dom_text` |
 | `notice` | §4.3 `notice` 와 같음 | FE 에 그대로 중계 |
 | `gaze_cursor` | `{x: int, y: int}` | FE 에 그대로 중계. 설정 `gazeCursor` 가 `true` 일 때만 보낸다 |
 | `voice_rejected` | `{}` | 화자 게이트 기각 |
@@ -2425,7 +2461,6 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `user_choice` | `{choiceId?: string, n?: int, cancelled?: boolean}` | FE 클릭의 무해석 중계 |
-| `dom_text` | `{available: boolean, via: "extension" \| "accessibility", url?: string, title?: string, text?: string, truncated?: boolean, reason?: string}` | `dom_text_request` 회신. 실패면 `available: false` 와 `reason` 만. `via` 는 성공·실패 모두에 붙는다 — 본문을 어디서 얻었는지이고, `accessibility` 면 본문만 골라내지 못해 메뉴 · 사이드바가 섞여 있다 (프로토콜.md §6.6) |
 
 ```json
 { "type": "reg_mode_start", "data": { "tempId": "9f3a2c17", "takes": 3, "countdownSec": 3, "takeDurationSec": 2, "replaceGestureName": "손가락 하트" } }
@@ -2440,8 +2475,6 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 { "type": "calib_changed", "data": { "id": 3, "sha256": "0d4e55aa19cc…", "screenW": 2560, "screenH": 1440 } }
 ```
 ```json
-{ "type": "dom_text", "data": { "available": false, "via": "extension", "reason": "브라우저 확장이 응답하지 않습니다" } }
-{ "type": "dom_text", "data": { "available": true, "via": "accessibility", "url": "https://news.example.com/article/12345", "title": "반도체 수출 3개월 연속 증가", "text": "홈 뉴스 경제 지난달 반도체 수출액이 …", "truncated": false } }
 ```
 
 ### 4.6 `/ws/ext` — 브라우저 확장 ↔ BE
@@ -2457,7 +2490,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | BE → 확장 | `pong` | `{}` | `ping` 응답 |
 | BE → 확장 | `error` | `{message: string, of?: string}` | `type` 이 없는 메시지, 또는 처리 중 예외. 보낸 소켓에만 |
 
-`reason` 은 `활성 탭이 웹 페이지가 아닙니다` · `페이지에서 읽을 본문이 없습니다` · `이 페이지에서는 본문을 읽을 수 없습니다` 중 하나다. 확장이 `available: false` 에 `reason` 을 생략하면 BE 가 `본문을 추출하지 못했습니다` 로 채워 AI 에 `dom_text` 를 중계한다.
+`reason` 은 `활성 탭이 웹 페이지가 아닙니다` · `페이지에서 읽을 본문이 없습니다` · `이 페이지에서는 본문을 읽을 수 없습니다` 중 하나다. 확장이 `available: false` 에 `reason` 을 생략하면 BE 가 `본문을 추출하지 못했습니다` 로 채워 `browser.dom_text` 를 실패시킨다.
 
 ```json
 { "type": "dom_text", "data": { "requestId": "5c1d90aa", "available": true, "url": "https://news.example.com/article/12345", "title": "반도체 수출 3개월 연속 증가", "text": "지난달 반도체 수출액이 …", "truncated": false } }
@@ -2542,6 +2575,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `app.list` | | | §3.3 |
 | `app.launch` | ● | | §3.4 |
 | `browser.search` | ● | | §3.23 |
+| `browser.dom_text` | ● | | §3.24 |
 | `window.list` | | | §3.5 |
 | `window.focus` · `window.minimize` · `window.maximize` · `window.restore` | ● | | §3.6 |
 | `window.resize` | ● | | §3.7 |
@@ -2567,8 +2601,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 |---|---|---|---|
 | `/ws/fe` | FE → BE | `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `command_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
 | `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `command_sentence` · `command_progress` · `command_done` · `voice_sentence` · `voice_progress` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
-| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `dom_text_request` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `command_ready` · `command_progress` · `command_done` · `voice_ready` · `voice_progress` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
-| `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `command_enroll_start` · `command_collect` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` · `dom_text` | §4.5 |
+| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `command_ready` · `command_progress` · `command_done` · `voice_ready` · `voice_progress` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
+| `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `command_enroll_start` · `command_collect` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` | §4.5 |
 | `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `browser_open` · `ping` | §4.6 |
 | `/ws/ext` | BE → 확장 | `dom_text_request` · `browser_open_request` · `pong` · `error` | §4.6 |
 

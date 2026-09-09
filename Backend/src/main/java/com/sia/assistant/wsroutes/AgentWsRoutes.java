@@ -2,7 +2,6 @@ package com.sia.assistant.wsroutes;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sia.assistant.bootstrap.AgentBootstrapper;
-import com.sia.assistant.domtext.DomTextService;
 import com.sia.assistant.gestureexec.GestureExecutor;
 import com.sia.assistant.model.ModelManager;
 import com.sia.assistant.registration.CalibrationOrchestrator;
@@ -36,13 +35,12 @@ public class AgentWsRoutes {
     private final EnrollmentRelay enrollment;
     private final ModelManager modelManager;
     private final AgentBootstrapper bootstrapper;
-    private final DomTextService domTextService;
 
     public AgentWsRoutes(FeHub feHub, SessionService sessionService,
                          GestureExecutor gestureExecutor, RegistrationOrchestrator registration,
                          VoiceRegistrationOrchestrator voiceRegistration, CalibrationOrchestrator calibration,
                          EnrollmentRelay enrollment, ModelManager modelManager,
-                         AgentBootstrapper bootstrapper, DomTextService domTextService) {
+                         AgentBootstrapper bootstrapper) {
         this.feHub = feHub;
         this.sessionService = sessionService;
         this.gestureExecutor = gestureExecutor;
@@ -52,7 +50,6 @@ public class AgentWsRoutes {
         this.enrollment = enrollment;
         this.modelManager = modelManager;
         this.bootstrapper = bootstrapper;
-        this.domTextService = domTextService;
     }
 
     @EventListener
@@ -77,7 +74,6 @@ public class AgentWsRoutes {
             // 화자 게이트 기각 — HUD "등록된 목소리로 한 명령이 아닙니다" (통계는 events 배치가 따로 든다)
             case "voice_rejected" -> feHub.send("voice_rejected",
                     Map.of("message", "등록된 목소리로 한 명령이 아닙니다."));
-            case "dom_text_request" -> domTextService.request();
             case "gesture_exec" -> gestureExecutor.execute(d);
             case "reg_started" -> registration.onRegStarted(d.path("tempId").asText());
             case "reg_take" -> registration.onTake(d.path("tempId").asText(), d);

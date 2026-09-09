@@ -27,6 +27,12 @@ public final class ToolCatalog {
             "기본 브라우저로 검색하거나 주소를 엽니다. query 가 http:// 또는 https:// 로 시작하면 그 주소를, 아니면 구글 검색 결과를 새 탭에 엽니다. "
                     + "반환의 domAvailable 이 true 면 이어서 페이지 본문을 읽을 수 있고, false 면 열어 준 것까지만 확실합니다 — "
                     + "false 일 때는 본문을 읽었다고 말하지 마세요.";
+    public static final String D_BROWSER_DOM_TEXT =
+            "사용자가 지금 보고 있는 웹페이지의 본문을 읽어 제목 · 주소 · 텍스트를 반환합니다. "
+                    + "\"이 페이지 요약해줘\"처럼 화면의 웹 내용을 알아야 답할 수 있을 때 호출하세요. "
+                    + "반환의 via 가 extension 이면 본문만 정확히 추출한 것이고, accessibility 면 화면을 읽은 것이라 "
+                    + "메뉴 · 사이드바가 섞여 있을 수 있습니다 — 이때는 본문이 아닌 부분을 걸러 읽으세요. "
+                    + "본문은 2만 자에서 잘리며 잘렸으면 truncated 가 true 입니다.";
     public static final String D_WINDOW_LIST =
             "현재 열린 창 목록을 새로 조회합니다. 각 창의 ref(win:N), 제목, 앱 이름, 상태(NORMAL|MINIMIZED|MAXIMIZED)를 반환합니다.";
     public static final String D_WINDOW_FOCUS =
@@ -88,7 +94,7 @@ public final class ToolCatalog {
             "활성 세션의 만료 시간을 연장합니다. 유효한 명령을 처리한 직후에만 호출하세요.";
     public static final String D_SESSION_CANCEL =
             "활성 세션을 즉시 종료합니다.";
-    // 도구 29개 — 이 목록이 tool 테이블의 원천이다
+    // 도구 30개 — 이 목록이 tool 테이블의 원천이다
     private static final Map<String, ToolSpec> SPECS = build();
 
     private static Map<String, ToolSpec> build() {
@@ -97,6 +103,7 @@ public final class ToolCatalog {
         put(m, "app.list",          false, false, D_APP_LIST);
         put(m, "app.launch",        true,  false, D_APP_LAUNCH);
         put(m, "browser.search",    true,  false, D_BROWSER_SEARCH);
+        put(m, "browser.dom_text",  true,  false, D_BROWSER_DOM_TEXT);
         put(m, "window.list",       false, false, D_WINDOW_LIST);
         put(m, "window.focus",      true,  false, D_WINDOW_FOCUS);
         put(m, "window.minimize",   true,  false, D_WINDOW_MINIMIZE);

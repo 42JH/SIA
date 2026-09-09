@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test;
 class ToolCatalogTest {
 
     @Test
-    @DisplayName("카탈로그는 29개다 — tool 테이블의 원천")
-    void catalogHas29Tools() {
-        assertThat(ToolCatalog.all()).hasSize(29);
+    @DisplayName("카탈로그는 30개다 — tool 테이블의 원천")
+    void catalogHas30Tools() {
+        assertThat(ToolCatalog.all()).hasSize(30);
         // 확인 게이트가 사라지면서 confirm.* 두 개는 카탈로그에 없다
         assertThat(ToolCatalog.spec("confirm.accept")).isNull();
         assertThat(ToolCatalog.spec("confirm.reject")).isNull();
