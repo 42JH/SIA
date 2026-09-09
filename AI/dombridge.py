@@ -45,7 +45,7 @@ class DomBridge(threading.Thread):
     def context(self, max_age=6.0):
         """max_age초 이내에 갱신된 브라우저 컨텍스트. 없으면 None (→ 스크린샷 폴백)."""
         with self._lock:
-            if self._data is not None and time.monotonic() - self._t <= max_age:
+            if self._data is not None and time.monotonic() - self._t < max_age:
                 return self._data
         return None
 
