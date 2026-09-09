@@ -332,8 +332,9 @@ def load_wake_model():
     """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (게이트 없이 LLM 판정만).
 
     siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
-    (melspectrogram·embedding)는 openwakeword 패키지에 포함. 학습·판정 채널은 노트북
-    마이크 배열 + Windows 오디오 향상 켜짐 — 헤드셋·다른 PC는 미검증.
+    (melspectrogram·embedding)는 패키지에 없고 별도 다운로드다 — 신규 클론에서 없으면
+    자동으로 한 번 받아온다. 학습·판정 채널은 노트북 마이크 배열 + Windows 오디오
+    향상 켜짐 — 헤드셋·다른 PC는 미검증.
     """
     if not WAKE_MODEL.exists():
         print(f"시동어 모델 없음({WAKE_MODEL.name}) → 게이트 비활성, 호출어 판정은 LLM만")
@@ -341,7 +342,18 @@ def load_wake_model():
     try:
         from openwakeword.model import Model
 
-        return Model(wakeword_models=[str(WAKE_MODEL)], inference_framework="onnx")
+        def _load():
+            return Model(wakeword_models=[str(WAKE_MODEL)], inference_framework="onnx")
+        try:
+            return _load()
+        except Exception:
+            # 공용 특징 추출기(melspectrogram·embedding)가 없어 실패 → 한 번 받고 재시도
+            # (신규 클론 함정: 패키지에 미포함이라 첫 실행 때 여기서 받아온다)
+            from openwakeword.utils import download_models
+
+            print("시동어 공용 모델 다운로드 중(최초 1회)…")
+            download_models()
+            return _load()
     except Exception as e:
         print(f"시동어 모델 비활성({type(e).__name__}: {e}) → 호출어 판정은 LLM만:  pip install openwakeword")
         return None
