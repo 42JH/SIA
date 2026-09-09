@@ -47,7 +47,7 @@ public final class ToolCatalog {
             "지정한 창의 크기와 위치를 프리셋으로 바꿉니다. preset 은 LEFT_HALF, RIGHT_HALF, CENTER 중 하나입니다. "
                     + "최대화·복원은 window.maximize·window.restore 를 쓰세요.";
     public static final String D_WINDOW_CLOSE =
-            "지정한 창을 닫습니다. 사용자 확인 게이트를 통과해야 실제로 실행됩니다.";
+            "지정한 창을 닫습니다. 호출되면 바로 닫히므로 반드시 사용자에게 확인을 받은 뒤에만 호출하세요.";
     public static final String D_WINDOW_NEXT =
             "포그라운드 창 기준으로 다음 창으로 전환합니다.";
     public static final String D_WINDOW_PREV =
