@@ -227,11 +227,50 @@ def test_swipe_detector():
     assert feed([0.5] * 15) == []                                  # 정지 → 무장
     assert feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
     assert feed([0.82 - i * 0.04 for i in range(1, 9)]) == []      # 되돌아오는 손 — 무시
-    assert feed([0.2] * 15) == []      # 다른 위치에서 정지해도 방향 잠금은 유지
-    # Reverse direction is accepted only after a neutral hold at the
-    # original anchor.  This prevents the return path from issuing -10 s.
-    assert feed([0.5] * 18) == []
+    # Any neutral position can re-arm after the short return-motion lock.
+    assert feed([0.2] * 15) == []
     assert feed([0.2 - i * 0.04 for i in range(1, 8)]) == ["Swipe_Left"]
+
+    # A fast reversal is the return motion, not a second command.
+    guarded = SwipeDetector()
+    gt = 0.0
+
+    def guarded_feed(xs):
+        nonlocal gt
+        out = []
+        for x in xs:
+            gt += 1 / 30
+            event = guarded.update((x, 0.5), gt)
+            if event:
+                out.append(event)
+        return out
+
+    assert guarded_feed([0.5] * 15) == []
+    assert guarded_feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
+    assert guarded_feed([0.82 - i * 0.04 for i in range(1, 9)]) == []
+    # Any stable position, rather than the original center, re-arms it.
+    assert guarded_feed([0.2] * 15) == []
+    assert guarded_feed([0.2 - i * 0.04 for i in range(1, 8)]) == ["Swipe_Left"]
+
+    # A same-direction repeat does not need a neutral hold.  The return path
+    # is ignored, then the next rightward sweep is accepted from its turn point.
+    rapid = SwipeDetector()
+    rt = 0.0
+
+    def rapid_feed(xs):
+        nonlocal rt
+        out = []
+        for x in xs:
+            rt += 1 / 30
+            event = rapid.update((x, 0.5), rt)
+            if event:
+                out.append(event)
+        return out
+
+    assert rapid_feed([0.5] * 15) == []
+    assert rapid_feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
+    assert rapid_feed([0.82 - i * 0.04 for i in range(1, 10)]) == []
+    assert rapid_feed([0.46 + i * 0.04 for i in range(1, 8)]) == ["Swipe_Right"]
     # 수직 이동은 스와이프가 아니다
     s2 = SwipeDetector(vertical=False)
     t2 = 0.0

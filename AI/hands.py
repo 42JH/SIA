@@ -416,6 +416,14 @@ class SwipeDetector:
         self._home_since = None
         self.return_tol = dist * 0.20  # 시작 위치로 돌아왔다고 보는 허용 오차
         self.unlock_hold_s = 0.5
+        # Horizontal swipes do not require a return to their original point.
+        # A short post-command lock absorbs the return motion; a new still
+        # position then becomes the next gesture's neutral anchor.
+        self.cooldown_s = 0.20
+        self.rearm_hold_s = 0.15
+        self._cooldown_until = 0.0
+        self._direction_lock = None
+        self._resume_after_cooldown = False
 
     def prime(self, anchor, t):
         """이미 손바닥 홀드로 확인된 위치에서 즉시 스와이프를 받을 준비를 한다."""
@@ -436,6 +444,9 @@ class SwipeDetector:
             self._return_home = None
             self._lock_home = None
             self._home_since = None
+            self._cooldown_until = 0.0
+            self._direction_lock = None
+            self._resume_after_cooldown = False
             return None
         if self._await_hand_loss:
             return None
@@ -445,6 +456,26 @@ class SwipeDetector:
             self._hist.popleft()
         ref = next((p for p in reversed(self._hist) if t - p[0] >= 0.08), self._hist[0])
         speed = math.hypot(x - ref[1], y - ref[2]) / max(t - ref[0], 1e-3)
+        if t < self._cooldown_until:
+            self._armed = False
+            self._still_since = None
+            self._hist.clear()
+            self._resume_after_cooldown = True
+            return None
+        if self._resume_after_cooldown:
+            self._resume_after_cooldown = False
+            self._armed = True
+            self._hist.clear()
+            self._hist.append((t, x, y))
+            return None
+        if self._direction_lock is not None:
+            if speed < self.still_speed:
+                if self._still_since is None:
+                    self._still_since = t
+                elif t - self._still_since >= self.rearm_hold_s:
+                    self._direction_lock = None
+            else:
+                self._still_since = None
         # 수평 스와이프 후 시작 위치로 복귀하는 구간. 복귀 경로는 어떤 방향이든
         # 명령으로 해석하지 않는다. 시작 위치에 닿으면 즉시 같은 방향 반복을 허용한다.
         if self._return_home is not None:
@@ -472,7 +503,7 @@ class SwipeDetector:
             if speed < self.still_speed:
                 if self._still_since is None:
                     self._still_since = t
-                elif t - self._still_since >= self.still_t:
+                elif t - self._still_since >= self.rearm_hold_s:
                     self._armed = True
                     # 무장 이후의 움직임만 인정 — 이력을 리셋하지 않으면
                     # "빠른 이동 후 정지"가 소급 스와이프로 오발동한다
@@ -488,18 +519,23 @@ class SwipeDetector:
             if (self.horizontal and abs(dx) >= self.dist
                     and abs(dy) < abs(dx) * self.horizontal_ratio):  # 수평 위주 이동만
                 direction = "Swipe_Right" if dx > 0 else "Swipe_Left"
+                if (self._direction_lock is not None
+                        and direction != self._direction_lock):
+                    # Ignore the return path, but keep tracking so a quick
+                    # same-direction repeat can start from this turning point.
+                    self._hist.clear()
+                    self._hist.append((t, x, y))
+                    self._armed = True
+                    self._still_since = None
+                    return None
                 self._armed = False
                 self._still_since = None
                 self._hist.clear()
                 self._home_since = None
                 # 복귀 후 반대 방향으로 쓸면 새 명령이 아니라 되돌림으로 간주한다.
                 # 시작 위치에서 0.5초 정지하면 방향 잠금이 해제돼 전환할 수 있다.
-                if self._horiz_lock is not None and direction != self._horiz_lock:
-                    self._return_home = self._lock_home or (x0, y0)
-                    return None
-                self._horiz_lock = direction
-                self._lock_home = (x0, y0)
-                self._return_home = (x0, y0)
+                self._direction_lock = direction
+                self._cooldown_until = t + self.cooldown_s
                 return direction
             if self.vertical and abs(dy) >= self.dist and abs(dx) < abs(dy) * 0.6:  # 수직 위주 이동만
                 self._armed = False
