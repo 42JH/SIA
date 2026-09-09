@@ -32,10 +32,15 @@ public class SettingsService {
 
     private static final Logger log = LoggerFactory.getLogger(SettingsService.class);
     private static final String SEED_PATH = "seed/default-settings.json";
-    /** 시드 파일까지 못 읽는 최악의 경우를 위한 마지막 보루 (default-settings.json·V1 시드와 동일 값). */
+    /**
+     * 시드 파일까지 못 읽는 최악의 경우를 위한 마지막 보루 (default-settings.json 과 동일 값).
+     * V1 시드에는 micDeviceId·cameraDeviceId 가 없다 — 나중에 추가된 키라 기존 DB 는 첫 저장 때
+     * fillMissing 이 이 시드에서 채운다 (마이그레이션 없이 끝난다 · SettingsSchema 참고).
+     */
     private static final String FALLBACK_SEED =
             "{\"wakeWord\":\"시아\",\"sessionSeconds\":15,"
-                    + "\"autoStart\":true,\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":null}";
+                    + "\"autoStart\":true,\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":null,"
+                    + "\"micDeviceId\":null,\"cameraDeviceId\":null}";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper om;
@@ -127,7 +132,7 @@ public class SettingsService {
         }
     }
 
-    /** settings_json 의 문자열 키 하나(wakeWord·micDevice·cameraDevice)를 읽는다. 없거나 실패하면 null. */
+    /** settings_json 의 문자열 키 하나(wakeWord·micDevice·cameraDevice 등)를 읽는다. 없거나 실패하면 null. */
     public String peekString(String key) {
         try {
             JsonNode v = om.readTree(rawJson()).path(key);

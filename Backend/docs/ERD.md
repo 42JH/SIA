@@ -221,7 +221,7 @@ erDiagram
 | 컬럼 | 타입 | NULL | 기본값 | 설명 |
 |---|---|:-:|---|---|
 | `id` | INTEGER | N | — | PK. `CHECK (id = 1)` |
-| `settings_json` | TEXT | N | — | 설정 JSON 원문. 알려진 키 6종(`wakeWord` · `sessionSeconds` · `autoStart` · `gazeCursor` · `micDevice` · `cameraDevice`)은 서비스 계층이 존재 · 타입을 보장하고, 그 밖의 키는 그대로 보존한다 |
+| `settings_json` | TEXT | N | — | 설정 JSON 원문. 알려진 키 8종(`wakeWord` · `sessionSeconds` · `autoStart` · `gazeCursor` · `micDevice` · `cameraDevice` · `micDeviceId` · `cameraDeviceId`)은 서비스 계층이 존재 · 타입을 보장하고, 그 밖의 키는 그대로 보존한다 |
 | `settings_version` | INTEGER | N | `1` | 저장마다 +1 |
 | `settings_updated_at` | TEXT | Y | — | 마지막 저장 시각 |
 | `agent_synced_version` | INTEGER | Y | — | AI 가 마지막으로 받은 `settings_version`. 이 값이 `settings_version` 보다 작으면 AI 에 미반영 |
@@ -487,7 +487,7 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다.
 
 ```json
-{"wakeWord":"시아","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null}
+{"wakeWord":"시아","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null,"micDeviceId":null,"cameraDeviceId":null}
 ```
 
 ### 5.2 기동 시 코드가 넣는 데이터
@@ -589,7 +589,7 @@ ERDCloud 에 붙여 넣기 위한 MySQL 문법 표현이다. 물리 스키마는
 ```sql
 CREATE TABLE `app_settings` (
 	`id`	BIGINT	NOT NULL	COMMENT '항상 1. 싱글턴',
-	`settings_json`	TEXT	NOT NULL	COMMENT '설정 JSON 원문. 알려진 키 6종(wakeWord·sessionSeconds·autoStart·gazeCursor·micDevice·cameraDevice)은 서비스 계층이 존재·타입 보장, 그 밖의 키는 보존',
+	`settings_json`	TEXT	NOT NULL	COMMENT '설정 JSON 원문. 알려진 키 8종(wakeWord·sessionSeconds·autoStart·gazeCursor·micDevice·cameraDevice·micDeviceId·cameraDeviceId)은 서비스 계층이 존재·타입 보장, 그 밖의 키는 보존',
 	`settings_version`	INT	NOT NULL	DEFAULT 1	COMMENT '저장마다 +1',
 	`settings_updated_at`	TIMESTAMPTZ	NULL	COMMENT 'UTC yyyy-MM-dd HH:mm:ss.SSS',
 	`agent_synced_version`	INT	NULL	COMMENT 'AI 가 마지막으로 받은 settings_version',

@@ -5,17 +5,25 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.JsonBody;
+import com.sia.assistant.control.device.CaptureDeviceCatalog;
 import com.sia.assistant.profile.CalibProfileService;
 import com.sia.assistant.profile.VoiceProfileService;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 장비 교체 후 프로필 자동 맵핑 (회의 확정 2026-09-01).
+ * 입력 장치 목록 조회와, 장비 교체 후 프로필 자동 맵핑 (회의 확정 2026-09-01 · 2026-09-09).
+ *
+ * <p>초기설정 화면은 GET /api/devices 로 고를 수 있는 마이크·카메라를 받고, 고른 값을
+ * PUT /api/settings 의 micDevice/micDeviceId · cameraDevice/cameraDeviceId 로 저장한다.
+ * 저장 성공 시 BE 가 AI 에 settings_changed 로 실어 보내므로 별도 통지 호출은 없다.
+ *
+ * <p>장비 교체 자동 맵핑 (POST /api/devices/remap).
  * 설정에서 마이크/카메라를 바꾼 뒤 FE 가 부른다:
  *  - 그 장비로 만든 프로필이 1개 → 자동으로 사용으로 설정하고 activated 에 담아 준다.
  *  - 2개 이상 → 자동 전환하지 않는다. 최근 사용일 내림차순 목록을 돌려줘 사용자가 고른다
@@ -27,13 +35,27 @@ public class DevicesController {
 
     private final VoiceProfileService voiceProfiles;
     private final CalibProfileService calibProfiles;
+    private final CaptureDeviceCatalog devices;
     private final ObjectMapper om;
 
     public DevicesController(VoiceProfileService voiceProfiles, CalibProfileService calibProfiles,
-                             ObjectMapper om) {
+                             CaptureDeviceCatalog devices, ObjectMapper om) {
         this.voiceProfiles = voiceProfiles;
         this.calibProfiles = calibProfiles;
+        this.devices = devices;
         this.om = om;
+    }
+
+    /**
+     * 고를 수 있는 입력 장치 — {mics: [{name, id, isDefault}], cameras: [{name, id}]}.
+     * 열거에 실패하면 예외 대신 빈 목록이다 (FE 는 "시스템 기본"만 남은 드롭다운을 보여 준다).
+     */
+    @GetMapping("/api/devices")
+    public Map<String, Object> list() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("mics", devices.mics());
+        out.put("cameras", devices.cameras());
+        return out;
     }
 
     /** 본문 {kind: "mic"|"camera", deviceLabel} → {kind, deviceLabel, activated: {...}|null, matches: [...]} */

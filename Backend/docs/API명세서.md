@@ -8,7 +8,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 | 절 | 내용 |
 |---|---|
 | [0](#0-공통-규약) | 공통 규약 — 주소 · 인증 · 시각 · 오류 응답 · 목록 형식 |
-| [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장비 맵핑 |
+| [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장치 목록 · 장비 맵핑 |
 | [2](#2-rest--ai-용) | REST (AI) — npz · 오디오 업/다운로드, 통계 배치 |
 | [3](#3-mcp-도구-30개) | MCP 도구 30개 — 인자 · 응답 · 실패 코드 |
 | [4](#4-websocket-메시지-양식) | WebSocket 메시지 양식 — 봉투 · 채널별 이벤트의 필드 타입 · 예시 |
@@ -162,12 +162,14 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
     "autoStart": true,
     "gazeCursor": false,
     "micDevice": null,
-    "cameraDevice": null
+    "cameraDevice": null,
+    "micDeviceId": null,
+    "cameraDeviceId": null
   }
 }
 ```
 
-`settings` 는 자유 JSON 객체다. FE 가 추가한 키는 그대로 보관 · 반환된다. 아래 알려진 키 6개는 BE 가 타입과 존재를 보장한다.
+`settings` 는 자유 JSON 객체다. FE 가 추가한 키는 그대로 보관 · 반환된다. 아래 알려진 키 8개는 BE 가 타입과 존재를 보장한다.
 
 | 키 | 타입 | 기본값 | 읽는 쪽 · 의미 |
 |---|---|---|---|
@@ -177,10 +179,14 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 | `gazeCursor` | boolean | `false` | AI 가 `true` 일 때만 `gaze_cursor` 를 보낸다 |
 | `micDevice` | 문자열 \| `null` | `null` | 마이크 장치 이름 (OS 원문). `null` = 시스템 기본 장치 |
 | `cameraDevice` | 문자열 \| `null` | `null` | 카메라 장치 이름 (OS 원문). `null` = 시스템 기본 장치 |
+| `micDeviceId` | 문자열 \| `null` | `null` | AI (마이크 열기). `GET /api/devices` 가 준 `mics[].id`. `null` = 시스템 기본 장치 |
+| `cameraDeviceId` | 문자열 \| `null` | `null` | AI (카메라 열기). `GET /api/devices` 가 준 `cameras[].id`. `null` = 시스템 기본 장치 |
 
-- 장치 이름은 OS 가 보고하는 이름 원문이다 (예: `"마이크(Realtek(R) Audio)"`, `"HD Webcam"`). 별도 id 는 없다.
-- 장치 목록 열거는 FE 가 한다. BE 에 장치 열거 API 는 없다.
-- 이 값은 프로필의 `deviceLabel` 로 복사되어 장비 교체 자동 맵핑(§1.32)의 키가 된다. 프로필 확정 시 FE 가 `deviceLabel` 을 함께 보내면 그 값이 설정값보다 우선한다.
+- 장치 이름은 OS 가 보고하는 이름 원문이다 (예: `"마이크(Realtek(R) Audio)"`, `"HD Webcam"`).
+- 장치 목록 열거는 BE 가 한다 — `GET /api/devices`(§1.35). FE 는 거기서 받은 `name` 과 `id` 를 짝으로 저장한다.
+- 이름과 id 는 역할이 다르다. **이름**은 화면 표시와 프로필 장비 라벨용이고, **id** 는 AI 가 실제로 장치를 여는 키다. 이름은 같은 모델이 두 대면 겹칠 수 있어 여는 키로 쓸 수 없다.
+- 이름은 프로필의 `deviceLabel` 로 복사되어 장비 교체 자동 맵핑(§1.32)의 키가 된다. 프로필 확정 시 FE 가 `deviceLabel` 을 함께 보내면 그 값이 설정값보다 우선한다.
+- 이 네 키는 모두 AI 에게 `settings_changed` 로 그대로 전달된다 — 선택 결과를 AI 에 알리는 별도 엔드포인트는 없다.
 - `wakeWord` 를 바꿔도 호출어 모델(`blob:wakeword`)은 재학습되지 않는다.
 
 ### 1.3 `PUT /api/settings` — 설정 교체
@@ -195,7 +201,9 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
     "autoStart": true,
     "gazeCursor": true,
     "micDevice": "마이크(Realtek(R) Audio)",
+    "micDeviceId": "{0.0.1.00000000}.{a53af75a-d537-4666-9a94-9121beb12019}",
     "cameraDevice": "HD Webcam",
+    "cameraDeviceId": "\\\\?\\usb#vid_046d&pid_082d&mi_00#7&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}",
     "previewMirror": true
   },
   "updatedAt": "2026-08-31 04:12:07.913"
@@ -228,6 +236,9 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "마이크(micDevice) 설정은 OS 가 보고하는 장치 이름 문자열이거나 null(시스템 기본)이어야 합니다" }
+```
+```json
+{ "code": "INVALID_REQUEST", "message": "마이크 장치 ID(micDeviceId) 설정은 GET /api/devices 가 준 장치 식별자 문자열이거나 null(시스템 기본)이어야 합니다" }
 ```
 
 **409 SETTINGS_STALE** — `updatedAt` 이 현재 저장분보다 **과거**일 때만 난다 (23자 고정폭 UTC 문자열의 문자열 비교). 저장분과 같거나 더 나중인 값은 통과한다. 회복: `GET /api/settings` → 변경분 재적용 → 새 `updatedAt` 으로 재시도.
@@ -1245,6 +1256,36 @@ GET /api/captures/capture_20260902_041230.png
 **200** `image/png`. **404** 파일 없음 (본문 없음).
 
 파일명은 `[A-Za-z0-9_-]+\.png` 패턴만 허용한다. 저장 위치는 `~/Pictures/SIA/` 다. 사용자 화면 이미지이므로 PC 밖으로 내보내지 않는다.
+
+### 1.35 `GET /api/devices` — 고를 수 있는 입력 장치
+
+초기설정과 설정 화면의 마이크 · 카메라 드롭다운을 채운다. 장치 열거는 BE 가 한다.
+
+**200**
+
+```json
+{
+  "mics": [
+    { "name": "마이크(Realtek(R) Audio)", "id": "{0.0.1.00000000}.{a53af75a-d537-4666-9a94-9121beb12019}", "isDefault": true }
+  ],
+  "cameras": [
+    { "name": "HD Webcam", "id": "\\\\?\\usb#vid_046d&pid_082d&mi_00#7&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}" }
+  ]
+}
+```
+
+| 필드 | 의미 |
+|---|---|
+| `mics[].name` · `cameras[].name` | OS 가 보고하는 장치 이름 원문. 설정 `micDevice` / `cameraDevice` 에 그대로 넣는다. 같은 모델을 두 개 꽂으면 이름이 겹칠 수 있다 |
+| `mics[].id` | Core Audio 엔드포인트 ID. 설정 `micDeviceId` 에 그대로 넣는다 |
+| `cameras[].id` | 장치 인터페이스 경로. 설정 `cameraDeviceId` 에 그대로 넣는다 |
+| `mics[].isDefault` | Windows 소리 설정의 기본 입력 장치인지. 목록 안에 최대 하나다 |
+
+- 마이크는 **연결 · 활성** 상태만 낸다. 뽑힌 장치는 목록에 없다.
+- 카메라에는 `isDefault` 가 없다 — OS 에 기본 카메라 개념이 없다.
+- 장치를 하나도 못 읽어도 오류가 아니다. 빈 목록(`{"mics": [], "cameras": []}`)이 오면 FE 는 "시스템 기본"만 남긴다.
+- `id` 는 이름과 달리 장치마다 유일하고 프로세스 밖에서도 뜻이 유지된다. AI 는 이 값으로 장치를 연다 — 이름은 화면 표시와 프로필 장비 라벨(§1.31)용이다.
+- 선택 결과는 `PUT /api/settings`(§1.3) 로 저장한다. 저장 성공 시 BE 가 AI 에 `settings_changed` 로 실어 보내므로 별도 통지 호출은 없다. 이어서 `POST /api/devices/remap`(§1.32) 으로 프로필 자동 맵핑을 돌린다.
 
 ---
 
@@ -2416,7 +2457,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `calib` | `{id: long, sha256: string, screenW: int \| null, screenH: int \| null}` \| null | 활성 보정 프로필 |
 
 ```json
-{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
+{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam", "micDeviceId": "{0.0.1.00000000}.{a53af75a…}", "cameraDeviceId": "\\?\usb#vid_046d…" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
 ```
 
 #### 제스처
@@ -2546,6 +2587,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | PATCH | `/api/calibs/{id}` | §1.30 |
 | POST | `/api/calibs/{id}/activate` | §1.30 |
 | DELETE | `/api/calibs/{id}` | §1.30 |
+| GET | `/api/devices` | §1.35 |
 | POST | `/api/devices/remap` | §1.32 |
 | GET | `/api/models` | §1.33 |
 | POST | `/api/models/{name}/redownload` | §1.33 |

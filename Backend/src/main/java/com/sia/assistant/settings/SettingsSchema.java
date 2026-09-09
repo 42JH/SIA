@@ -13,6 +13,8 @@ import java.util.List;
  * <p>settings_json 은 여전히 자유 JSON 이고 미지의 키는 그대로 통과한다(FE 가 UI 상태를 얹을 수 있다).
  * 다만 아래 키들은 <b>PUT 이 통째 교체라는 이유로 조용히 사라지면 안 된다</b> —
  * 예를 들어 {@code micDevice} 가 유실되면 이후 등록되는 보이스 프로필의 장비 라벨이 비고,
+ * {@code micDeviceId} 가 유실되면 AI 가 사용자가 고른 마이크 대신 시스템 기본 장치를 연다.
+ * 앞의 것은 프로필 맵핑용 "이름", 뒤의 것은 실제로 장치를 여는 "식별자"로 역할이 다르다.
  * 장비 교체 자동 맵핑(POST /api/devices/remap)이 영구히 후보를 못 찾는다.
  * 그래서 두 가지만 강제한다:
  * <ol>
@@ -39,7 +41,9 @@ final class SettingsSchema {
         /** true / false. */
         BOOLEAN,
         /** 장치 이름 문자열 또는 null(= 시스템 기본 장치를 따른다). */
-        DEVICE_NAME
+        DEVICE_NAME,
+        /** OS 장치 식별자 문자열 또는 null. 이름과 달리 같은 모델이 여러 대여도 겹치지 않는다. */
+        DEVICE_ID
     }
 
     private record Key(String name, Kind kind, String label) {
@@ -51,7 +55,9 @@ final class SettingsSchema {
             new Key("autoStart", Kind.BOOLEAN, "컴퓨터 시작 시 자동 실행"),
             new Key("gazeCursor", Kind.BOOLEAN, "시선 커서 표시"),
             new Key("micDevice", Kind.DEVICE_NAME, "마이크"),
-            new Key("cameraDevice", Kind.DEVICE_NAME, "카메라"));
+            new Key("cameraDevice", Kind.DEVICE_NAME, "카메라"),
+            new Key("micDeviceId", Kind.DEVICE_ID, "마이크 장치 ID"),
+            new Key("cameraDeviceId", Kind.DEVICE_ID, "카메라 장치 ID"));
 
     /**
      * 본문에 없는 알려진 키를 기존 값 → 시드 값 순으로 채운다.
@@ -103,6 +109,13 @@ final class SettingsSchema {
                     // null = 시스템 기본 장치. 문자열이면 OS 가 보고한 장치 이름 원문이어야 한다
                     if (!v.isNull() && (!v.isTextual() || v.asText().isBlank())) {
                         throw bad(key, "OS 가 보고하는 장치 이름 문자열이거나 null(시스템 기본)이어야 합니다");
+                    }
+                }
+                case DEVICE_ID -> {
+                    // GET /api/devices 가 준 id 를 그대로 돌려받는다. 존재 여부는 검사하지 않는다 —
+                    // 뽑혀 있는 장치를 저장해 둘 수도 있고, 그 판단은 실제로 장치를 여는 AI 몫이다
+                    if (!v.isNull() && (!v.isTextual() || v.asText().isBlank())) {
+                        throw bad(key, "GET /api/devices 가 준 장치 식별자 문자열이거나 null(시스템 기본)이어야 합니다");
                     }
                 }
                 default -> throw new IllegalStateException("알 수 없는 설정 타입: " + key.kind());

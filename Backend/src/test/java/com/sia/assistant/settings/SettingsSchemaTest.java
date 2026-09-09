@@ -21,7 +21,8 @@ class SettingsSchemaTest {
     private static final ObjectMapper OM = new ObjectMapper();
     private static final String SEED =
             "{\"wakeWord\":\"시아\",\"sessionSeconds\":15,\"autoStart\":true,"
-                    + "\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":null}";
+                    + "\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":null,"
+                    + "\"micDeviceId\":null,\"cameraDeviceId\":null}";
 
     private ObjectNode obj(String json) throws Exception {
         return (ObjectNode) OM.readTree(json);
@@ -40,7 +41,8 @@ class SettingsSchemaTest {
         ObjectNode incoming = obj("{\"wakeWord\":\"시아\",\"sessionSeconds\":30}");
 
         assertThat(SettingsSchema.fillMissing(incoming, current, seed()))
-                .containsExactlyInAnyOrder("autoStart", "gazeCursor", "micDevice", "cameraDevice");
+                .containsExactlyInAnyOrder("autoStart", "gazeCursor", "micDevice", "cameraDevice",
+                        "micDeviceId", "cameraDeviceId");
         assertThat(incoming.path("micDevice").asText()).isEqualTo("마이크(Realtek(R) Audio)");
         assertThat(incoming.path("cameraDevice").asText()).isEqualTo("HD Webcam");
         assertThat(incoming.path("gazeCursor").asBoolean()).isTrue();
@@ -66,7 +68,9 @@ class SettingsSchemaTest {
         ObjectNode incoming = obj("{\"wakeWord\":\"시아\",\"sessionSeconds\":15,\"autoStart\":true,"
                 + "\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":\"HD Webcam\"}");
 
-        assertThat(SettingsSchema.fillMissing(incoming, current, seed())).isEmpty();
+        // 이 문서에 없는 id 키 2개는 시드에서 채워지고, 명시한 micDevice:null 은 그대로 남는다
+        assertThat(SettingsSchema.fillMissing(incoming, current, seed()))
+                .containsExactlyInAnyOrder("micDeviceId", "cameraDeviceId");
         assertThat(incoming.path("micDevice").isNull()).isTrue();
     }
 
@@ -93,6 +97,8 @@ class SettingsSchemaTest {
         assertBad("{\"gazeCursor\":1}", "시선 커서");
         assertBad("{\"micDevice\":123}", "마이크");
         assertBad("{\"cameraDevice\":\"  \"}", "카메라");
+        assertBad("{\"micDeviceId\":123}", "마이크 장치 ID");
+        assertBad("{\"cameraDeviceId\":\"  \"}", "카메라 장치 ID");
     }
 
     @Test
@@ -109,6 +115,20 @@ class SettingsSchemaTest {
         SettingsSchema.validate(obj(SEED));
         SettingsSchema.validate(obj("{\"wakeWord\":\"시아\",\"sessionSeconds\":15,\"autoStart\":false,"
                 + "\"gazeCursor\":true,\"micDevice\":\"마이크(Realtek(R) Audio)\",\"cameraDevice\":\"HD Webcam\"}"));
+    }
+
+    @Test
+    @DisplayName("장치 ID 는 GET /api/devices 가 준 문자열이거나 null 이다 — 존재 여부는 검사하지 않는다")
+    void deviceIdsAreStoredAsGiven() throws Exception {
+        // 역슬래시가 JSON·Java 양쪽에서 두 번 이스케이프되는 걸 피해 노드를 직접 만든다
+        ObjectNode doc = OM.createObjectNode();
+        doc.put("micDeviceId", "{0.0.1.00000000}.{2b1c7d55-0e4f-4a1f-9c1e-3f0b8a2d6e11}");
+        doc.put("cameraDeviceId",
+                "\\\\?\\usb#vid_046d&pid_082d&mi_00#7&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}");
+
+        // 지금 안 꽂혀 있는 장치의 id 여도 저장된다 — 여는 쪽(AI)이 판단할 몫이다
+        SettingsSchema.validate(doc);
+        SettingsSchema.validate(obj("{\"micDeviceId\":null,\"cameraDeviceId\":null}"));
     }
 
     private void assertBad(String json, String messagePart) throws Exception {

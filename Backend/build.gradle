@@ -61,4 +61,6 @@ tasks.named('test') {
     useJUnitPlatform()
     // 실 브라우저가 있어야 도는 UIA 스모크 테스트 스위치 — 기본 비활성이라 CI 는 영향받지 않는다
     systemProperty 'sia.live.uia', System.getProperty('sia.live.uia') ?: 'false'
+    // 실제 마이크·카메라가 꽂혀 있어야 도는 장치 열거 스모크 테스트 스위치
+    systemProperty 'sia.live.devices', System.getProperty('sia.live.devices') ?: 'false'
 }
