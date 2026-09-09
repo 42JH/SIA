@@ -45,6 +45,8 @@ SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 �
                           # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
                           # 앞을 1.7 s 로 늘리거나 앞뒤 1.5 s 씩 잡으면 배경음이 더 들어와 본인 호출을 놓친 사례 있음.
                           # 발화가 3 s 이하거나 시동어를 못 넘은 발화(세션 안 명령)는 자르지 않는다.
+WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수가 임계 미만이면 앞 1.3 s 를 뗀 오디오로 한 번 더 채점 —
+                        # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
                           # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
 
@@ -359,7 +361,7 @@ def load_wake_model():
         return None
 
 
-def speaker_input(audio, i_max, sr=16000):
+def speaker_input(audio, i_max, lead=0, sr=16000):
     """화자 인증에 넣을 오디오 → (audio, 시작 s, 끝 s). 시동어를 못 넘었거나(i_max None) 발화가 3 s 이하면 원본 그대로, (None, None).
 
     발화 앞뒤(녹음 시작 전 여유분·말 끝난 뒤 꼬리)에 배경음이 길게 붙을수록 목소리 특징(임베딩)이 흐려져 본인 유사도가 내려간다.
@@ -369,7 +371,7 @@ def speaker_input(audio, i_max, sr=16000):
     win = int((SPEAKER_CROP_BEFORE_S + SPEAKER_CROP_AFTER_S) * sr)
     if i_max is None or len(audio) <= win:
         return audio, None, None
-    c = int((i_max * WAKE_FRAME_S - WAKE_PAD_S) * sr)
+    c = int((i_max * WAKE_FRAME_S - WAKE_PAD_S) * sr) + lead  # lead: 재채점에 쓴 오디오가 원본에서 시작한 샘플
     lo = min(max(c - int(SPEAKER_CROP_BEFORE_S * sr), 0), len(audio) - win)
     return audio[lo:lo + win], round(lo / sr, 2), round((lo + win) / sr, 2)
 
@@ -509,9 +511,14 @@ class Brain(threading.Thread):
                 # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
                 # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
                 # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
-                wake_score, i_max = None, None
+                wake_score, i_max, lead = None, None, 0
                 if self.wake is not None:
                     scores = [float(p[WAKE_MODEL.stem]) for p in self.wake.predict_clip(audio)]  # np.float32는 json 불가
+                    n_lead = int(WAKE_LEAD_TRIM_S * 16000)
+                    if max(scores) < WAKE_THRESHOLD and len(audio) > n_lead + 16000:  # 앞 자르고 재채점 — 통과한 발화엔 비용 0
+                        s2 = [float(p[WAKE_MODEL.stem]) for p in self.wake.predict_clip(audio[n_lead:])]
+                        if max(s2) > max(scores):
+                            scores, lead = s2, n_lead
                     wake_score = round(max(scores), 3)
                     if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
                         i_max = int(np.argmax(scores))
@@ -524,7 +531,7 @@ class Brain(threading.Thread):
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
                 sim, crop_t0, crop_t1 = None, None, None
                 if self.speaker is not None and self.speaker.enrolled:
-                    spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max)
+                    spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
                     ok, sim = self.speaker.verify(spk_audio)
                     if not ok:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}")
