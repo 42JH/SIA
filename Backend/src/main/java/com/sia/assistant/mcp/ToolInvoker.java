@@ -83,6 +83,7 @@ public class ToolInvoker {
             case "app.list" -> appTools.listResult();
             case "app.launch" -> appTools.launchResult(str(args, "appRef"));
             case "browser.search" -> browserTools.searchResult(str(args, "query"));
+            case "browser.dom_text" -> browserTools.domTextResult();
             case "window.list" -> windowTools.listResult();
             case "window.focus" -> windowTools.focusResult(str(args, "winRef"));
             case "window.minimize" -> windowTools.minimizeResult(str(args, "winRef"));
