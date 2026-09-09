@@ -76,7 +76,9 @@ class SettingsServiceTest {
         assertThat(body)
                 .containsEntry("version", 3)
                 .containsEntry("settingsPending", true);
-        assertThat(body.get("settings")).isEqualTo(om.valueToTree(Map.of("wakeWord", "시아")));
+        // ★ settings 는 JsonNode 가 아니라 Map 이다 — 응답 직렬화가 Jackson 3 컨버터를 타기 때문이다
+        //   (SettingsService.asMap · SettingsControllerJsonTest 참고)
+        assertThat(body.get("settings")).isEqualTo(Map.of("wakeWord", "시아"));
     }
 
     @Test
