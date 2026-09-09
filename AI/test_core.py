@@ -447,6 +447,11 @@ def test_voice_bridge():
 
 
 if __name__ == "__main__":
+    import sys
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # cp949 콘솔에서 한글·em-dash 출력 크래시 방지
+    except Exception:
+        pass
     test_calibrator()
     test_gaze_buffer()
     test_gaze_buffer_stale()
