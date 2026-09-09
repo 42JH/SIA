@@ -1,0 +1,18 @@
+mediapipe==1.0.1
+opencv-python
+numpy
+pyautogui
+pynput
+uiautomation
+sounddevice
+pillow
+google-genai
+send2trash
+pywin32
+faster-whisper  # 1단 로컬 라우터용 (없으면 자동으로 LLM 단독 경로)
+websockets  # BE 연결 계층 WS(/ws/agent) — 없으면 MCP만, 미연결이면 로컬 폴백
+openwakeword  # 시동어 게이트용 (없으면 게이트 없이 LLM 판정만)
+# 화자 인증용 (선택 — 없으면 --no-speaker 자동, 아무 목소리나 허용):
+# speechbrain, torchaudio, soundfile
+# 딥 시선 모델용 (선택, NVIDIA GPU 권장 — 없으면 기하 방식으로 자동 폴백):
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
