@@ -738,7 +738,9 @@ class Brain(threading.Thread):
                 self.overlay.toast(say or f"{app} 실행")
         elif action == "web_search":
             q = (result.get("query") or "").strip()
-            if q:
+            # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
+            # BE 가 막았거나(세션 전) 미접속이면 ok False/None → 기존 로컬 경로로 폴백(open_app 과 같은 패턴).
+            if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
                 webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(q))
                 self.overlay.toast(say or f"'{q}' 검색")
         elif action == "find_file":
