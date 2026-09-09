@@ -522,6 +522,12 @@ class Brain(threading.Thread):
                     wake_score = round(max(scores), 3)
                     if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
                         i_max = int(np.argmax(scores))
+                        # 63: 감지 즉시 BE 에 알린다(FE "듣고 있어요" + 세션 개시). 화자 게이트보다 앞 — 호출어 발화는
+                        # 짧아서 아직 미인증인 게 정상(다음 발화와 이어붙여 판정). 섀도는 로그만이라 안 보냄.
+                        # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
+                        be = self._be()
+                        if be and not WAKE_SHADOW:
+                            be.wake_detected()
                     if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
                         print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
                         log_utterance(gate="wake_reject", wake_score=wake_score,
