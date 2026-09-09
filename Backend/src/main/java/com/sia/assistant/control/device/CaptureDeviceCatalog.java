@@ -16,8 +16,8 @@ import org.springframework.stereotype.Service;
  * {@code cameraDevice}/{@code cameraDeviceId} 로 저장되고, 저장 성공 시 BE 가 AI 에
  * {@code settings_changed} 로 그대로 실어 보낸다 — 이 클래스는 목록만 만들고 통지에는 관여하지 않는다.
  *
- * <p>전 과정 best-effort 다. 열거에 실패하면 예외 대신 빈 목록이고, FE 는 "시스템 기본"만 남은
- * 드롭다운을 보여 준다 — 초기설정을 500 으로 막는 것보다 낫다.
+ * <p>전 과정 best-effort 다. 열거에 실패하면 예외 대신 빈 목록이다 — 초기설정을 500 으로 막는 것보다
+ * 낫다. 마이크는 "시스템 기본"으로 진행할 수 있고, 카메라는 고를 것이 없다는 뜻이 된다.
  */
 @Service
 public class CaptureDeviceCatalog {
@@ -34,7 +34,10 @@ public class CaptureDeviceCatalog {
     }
 
     /**
-     * 카메라 하나. OS 에 "기본 카메라" 개념이 없어 {@code isDefault} 가 없다.
+     * 카메라 하나. {@code isDefault} 가 없는 것은 <b>OS 에 기본 카메라가 없기 때문</b>이다 —
+     * 마이크의 {@code isDefault} 는 Core Audio 에 물어본 답이지만 카메라에는 물어볼 API 가 없고,
+     * 넣으려면 BE 가 임의로 정해야 해서 이름이 거짓이 된다. 고르지 않으면 설정이 {@code null} 이고
+     * 그때는 AI 가 열거 순서 첫 장치를 연다.
      *
      * @param name OS 가 보고하는 장치 이름 원문 (설정 {@code cameraDevice} 로 저장된다)
      * @param id   장치 인터페이스 경로 (설정 {@code cameraDeviceId} 로 저장된다)

@@ -177,16 +177,17 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 | `sessionSeconds` | 1 이상 정수 | `15` | BE 세션 유지 시간. 변경은 다음 세션 개시 · 갱신부터 적용 |
 | `autoStart` | boolean | `true` | FE 가 집행한다. BE 는 저장 · 중계만 한다 |
 | `gazeCursor` | boolean | `false` | AI 가 `true` 일 때만 `gaze_cursor` 를 보낸다 |
-| `micDevice` | 문자열 \| `null` | `null` | 마이크 장치 이름 (OS 원문). `null` = 시스템 기본 장치 |
-| `cameraDevice` | 문자열 \| `null` | `null` | 카메라 장치 이름 (OS 원문). `null` = 시스템 기본 장치 |
-| `micDeviceId` | 문자열 \| `null` | `null` | AI (마이크 열기). `GET /api/devices` 가 준 `mics[].id`. `null` = 시스템 기본 장치 |
-| `cameraDeviceId` | 문자열 \| `null` | `null` | AI (카메라 열기). `GET /api/devices` 가 준 `cameras[].id`. `null` = 시스템 기본 장치 |
+| `micDevice` | 문자열 \| `null` | `null` | 마이크 장치 이름 (OS 원문). `null` = 시스템 기본 마이크 |
+| `cameraDevice` | 문자열 \| `null` | `null` | 카메라 장치 이름 (OS 원문). `null` = 지정하지 않음 |
+| `micDeviceId` | 문자열 \| `null` | `null` | AI (마이크 열기). `GET /api/devices` 가 준 `mics[].id`. `null` = 시스템 기본 마이크 |
+| `cameraDeviceId` | 문자열 \| `null` | `null` | AI (카메라 열기). `GET /api/devices` 가 준 `cameras[].id`. `null` = 지정하지 않음 |
 
 - 장치 이름은 OS 가 보고하는 이름 원문이다 (예: `"마이크(Realtek(R) Audio)"`, `"HD Webcam"`).
 - 장치 목록 열거는 BE 가 한다 — `GET /api/devices`(§1.35). FE 는 거기서 받은 `name` 과 `id` 를 짝으로 저장한다.
 - 이름과 id 는 역할이 다르다. **이름**은 화면 표시와 프로필 장비 라벨용이고, **id** 는 AI 가 실제로 장치를 여는 키다. 이름은 같은 모델이 두 대면 겹칠 수 있어 여는 키로 쓸 수 없다.
 - 이름은 프로필의 `deviceLabel` 로 복사되어 장비 교체 자동 맵핑(§1.32)의 키가 된다. 프로필 확정 시 FE 가 `deviceLabel` 을 함께 보내면 그 값이 설정값보다 우선한다.
 - 이 네 키는 모두 AI 에게 `settings_changed` 로 그대로 전달된다 — 선택 결과를 AI 에 알리는 별도 엔드포인트는 없다.
+- **`null` 의 뜻은 마이크와 카메라가 다르다.** Windows 에는 기본 입력 장치(마이크)가 있지만 **기본 카메라는 없다**. 그래서 마이크의 `null` 은 "시스템 기본 장치를 따른다" 는 지시이고, 카메라의 `null` 은 "고르지 않았다" — AI 가 열거 순서 첫 장치를 연다.
 - `wakeWord` 를 바꿔도 호출어 모델(`blob:wakeword`)은 재학습되지 않는다.
 
 ### 1.3 `PUT /api/settings` — 설정 교체
@@ -1281,9 +1282,12 @@ GET /api/captures/capture_20260902_041230.png
 | `cameras[].id` | 장치 인터페이스 경로. 설정 `cameraDeviceId` 에 그대로 넣는다 |
 | `mics[].isDefault` | Windows 소리 설정의 기본 입력 장치인지. 목록 안에 최대 하나다 |
 
+카메라 항목에는 `isDefault` 가 없다.
+
 - 마이크는 **연결 · 활성** 상태만 낸다. 뽑힌 장치는 목록에 없다.
-- 카메라에는 `isDefault` 가 없다 — OS 에 기본 카메라 개념이 없다.
-- 장치를 하나도 못 읽어도 오류가 아니다. 빈 목록(`{"mics": [], "cameras": []}`)이 오면 FE 는 "시스템 기본"만 남긴다.
+- **카메라에 `isDefault` 가 없는 것은 OS 에 기본 카메라가 없기 때문이다.** 마이크의 `isDefault` 는 BE 가 정한 값이 아니라 Core Audio 에 물어본 답(`GET /api/devices` 시점의 기본 입력 장치)인데, 카메라에는 물어볼 API 가 없다. FE 는 카메라 드롭다운에 "기본" 항목을 두는 대신 **목록 첫 항목을 미리 선택**한다.
+- 설정에서 카메라의 `null` 은 "시스템 기본" 이 아니라 **"고르지 않았다"** 다 (§1.2). 이 경우 AI 가 열거 순서 첫 장치를 연다.
+- 장치를 하나도 못 읽어도 오류가 아니다. 빈 목록(`{"mics": [], "cameras": []}`)이 와도 마이크는 "시스템 기본"으로 진행할 수 있고, 카메라는 고를 수 있는 장치가 없다는 뜻이다.
 - `id` 는 이름과 달리 장치마다 유일하고 프로세스 밖에서도 뜻이 유지된다. AI 는 이 값으로 장치를 연다 — 이름은 화면 표시와 프로필 장비 라벨(§1.31)용이다.
 - 선택 결과는 `PUT /api/settings`(§1.3) 로 저장한다. 저장 성공 시 BE 가 AI 에 `settings_changed` 로 실어 보내므로 별도 통지 호출은 없다. 이어서 `POST /api/devices/remap`(§1.32) 으로 프로필 자동 맵핑을 돌린다.
 

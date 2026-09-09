@@ -48,7 +48,8 @@ public class DevicesController {
 
     /**
      * 고를 수 있는 입력 장치 — {mics: [{name, id, isDefault}], cameras: [{name, id}]}.
-     * 열거에 실패하면 예외 대신 빈 목록이다 (FE 는 "시스템 기본"만 남은 드롭다운을 보여 준다).
+     * 카메라에 isDefault 가 없는 이유는 CaptureDeviceCatalog.Camera 참고.
+     * 열거에 실패하면 예외 대신 빈 목록이다 (초기설정을 500 으로 막지 않는다).
      */
     @GetMapping("/api/devices")
     public Map<String, Object> list() {

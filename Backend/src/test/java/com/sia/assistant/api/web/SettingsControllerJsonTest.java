@@ -26,13 +26,13 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 설정 응답이 <b>실제로 나가는 JSON</b> 을 검증한다 — 반환 Map 만 단언하면 놓치는 층이 있다.
  *
- * <p>Boot 4 의 HTTP 메시지 컨버터는 Jackson 3(tools.jackson)이고 우리 코드는 Jackson 2 를 쓴다.
- * 그래서 응답 본문에 Jackson2 {@code JsonNode} 를 담으면 컨버터가 그것을 모르는 POJO 로 보고
- * 게터를 직렬화해 {@code {"array":false,"nodeType":"OBJECT",…}} 를 내보낸다 — 값은 정상인데
- * 직렬화만 깨지므로 서비스·컨트롤러 단위 테스트로는 절대 잡히지 않는다.
+ * <p>이 테스트가 생긴 이유: 예전에는 응답 직렬화(Jackson 3)와 우리 코드(Jackson 2)의 라이브러리가
+ * 갈려서, 응답에 담은 {@code JsonNode} 가 컨버터에게 모르는 POJO 로 보여 게터를 나열한
+ * {@code {"array":false,"nodeType":"OBJECT",…}} 가 나갔다. 값은 정상이고 직렬화만 깨지므로
+ * 서비스·컨트롤러 단위 테스트로는 잡히지 않았다. Jackson 3 통일(S15P21D106-197)로 원인은 사라졌지만,
+ * 응답 JSON 을 보는 층이 없으면 같은 종류가 다시 들어와도 조용하다 — 그 층을 지키는 것이 이 테스트다.
  *
- * <p>MockMvc 를 쓰는 이유가 이것이다. standalone 설정이라 컨텍스트를 띄우지 않지만
- * 기본 메시지 컨버터는 실제 것과 같다.
+ * <p>standalone 설정이라 컨텍스트를 띄우지 않지만 기본 메시지 컨버터는 실제 것과 같다.
  */
 class SettingsControllerJsonTest {
 
