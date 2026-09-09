@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "SIA DOM Text Bridge",
+  "version": "0.1.0",
+  "description": "SIA 백엔드(127.0.0.1)에 현재 탭의 본문 텍스트를 제공합니다. 외부 네트워크로는 아무것도 보내지 않습니다.",
+  "permissions": ["scripting", "tabs", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
