@@ -51,42 +51,43 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 
 ### 0.4 오류 응답
 
-모든 REST 오류는 같은 형태다. `message` 는 사용자에게 그대로 표시할 수 있는 한국어 문장이다. `detail` 은 내부 원인 문자열이 있을 때만 붙으며 사용자에게 표시하지 않는다.
+모든 REST 오류는 같은 형태다. `message` 는 사용자에게 그대로 표시할 수 있는 한국어 문장이다. `detail` 은 형식 오류에서 파라미터 이름처럼 보조 정보가 있을 때만 붙으며 사용자에게 표시하지 않는다.
 
 ```json
 { "code": "SETTINGS_STALE", "message": "다른 곳에서 먼저 저장된 설정이 있습니다. 최신 설정을 불러온 뒤 다시 저장해 주세요" }
 ```
 ```json
-{ "code": "INTERNAL_ERROR", "message": "파일 저장에 실패했습니다. 잠시 후 다시 시도해주세요", "detail": "Access is denied" }
+{ "code": "INTERNAL_ERROR", "message": "서버 내부 오류입니다" }
 ```
 
 | code | HTTP | 조건 |
 |---|:-:|---|
 | `INVALID_REQUEST` | 400 · 405 · 415 | 본문 · 파라미터 형식 오류. 405 · 415 는 HTTP 상태만 다르고 `code` 는 같다 |
-| `APP_NOT_REGISTERED` | 400 | 등록되지 않은 앱 실행 |
-| `APP_PATH_INVALID` | 400 | 등록된 실행 파일이 존재하지 않음 |
-| `REF_NOT_FOUND` | 400 | `win:N` / `app:key` 를 찾을 수 없음 |
 | `UNAUTHORIZED` | 401 | MCP 토큰 없음 · 불일치 |
-| `ELEVATED_WINDOW` | 403 | 관리자 권한 창 제어 |
 | `NOT_FOUND` | 404 | 없는 경로 · 없는 appKey |
 | `BLOB_NOT_FOUND` | 404 | 저장된 npz 없음 |
 | `PROFILE_NOT_FOUND` | 404 | 없는 프로필. 진행 중 등록의 `tempId` 불일치 포함 |
-| `FILE_NOT_FOUND` | 404 | 파일 없음 |
 | `GESTURE_NOT_FOUND` | 404 | 없는 제스처 id |
 | `SETTINGS_STALE` | 409 | 설정 낙관적 잠금 실패 |
 | `CALIB_RESOLUTION_MISMATCH` | 409 | 보정 해상도 불일치 |
-| `SESSION_REQUIRED` | 409 | 활성 세션 없음 |
-| `PROFILE_LIMIT` | 409 | 프로필 4개 초과 |
 | `PROFILE_IN_USE` | 409 | 사용 중이거나 마지막 1개인 프로필 삭제 |
-| `INTERNAL_ERROR` | 500 | 그 외 |
-| `MODEL_DOWNLOAD_FAILED` | 502 | 모델 다운로드 실패 |
-| `EXTENSION_UNAVAILABLE` | 503 | 브라우저 확장 미연결 |
+| `INTERNAL_ERROR` | 500 | 그 외. 처리되지 않은 예외는 `message` 가 `서버 내부 오류입니다` 로 고정되고 `detail` 은 없다 |
+
+다음 코드는 REST 응답으로 나가지 않는다.
+
+| code | 나가는 자리 |
+|---|---|
+| `SESSION_REQUIRED` · `REF_NOT_FOUND` · `APP_NOT_REGISTERED` · `APP_PATH_INVALID` · `ELEVATED_WINDOW` · `FILE_NOT_FOUND` | MCP 도구 결과의 `structuredContent.code` (§3.1) |
+| `PROFILE_LIMIT` | WS `error` — `voice_commit` · `calib_commit` 시점에 프로필이 이미 4개인 경우 (§4.2) |
+| `EXTENSION_UNAVAILABLE` | 도구 내부 전용. `browser.dom_text` 의 결과는 `FAILED` 로 나간다 |
+| `MODEL_DOWNLOAD_FAILED` | 쓰이지 않는다. 모델 실패는 WS `model_error` 로 알린다 (§4.3) |
 
 형식 오류(`INVALID_REQUEST`)의 공통 규칙:
 
 | 조건 | HTTP | `message` |
 |---|:-:|---|
-| 쿼리 · 경로 파라미터 타입 불일치, 필수 파라미터 누락, 본문 역직렬화 실패 | 400 | `요청 형식이 올바르지 않습니다`. 타입 불일치 · 누락은 `detail` 에 파라미터 이름이 붙는다 |
+| 쿼리 · 경로 파라미터 타입 불일치, 필수 파라미터 누락 | 400 | `요청 형식이 올바르지 않습니다`. `detail` 에 파라미터 이름이 붙는다 |
+| JSON 본문이 파싱되지 않음 | 400 | `본문이 올바른 JSON 이 아닙니다` |
 | 허용되지 않는 메서드 | 405 | `요청 형식이 올바르지 않습니다` |
 | 지원하지 않는 `Content-Type` | 415 | `요청 형식이 올바르지 않습니다` |
 | JSON 본문이 비어 있음 | 400 | `본문이 비어 있습니다` |
@@ -127,7 +128,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
   "activeSession": { "id": 128, "remainingSec": 14 },
   "activeVoiceId": 1,
   "activeCalibId": 2,
-  "mcpToolCount": 27
+  "mcpToolCount": 30
 }
 ```
 
@@ -204,8 +205,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
     "micDevice": "마이크(Realtek(R) Audio)",
     "micDeviceId": "{0.0.1.00000000}.{a53af75a-d537-4666-9a94-9121beb12019}",
     "cameraDevice": "HD Webcam",
-    "cameraDeviceId": "\\\\?\\usb#vid_046d&pid_082d&mi_00#7&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}",
-    "previewMirror": true
+    "cameraDeviceId": "\\\\?\\usb#vid_046d&pid_082d&mi_00#7&1a2b3c4d&0&0000#{e5323777-f976-4f5b-9b55-b94699c46e44}"
   },
   "updatedAt": "2026-08-31 04:12:07.913"
 }
@@ -214,7 +214,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 | 필드 | 필수 | 규칙 |
 |---|:-:|---|
 | `settings` | O | JSON 객체. 키가 없으면 본문 전체를 설정으로 본다 |
-| `updatedAt` | | 직전 GET 이 준 값. 낙관적 잠금 기준 — 저장분보다 과거면 409. 생략하면 충돌 검사를 하지 않는다 |
+| `updatedAt` | | 직전 GET 이 준 값. 낙관적 잠금 기준 — 저장분보다 과거면 409. 생략하면 충돌 검사를 하지 않는다. 최상위에 없으면 `settings.updatedAt` 을 같은 뜻으로 읽는다 |
 
 **200** — 저장 직후 상태. `GET /api/settings` 와 같은 형태. `version` 이 1 오르고 `updatedAt` 은 서버가 다시 찍는다. 저장 성공 시 AI 에 `settings_changed` 가 즉시 나간다.
 
@@ -1449,7 +1449,7 @@ Content-Type: application/octet-stream
 X-Screen: 1920x1080
 ```
 
-**204**. `X-Screen` 없음 · 형식 오류 → **400**. `tempId` 불일치 → **404 PROFILE_NOT_FOUND**. `Content-Type` 이 `application/octet-stream` 이 아니면 **415 INVALID_REQUEST**. 재측정 후 다시 올리면 이전 업로드를 대체한다.
+**204**. `X-Screen` 없음 → **400** `calib 업로드에는 X-Screen 헤더(예: 1920x1080)가 필요합니다`, 형식 오류 → **400** (문구는 §2.9 와 같다). 헤더 검사가 `tempId` 검사보다 먼저다. `tempId` 불일치 → **404 PROFILE_NOT_FOUND**. `Content-Type` 이 `application/octet-stream` 이 아니면 **415 INVALID_REQUEST**. 재측정 후 다시 올리면 이전 업로드를 대체한다.
 
 ### 2.9 `GET /api/agent/calibs/active/npz` — 활성 보정 다운로드
 
@@ -1509,6 +1509,7 @@ If-None-Match: "8c22b1de44a0…"
 - 성공: `isError: false`. 데이터가 있으면 `structuredContent` 가 정본이고 `content[0].text` 는 그 JSON 직렬화다. 데이터가 없으면 `content[0].text` 가 `"실행했습니다"` 이고 `structuredContent` 는 없다.
 - 실패 · 차단: `isError: true`. `content[0].text` 는 LLM 에 들어가는 한국어 완결 문장, `structuredContent` 는 `{code, message}`. 사용자에게 보여 줄 문장은 AI 가 WS `notice {message}` 로 보내고 FE 가 표시한다.
 - **S** = 활성 세션 필요. 없으면 `SESSION_REQUIRED`. **C** = AI 가 호출 전 사용자 동의를 받는다.
+- `tools/list` 의 `annotations`: C 도구 2개(`window.close` · `files.delete`)는 `destructiveHint: true`, 읽기 전용 5개(`context.get` · `app.list` · `browser.dom_text` · `window.list` · `explorer.items`)는 `readOnlyHint: true`, 나머지는 둘 다 `false` 다. BE 는 이 플래그로 아무것도 막지 않는다.
 - 세션 없음 실패 응답은 모든 S 도구에 공통이다.
 
 ```json
@@ -1542,6 +1543,7 @@ If-None-Match: "8c22b1de44a0…"
 | `files.open` | 상대 경로 | `파일 경로는 절대 경로여야 합니다: <path>` |
 | `files.save` | 이름 부적합 | `저장할 파일 이름이 올바르지 않습니다` |
 | `screen.capture_region` | 좌표 누락 · 빈 영역 · 화면 밖 영역 | §3.21 |
+| `browser.search` | `query` 누락 · 500자 초과 · 열 수 없는 주소 · http(s) 가 아닌 스킴 | §3.23 |
 
 ### 3.2 `context.get` — 화면 상황 스냅샷
 
@@ -1877,6 +1879,10 @@ Windows 세션을 잠근다 (`LockWorkStation`). 로그아웃 · 종료가 아�
 { "content": [{ "type": "text", "text": "{\"locked\":true}" }], "isError": false, "structuredContent": { "locked": true } }
 ```
 
+| 실패 | `code` | `message` |
+|---|---|---|
+| `LockWorkStation` 실패 | `FAILED` | 화면 잠금에 실패했습니다 |
+
 ### 3.18 `session.extend` — 세션 연장
 
 유효 명령을 처리한 직후에만 호출한다. WS `session_renew` 와 같은 동작이다. `tool_call` 기록과 `tool_result` 를 남기지 않는다.
@@ -2073,6 +2079,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | 실패 | `code` | `message` |
 |---|---|---|
 | 확장이 4초 안에 무응답 | `FAILED` | 브라우저 확장이 응답하지 않습니다 |
+| 대기 중 중단됨 (BE 종료 등) | `FAILED` | 본문을 읽는 중 중단되었습니다 |
+| 확장 회신 처리 실패 | `FAILED` | 브라우저에서 본문을 읽지 못했습니다 |
 | 확장이 실패 보고 | `FAILED` | 활성 탭이 웹 페이지가 아닙니다 · 페이지에서 읽을 본문이 없습니다 · 이 페이지에서는 본문을 읽을 수 없습니다 중 하나. 확장이 생략하면 `본문을 추출하지 못했습니다` |
 | 브라우저 창이 없음 (접근성) | `FAILED` | 열려 있는 브라우저 창을 찾지 못했습니다 |
 | UIA 실패 · 제한 시간 초과 (접근성) | `FAILED` | 브라우저에서 본문을 읽지 못했습니다 |
@@ -2194,6 +2202,22 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `기본 제공 제스처와 같은 이름은 쓸 수 없어요: <name>` | 신규 등록의 이름이 기본 제공 제스처와 같다 |
 | `기본 제공 제스처는 켜기/끄기만 가능합니다` | 재촬영 대상이 기본 제공 제스처 |
 | `이미 같은 이름의 제스처가 있어요` | 재촬영 경로에서 바꾼 이름이 다른 제스처와 겹친다 |
+
+`voice_commit` 이 실패하면 `error {message, of: "voice_commit"}`:
+
+| message | 조건 |
+|---|---|
+| `진행 중인 보이스 등록이 없습니다` | `tempId` 가 진행 중 등록과 다르다 |
+| `보이스 데이터가 아직 도착하지 않았습니다. 잠시 후 다시 시도해 주세요` | AI 의 `PUT /api/agent/voices/{tempId}/npz` 가 아직 없다 |
+| `보이스는 최대 4개까지 저장할 수 있습니다. 먼저 사용하지 않는 보이스를 삭제해 주세요` | 시작 뒤 확정 사이에 프로필이 4개가 됐다 |
+
+`calib_restart` · `calib_commit` 이 실패하면 `error {message, of}`:
+
+| message | 조건 |
+|---|---|
+| `진행 중인 시선 보정이 없습니다` | 진행 중인 보정이 없다 (`calib_restart` · `calib_commit` 공통) |
+| `보정 결과가 아직 도착하지 않았습니다. 잠시 후 다시 시도해 주세요` | AI 의 `calib_result` · npz 업로드가 아직 없다 |
+| `시선 보정은 최대 4개까지 저장할 수 있습니다. 먼저 사용하지 않는 보정을 삭제해 주세요` | 시작 뒤 확정 사이에 프로필이 4개가 됐다 |
 
 ```json
 { "type": "voice_commit", "data": { "tempId": "9f3a2c17", "name": "스튜디오 보이스", "deviceLabel": "마이크(Realtek(R) Audio)" } }
@@ -2372,9 +2396,9 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 |---|---|---|
 | `hello` | `{agentVersion?: string}` | 접속 직후 1회. `agentVersion` 을 생략하면 저장된 버전을 유지한다 |
 | `wakeword_detected` | `{}` | 호출어 감지 |
-| `session_open` | `{trigger: WAKEWORD \| UI}` | 명시적 세션 개시. 다른 값이면 `error` |
-| `session_renew` | `{sessionId?: long}` | 세션 갱신. 생략 시 현재 활성 세션 |
-| `session_end` | `{sessionId?: long, reason?: EXPIRED \| STOPPED \| WATCHDOG \| SHUTDOWN}` | 세션 종료. `reason` 생략 시 `STOPPED`. 다른 세션이 활성인데 `sessionId` 가 그 세션이 아니면 해당 행만 종료 처리하고 `session_state` 는 보내지 않는다 |
+| `session_open` | `{trigger: WAKEWORD \| UI}` | 명시적 세션 개시. 다른 값이면 `error` `세션 트리거는 WAKEWORD 또는 UI 만 허용됩니다` |
+| `session_renew` | `{sessionId?: long}` | 세션 갱신. 생략 시 현재 활성 세션. 활성 세션과 다른 `sessionId` 면 `error` `요청한 세션은 이미 종료되었습니다` |
+| `session_end` | `{sessionId?: long, reason?: EXPIRED \| STOPPED \| WATCHDOG \| SHUTDOWN}` | 세션 종료. `reason` 생략 시 `STOPPED`, 네 값 밖이면 `error` `세션 종료 사유는 EXPIRED, STOPPED, WATCHDOG, SHUTDOWN 만 허용됩니다`. 다른 세션이 활성인데 `sessionId` 가 그 세션이 아니면 해당 행만 종료 처리하고 `session_state` 는 보내지 않는다 |
 | `recognition_started` | `{}` | 상시 인식 가동 완료 |
 | `model_loaded` | `{name: string}` | 모델 적재 성공 |
 | `model_load_failed` | `{name: string, reason: string}` | 모델 적재 실패 |
