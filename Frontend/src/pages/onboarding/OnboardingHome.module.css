@@ -1,0 +1,24 @@
+.page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--setup-background); padding: var(--spacing-lg); }
+.card { width: min(100%, var(--setup-card-width)); min-height: var(--setup-card-height); padding: var(--setup-card-padding); border: var(--setup-border); background: var(--color-bg); display: flex; flex-direction: column; gap: var(--spacing-md); }
+.card h1 { font-size: var(--setup-title-size); margin: 0; }
+.card h2 { font-size: var(--setup-heading-size); margin: var(--spacing-md) 0; }
+.card p { line-height: 1.7; color: var(--setup-muted); }
+.card button, .linkButton { padding: var(--spacing-sm) var(--spacing-lg); min-height: var(--setup-control-height); border: var(--setup-border); background: var(--color-bg); color: var(--color-text); font: inherit; cursor: pointer; text-decoration: none; }
+.card button:disabled { opacity: .45; cursor: not-allowed; }
+.card button:focus-visible, .card input:focus-visible, .card select:focus-visible, .linkButton:focus-visible { outline: var(--setup-border); outline-offset: var(--spacing-xs); }
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--spacing-sm); text-align: center; }
+.icon { width: var(--setup-icon-size); height: var(--setup-icon-size); border-radius: 50%; border: var(--setup-border); display: grid; place-items: center; font-size: var(--setup-icon-font); margin: var(--spacing-lg); }
+.fields { display: grid; gap: var(--spacing-md); }
+.fields label { display: grid; gap: var(--spacing-xs); color: var(--setup-muted); }
+.fields input, .fields select { width: 100%; min-height: var(--setup-control-height); padding: var(--spacing-sm); border: var(--setup-border); background: var(--color-bg); font: inherit; }
+.footer { margin-top: auto; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--spacing-sm); padding-top: var(--spacing-lg); }
+.actions { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; justify-content: center; }
+.preview { width: 100%; background: var(--setup-panel); padding: var(--spacing-lg); border: var(--setup-border); line-height: 1.8; }
+.card progress, .card audio { width: 100%; accent-color: var(--color-accent); }
+.card blockquote { margin: 0; padding: var(--spacing-lg); background: var(--setup-panel); width: 100%; }
+.card .error { color: var(--color-danger); }
+.connection { color: var(--setup-muted); font-size: var(--font-size-sm); }
+.plot { width: 100%; border: var(--setup-border); background: var(--setup-panel); }
+.plot svg { width: 100%; height: var(--setup-plot-height); }
+.plot circle { fill: none; stroke: var(--setup-muted); stroke-width: 1; }
+.plot .target { fill: var(--color-text); }
