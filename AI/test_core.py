@@ -551,6 +551,77 @@ def test_voice_bridge():
     assert sorted(vs._samples) == [1]
 
 
+def test_wake_enroll():
+    """온보딩 이름 불러보기(206) — wakeword_enroll_start 뒤 "시아야" 길이 발화 10개 → wakeword_sample 10건 → npz PUT → wakeword_done.
+    너무 짧거나(헛기침) 긴(문장) 발화는 세지 않고, 끝난 뒤 다시 시작하면 처음부터 다시 센다."""
+    from voice_bridge import WAKE_TOTAL, WakeEnroll
+
+    class FakeLink:
+        rt = {"port": 0}
+        def __init__(self): self.sent = []
+        def _send(self, o): self.sent.append((o["type"], o["data"]))
+
+    rng = np.random.default_rng(1)
+    def loud(s):
+        return (rng.standard_normal(int(s * 16000)) * 2000).astype(np.int16)
+
+    link, puts = FakeLink(), []
+    we = WakeEnroll(link)
+    we._put = lambda url, body, ctype: puts.append((url, len(body), ctype))
+    we.on_utter(loud(0.7))                                     # 시작 전 발화는 무시
+    assert not we.active and link.sent == []
+    we.on_start()
+    we.on_utter(loud(0.1))                                     # 0.1 s — 헛기침, 안 센다
+    we.on_utter(loud(3.0))                                     # 3 s — 문장, 안 센다
+    assert link.sent == []
+    for _ in range(WAKE_TOTAL):
+        we.on_utter(loud(0.7))
+    types = [t for t, _ in link.sent]
+    assert types.count("wakeword_sample") == WAKE_TOTAL and types[-1] == "wakeword_done" and not we.active
+    assert link.sent[0][1] == {"n": 1, "total": WAKE_TOTAL} and link.sent[-2][1] == {"n": WAKE_TOTAL, "total": WAKE_TOTAL}
+    assert len(puts) == 1 and puts[0][0].endswith("/api/agent/blobs/wakeword") and puts[0][1] > 0
+    assert puts[0][2] == "application/octet-stream"
+    we.on_utter(loud(0.7))                                     # 끝난 뒤 발화는 안 센다
+    assert len(link.sent) == WAKE_TOTAL + 1
+    link.sent.clear()
+    we.on_start()                                              # 두 번째 회차 — 처음부터
+    we.on_utter(loud(0.7))
+    assert link.sent == [("wakeword_sample", {"n": 1, "total": WAKE_TOTAL})]
+
+
+def test_command_enroll():
+    """온보딩 명령 문장 말하기(206) — command_enroll_start → command_ready, command_collect{n} 뒤 낭독 길이 발화마다
+    command_progress{n}, 5번째 뒤 command_done. 짧은 발화는 같은 문장을 다시 기다리고, 지시 없이 온 발화는 세지 않는다."""
+    from voice_bridge import SENTENCES, CommandEnroll
+
+    class FakeLink:
+        def __init__(self): self.sent = []
+        def _send(self, o): self.sent.append((o["type"], o["data"]))
+
+    rng = np.random.default_rng(2)
+    def loud(s):
+        return (rng.standard_normal(int(s * 16000)) * 2000).astype(np.int16)
+
+    link = FakeLink()
+    ce = CommandEnroll(link)
+    ce.on_utter(loud(2.0))                                     # 시작 전 — 무시
+    assert link.sent == []
+    ce.on_start()
+    assert link.sent == [("command_ready", {})]
+    ce.on_utter(loud(2.0))                                     # collect 전 — 무시
+    ce.on_collect(1)
+    ce.on_utter(loud(0.5))                                     # 0.5 s — 낭독 아님, 문장 1 그대로
+    assert len(link.sent) == 1
+    for n in range(1, len(SENTENCES) + 1):
+        ce.on_collect(n)
+        ce.on_utter(loud(2.0))
+    types = [t for t, _ in link.sent]
+    assert types.count("command_progress") == len(SENTENCES) and types[-1] == "command_done" and not ce.active
+    assert link.sent[1][1] == {"n": 1} and link.sent[-2][1] == {"n": len(SENTENCES)}
+    ce.on_utter(loud(2.0))                                     # 끝난 뒤 — 무시
+    assert len(link.sent) == len(SENTENCES) + 2
+
+
 def test_be_dom_text():
     """BE browser.dom_text 채택 — 성공 payload 만 dom 으로, 세션 전·미접속·빈 본문은 None(스크린샷 폴백)."""
     from brain import be_dom_text
@@ -593,5 +664,7 @@ if __name__ == "__main__":
     test_speech_s()
     test_speaker_accum()
     test_voice_bridge()
+    test_wake_enroll()
+    test_command_enroll()
     test_be_dom_text()
-    print("OK - 19/19 통과")
+    print("OK - 21/21 통과")

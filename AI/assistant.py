@@ -327,6 +327,10 @@ def main():
             from calib_bridge import CalibSession
 
             link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
+            from voice_bridge import CommandEnroll, WakeEnroll
+
+            link.wake = WakeEnroll(link)        # 온보딩 이름 불러보기(206) — 화자 인증을 꺼도 FE 진행바는 채워야 한다
+            link.command = CommandEnroll(link)  # 온보딩 명령 문장 말하기(206)
             if speaker is not None:
                 from voice_bridge import VoiceSession
 
@@ -540,9 +544,11 @@ def main():
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
                 elif ev[0] == "utter":
-                    if link and link.voice and link.voice.active:
+                    sessions = (link.voice, link.wake, link.command) if link else ()
+                    enroll = next((s for s in sessions if s and s.active), None)  # 등록·온보딩 수집 중이면 그쪽으로
+                    if enroll:
                         pending_capture = None
-                        link.voice.on_utter(ev[2])  # 화자 등록 중 — 낭독 샘플로만 쓰고 명령 처리는 안 한다
+                        enroll.on_utter(ev[2])  # 샘플로만 쓰고 명령 처리는 안 한다
                         continue
                     if pending_capture is None:
                         fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
