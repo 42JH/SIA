@@ -185,6 +185,28 @@ def test_vad_segmenter():
     assert len(audio) >= 30 * BLOCK    # 발화 본체 + 프리롤 포함
     assert not seg.recording
 
+    # 유지 임계 + 꼬리: 바닥 300 → 시작 임계 450, 유지 임계 350. 400 짜리 블록은 시작 못 열지만
+    # 녹음 중 직전 유성 뒤 0.3 s(10블록) 안에서는 침묵으로 안 세고, 그 밖에서는 침묵으로 센다.
+    seg = VadSegmenter()
+    noise = np.full(BLOCK, 300, dtype=np.int16)
+    mid = np.full(BLOCK, 400, dtype=np.int16)
+    events.clear()
+    feed(noise, 200)                   # 바닥 창(40 s)에 유성·꼬리 블록이 섞여도 p80 이 300 에 머물 만큼
+    assert seg.threshold_lo < 400 < seg.threshold  # 400 은 유지 임계와 시작 임계 사이
+    feed(mid, 10)
+    assert not events                  # 유지 임계만 넘는 소리로는 녹음이 안 열린다
+    feed(loud, 30)
+    assert events[-1][0] == "onset"
+    feed(mid, seg.tail_blocks)         # 꼬리 안 — 침묵 계수 0 유지
+    assert seg.recording and seg._quiet == 0
+    speech_before = seg._speech
+    feed(mid, seg.end_blocks + 5)      # 꼬리 밖 — 침묵으로 세어 종료
+    assert events[-1][0] == "utter" and not seg.recording
+    assert seg._speech == speech_before  # 유지 임계 블록은 유성 계수에 안 들어간다
+    _, _, audio = events[-1]
+    assert len(audio) >= (seg.preroll_n + 30) * BLOCK  # 프리롤 2.0 s(66블록) + 발화 본체
+    assert seg.preroll_n == int(2.0 / seg.block_dur)
+
 
 def test_swipe_detector():
     from hands import SwipeDetector
