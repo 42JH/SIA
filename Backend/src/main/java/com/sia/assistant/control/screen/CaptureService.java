@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * 캡처 결과물의 저장·표시 — 흐름도 02 경계 규칙 "저장·표시는 BE 소유".
- * screen.capture(화면 · 창) · screen.capture_region(두 점이 감싸는 영역) 도구가 부른다: 화면을 읽어 ~/Pictures/SIA/ 에 PNG 로 저장하고,
+ * screen.capture(화면 · 창) · screen.capture_region(좌상단 · 우하단 두 점이 감싸는 영역) 도구가 부른다: 화면을 읽어 ~/Pictures/SIA/ 에 PNG 로 저장하고,
  * FE 에 capture_saved {path, url, width, height} 를 push 한다. 파일은 GET /api/captures/{file} 로 서빙된다.
  * 파일명은 capture_yyyyMMdd_HHmmss.png 이고 같은 초에 두 번 찍히면 _2, _3 을 붙인다.
  */
@@ -67,7 +67,7 @@ public class CaptureService {
     }
 
     /**
-     * 우상단 (x1, y1) · 좌하단 (x2, y2) 두 점이 감싸는 사각형을 캡처해 저장한다 — screen.capture_region.
+     * 좌상단 (x1, y1) · 우하단 (x2, y2) 두 점이 감싸는 사각형을 캡처해 저장한다 — screen.capture_region.
      * 두 점의 순서는 가리지 않는다(어느 두 대각 모서리든 같은 사각형으로 정규화). 너비·높이는 |x1-x2|·|y1-y2| 의 반열림 구간이고,
      * 가상 스크린 밖은 잘라낸다. 두 점이 한 줄에 놓이거나 잘라낸 뒤 남는 영역이 없으면 INVALID_REQUEST(ToolGate 가 FAILED 로).
      * @return {path, url, width, height} — width · height 는 잘라낸 뒤의 실제 크기

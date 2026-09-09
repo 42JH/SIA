@@ -127,10 +127,10 @@ class CaptureServiceTest {
     // ------------------------------------------------------------ screen.capture_region
 
     @Test
-    @DisplayName("우상단·좌하단 두 점을 주면 두 점이 감싸는 사각형만 캡처하고 FE 에 capture_saved 를 push 한다")
-    void capturesRegionBetweenTopRightAndBottomLeft() {
-        // 우상단 (6, 1) · 좌하단 (2, 4) → x 2..6, y 1..4 (반열림) → 4×3
-        Map<String, Object> out = service.captureRegion(6, 1, 2, 4);
+    @DisplayName("좌상단·우하단 두 점을 주면 두 점이 감싸는 사각형만 캡처하고 FE 에 capture_saved 를 push 한다")
+    void capturesRegionBetweenTopLeftAndBottomRight() {
+        // 좌상단 (2, 1) · 우하단 (6, 4) → x 2..6, y 1..4 (반열림) → 4×3
+        Map<String, Object> out = service.captureRegion(2, 1, 6, 4);
 
         assertThat(grabber.last).isEqualTo(new Rectangle(2, 1, 4, 3));
         assertThat(out).containsEntry("width", 4).containsEntry("height", 3);
@@ -141,12 +141,12 @@ class CaptureServiceTest {
     }
 
     @Test
-    @DisplayName("두 점의 순서가 바뀌어도(좌상단·우하단, 좌하단·우상단) 같은 사각형으로 정규화한다")
+    @DisplayName("두 점의 순서가 바뀌어도(우하단·좌상단, 우상단·좌하단) 같은 사각형으로 정규화한다")
     void regionCornersMayComeInAnyOrder() {
-        service.captureRegion(2, 1, 6, 4);
+        service.captureRegion(6, 4, 2, 1);
         assertThat(grabber.last).isEqualTo(new Rectangle(2, 1, 4, 3));
 
-        service.captureRegion(2, 4, 6, 1);
+        service.captureRegion(6, 1, 2, 4);
         assertThat(grabber.last).isEqualTo(new Rectangle(2, 1, 4, 3));
     }
 
@@ -154,12 +154,12 @@ class CaptureServiceTest {
     @DisplayName("가상 스크린 밖으로 나간 부분은 잘라내고 잘라낸 뒤의 실제 크기를 돌려준다")
     void regionIsClippedToVirtualScreen() {
         // 좌상 방향으로 넘침 — (-3, -2) ~ (5, 3) → (0, 0) ~ (5, 3)
-        Map<String, Object> out = service.captureRegion(5, -2, -3, 3);
+        Map<String, Object> out = service.captureRegion(-3, -2, 5, 3);
         assertThat(grabber.last).isEqualTo(new Rectangle(0, 0, 5, 3));
         assertThat(out).containsEntry("width", 5).containsEntry("height", 3);
 
         // 우하 방향으로 넘침 — (4, 2) ~ (20, 30) → (4, 2) ~ (8, 6)
-        service.captureRegion(20, 2, 4, 30);
+        service.captureRegion(4, 2, 20, 30);
         assertThat(grabber.last).isEqualTo(new Rectangle(4, 2, 4, 4));
     }
 

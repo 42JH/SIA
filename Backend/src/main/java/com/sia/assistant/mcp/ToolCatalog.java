@@ -85,7 +85,7 @@ public final class ToolCatalog {
     public static final String D_SCREEN_CAPTURE =
             "현재 화면을 캡처해 PNG 파일로 저장합니다. winRef 를 주면 그 창 영역만, 생략하면 전체 화면을 캡처합니다. 저장 위치는 사진 폴더(Pictures/SIA)이고 저장된 파일 경로를 반환합니다. 사용자가 보관할 화면 결과물을 만들 때 사용하세요.";
     public static final String D_SCREEN_CAPTURE_REGION =
-            "화면의 일부 영역만 캡처해 PNG 파일로 저장합니다. 영역은 우상단 모서리 (x1, y1)과 좌하단 모서리 (x2, y2) 두 점으로 지정합니다. "
+            "화면의 일부 영역만 캡처해 PNG 파일로 저장합니다. 영역은 좌상단 모서리 (x1, y1)과 우하단 모서리 (x2, y2) 두 점으로 지정합니다. "
                     + "좌표는 가상 스크린 물리 픽셀이며 explorer.items 의 bounds, 시선 좌표와 같은 좌표계입니다. "
                     + "두 점의 순서가 바뀌어도 두 점을 감싸는 사각형으로 정규화하고, 화면 밖으로 나간 부분은 잘라냅니다. "
                     + "저장 위치는 사진 폴더(Pictures/SIA)이고 저장된 파일 경로와 실제 캡처 크기를 반환합니다. "

@@ -21,7 +21,7 @@ class ToolCatalogTest {
         // 흐름도 02 "캡처 결과물 저장·표시는 BE 소유" — 파일을 만들 뿐 지우지 않으므로 C 없음, S 만 받는다
         assertThat(ToolCatalog.spec("screen.capture").sessionRequired()).isTrue();
         assertThat(ToolCatalog.spec("screen.capture").confirmRequired()).isFalse();
-        // 우상단·좌하단 두 점 영역 캡처 — screen.capture 와 같은 급 (파일만 만든다)
+        // 좌상단·우하단 두 점 영역 캡처 — screen.capture 와 같은 급 (파일만 만든다)
         assertThat(ToolCatalog.spec("screen.capture_region").sessionRequired()).isTrue();
         assertThat(ToolCatalog.spec("screen.capture_region").confirmRequired()).isFalse();
         // 절대값 볼륨 — 단계(volume.step)와 같은 급이다

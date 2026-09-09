@@ -127,7 +127,7 @@ com.sia.assistant
   스모크는 Node 내장 WebSocket 으로 할 것 — FE·AI·브라우저 클라이언트에는 영향 없다.
 - 대시보드는 BE 쪽이 끝났고 **남은 건 AI 파트의 계측**이다. `usage_event.kind` 철자가 맞지 않으면 카드가 빈 채로 뜬다 (API.md §8).
 - 삭제 되돌리기(Undo)·기본 제스처 확정은 아직 스코프 밖이다 (API.md §8). 화면 잠금은 `system.lock`, 캡처 결과물 저장·표시는
-  `screen.capture`·`screen.capture_region`(우상단·좌하단 두 점 영역) + FE `capture_saved` + `GET /api/captures/{file}` (`~/Pictures/SIA/`), 모델 재다운로드 유도는
+  `screen.capture`·`screen.capture_region`(좌상단·우하단 두 점 영역) + FE `capture_saved` + `GET /api/captures/{file}` (`~/Pictures/SIA/`), 모델 재다운로드 유도는
   `POST /api/models/{name}/redownload` 로 들어왔다 (2026-09-02, 흐름도 갭 해소).
 - ★온보딩 문장(명령 5·낭독 3)의 원문은 FE·AI 공통 상수다(불변·하드코딩, 2026-09-02) — BE 는 `n` 만 중계하고 `text` 를 보내지 않는다.
 - ★설정 JSON 은 자유 문서지만 **알려진 키 6종은 서버가 지킨다** — PUT 이 통째 교체라 부분 문서 한 번에 `micDevice` 가 사라지면 프로필 장비 맵핑이 영구히 깨진다. 빠진 키는 기존 값으로 채우고, 타입이 틀리면 400 (API.md §1.3).

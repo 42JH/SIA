@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * screen.capture — 화면(또는 창) 캡처를 PNG 로 저장하고 FE 에 표시를 맡긴다 (흐름도 02 "저장·표시는 BE 소유").
- * screen.capture_region — 우상단 (x1, y1) · 좌하단 (x2, y2) 두 점이 감싸는 영역만 같은 방식으로 저장한다.
+ * screen.capture_region — 좌상단 (x1, y1) · 우하단 (x2, y2) 두 점이 감싸는 영역만 같은 방식으로 저장한다.
  * 둘 다 파일을 새로 만들 뿐 아무것도 지우지 않는다 — C 없음, S 만 받는다. 제스처 매크로에 넣을 수 있다.
  */
 @Component
@@ -59,10 +59,10 @@ public class ScreenTools {
     @McpTool(name = "screen.capture_region", description = ToolCatalog.D_SCREEN_CAPTURE_REGION,
             annotations = @McpTool.McpAnnotations(destructiveHint = false))
     public CallToolResult captureRegion(
-            @McpToolParam(required = true, description = "우상단 모서리의 x 좌표 (가상 스크린 물리 픽셀)") Integer x1,
-            @McpToolParam(required = true, description = "우상단 모서리의 y 좌표 (가상 스크린 물리 픽셀)") Integer y1,
-            @McpToolParam(required = true, description = "좌하단 모서리의 x 좌표 (가상 스크린 물리 픽셀)") Integer x2,
-            @McpToolParam(required = true, description = "좌하단 모서리의 y 좌표 (가상 스크린 물리 픽셀)") Integer y2) {
+            @McpToolParam(required = true, description = "좌상단 모서리의 x 좌표 (가상 스크린 물리 픽셀)") Integer x1,
+            @McpToolParam(required = true, description = "좌상단 모서리의 y 좌표 (가상 스크린 물리 픽셀)") Integer y1,
+            @McpToolParam(required = true, description = "우하단 모서리의 x 좌표 (가상 스크린 물리 픽셀)") Integer x2,
+            @McpToolParam(required = true, description = "우하단 모서리의 y 좌표 (가상 스크린 물리 픽셀)") Integer y2) {
         return mcp.of(captureRegionResult(x1, y1, x2, y2));
     }
 

@@ -48,16 +48,16 @@ class ScreenToolsTest {
     void delegatesRegionCapture() {
         Map<String, Object> saved = Map.of("path", "C:\\Users\\me\\Pictures\\SIA\\capture_20260902_041230.png",
                 "url", "/api/captures/capture_20260902_041230.png", "width", 4, "height", 3);
-        when(captureService.captureRegion(6, 1, 2, 4)).thenReturn(saved);
+        when(captureService.captureRegion(2, 1, 6, 4)).thenReturn(saved);
 
-        ToolResult result = tools.captureRegionResult(6, 1, 2, 4);
+        ToolResult result = tools.captureRegionResult(2, 1, 6, 4);
 
         assertThat(result.ok()).isTrue();
         assertThat(result.data()).isEqualTo(saved);
         Map<String, Object> args = new LinkedHashMap<>();
-        args.put("x1", 6);
+        args.put("x1", 2);
         args.put("y1", 1);
-        args.put("x2", 2);
+        args.put("x2", 6);
         args.put("y2", 4);
         verify(recorder).record(eq("screen.capture_region"), eq(args), eq(Caller.LLM),
                 eq("EXECUTED"), isNull(), eq(5L), anyLong());
@@ -66,7 +66,7 @@ class ScreenToolsTest {
     @Test
     @DisplayName("좌표가 하나라도 빠지면 INVALID_REQUEST 로 환원되고 캡처는 일어나지 않는다")
     void missingCoordinateFails() {
-        ToolResult result = tools.captureRegionResult(6, 1, null, 4);
+        ToolResult result = tools.captureRegionResult(2, 1, null, 4);
 
         assertThat(result.ok()).isFalse();
         // 인자 형식 오류다 — LLM 이 "재시도"가 아니라 "인자를 고쳐 다시 호출"로 읽어야 한다 (API 명세 §3.1)

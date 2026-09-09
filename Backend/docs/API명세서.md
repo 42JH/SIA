@@ -1885,21 +1885,21 @@ Windows 세션을 잠근다 (`LockWorkStation`). 로그아웃 · 종료가 아�
 
 ### 3.21 `screen.capture_region` — 두 점 영역 캡처 저장 · S
 
-우상단 · 좌하단 두 점이 감싸는 화면 영역만 PNG 로 저장하고 FE 에 `capture_saved` 를 보낸다. 저장 위치 · 파일명 · 응답 형식은 `screen.capture` 와 같다.
+좌상단 · 우하단 두 점이 감싸는 화면 영역만 PNG 로 저장하고 FE 에 `capture_saved` 를 보낸다. 저장 위치 · 파일명 · 응답 형식은 `screen.capture` 와 같다.
 
 | 인자 | 필수 | 규칙 |
 |---|:-:|---|
-| `x1` | O | 우상단 모서리의 x 좌표 (int) |
-| `y1` | O | 우상단 모서리의 y 좌표 (int) |
-| `x2` | O | 좌하단 모서리의 x 좌표 (int) |
-| `y2` | O | 좌하단 모서리의 y 좌표 (int) |
+| `x1` | O | 좌상단 모서리의 x 좌표 (int) |
+| `y1` | O | 좌상단 모서리의 y 좌표 (int) |
+| `x2` | O | 우하단 모서리의 x 좌표 (int) |
+| `y2` | O | 우하단 모서리의 y 좌표 (int) |
 
 - 좌표계는 가상 스크린 물리 픽셀이다. `explorer.items` 의 `bounds`, `gaze_cursor` 의 `x, y` 와 같다 ([프로토콜.md §7.5](프로토콜.md#75-시선--bounds-교차-규칙)).
-- 두 점의 순서는 가리지 않는다. 좌상단 · 우하단 등 어느 두 대각 모서리로 와도 두 점을 감싸는 같은 사각형으로 정규화한다. 너비는 `|x1 − x2|`, 높이는 `|y1 − y2|` 다.
+- 두 점의 순서는 가리지 않는다. 우상단 · 좌하단 등 어느 두 대각 모서리로 와도 두 점을 감싸는 같은 사각형으로 정규화한다. 너비는 `|x1 − x2|`, 높이는 `|y1 − y2|` 다.
 - 가상 스크린 밖으로 나간 부분은 잘라낸다. 응답의 `width` · `height` 는 잘라낸 뒤의 실제 크기다.
 
 ```json
-{ "x1": 1600, "y1": 200, "x2": 400, "y2": 900 }
+{ "x1": 400, "y1": 200, "x2": 1600, "y2": 900 }
 ```
 ```json
 { "content": [{ "type": "text", "text": "{\"path\":\"C:\\\\Users\\\\me\\\\Pictures\\\\SIA\\\\capture_20260902_041512.png\",\"url\":\"/api/captures/capture_20260902_041512.png\",\"width\":1200,\"height\":700}" }], "isError": false, "structuredContent": { "path": "C:\\Users\\me\\Pictures\\SIA\\capture_20260902_041512.png", "url": "/api/captures/capture_20260902_041512.png", "width": 1200, "height": 700 } }
