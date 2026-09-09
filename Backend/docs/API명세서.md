@@ -2133,7 +2133,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `session_state` | 아래 상세 | 세션 상태 |
 | `tool_result` | `{tool: string, outcome: EXECUTED \| BLOCKED \| FAILED, caller: LLM \| GESTURE, message?: string, latencyMs: long}` | 개별 도구 실행 결과. `message` 는 사유가 있을 때만 |
 | `gesture_result` | 아래 상세 | 제스처 매크로 실행 결과 |
-| `notice` | 아래 상세 | AI 안내 · 결과 문구 (AI 페이로드 그대로) |
+| `notice` | 아래 상세 | AI 안내 · 결과 문구 (AI 페이로드 그대로). 예외로 BE 가 직접 보내는 건 한 가지, 확장 부재 안내다 (프로토콜.md §6.6) |
 | `voice_rejected` | `{message: string}` | 화자 게이트 기각. `"등록된 목소리로 한 명령이 아닙니다."` |
 | `gaze_cursor` | `{x: int, y: int}` | 시선 커서 좌표 |
 | `capture_saved` | `{path: string, url: string, width: int, height: int}` | `screen.capture` · `screen.capture_region` 저장 완료 |
@@ -2227,6 +2227,8 @@ BE 가 `gesture_exec` 의 이름으로 `gesture` · `gesture_step` 매핑을 조
 ```
 
 #### `notice` (AI → BE → FE, 페이로드 그대로 중계)
+
+거의 언제나 AI 가 소유하는 채널이다. **예외는 하나** — 확장이 없어 접근성으로 본문을 읽었을 때 BE 가 `{message}` 만 담아 직접 보낸다 (프로토콜.md §6.6). 확장 부재는 대화가 아니라 시스템 상태여서 AI 가 언급을 생략해도 사용자가 알아야 하기 때문이다. FE 는 발신자를 구분하지 않고 똑같이 표시한다.
 
 | 필드 | 타입 | 필수 | 규칙 |
 |---|---|:-:|---|
@@ -2423,7 +2425,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `user_choice` | `{choiceId?: string, n?: int, cancelled?: boolean}` | FE 클릭의 무해석 중계 |
-| `dom_text` | `{available: boolean, url?: string, title?: string, text?: string, truncated?: boolean, reason?: string}` | `dom_text_request` 회신. 실패면 `available: false` 와 `reason` 만 |
+| `dom_text` | `{available: boolean, via: "extension" \| "accessibility", url?: string, title?: string, text?: string, truncated?: boolean, reason?: string}` | `dom_text_request` 회신. 실패면 `available: false` 와 `reason` 만. `via` 는 성공·실패 모두에 붙는다 — 본문을 어디서 얻었는지이고, `accessibility` 면 본문만 골라내지 못해 메뉴 · 사이드바가 섞여 있다 (프로토콜.md §6.6) |
 
 ```json
 { "type": "reg_mode_start", "data": { "tempId": "9f3a2c17", "takes": 3, "countdownSec": 3, "takeDurationSec": 2, "replaceGestureName": "손가락 하트" } }
@@ -2438,7 +2440,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 { "type": "calib_changed", "data": { "id": 3, "sha256": "0d4e55aa19cc…", "screenW": 2560, "screenH": 1440 } }
 ```
 ```json
-{ "type": "dom_text", "data": { "available": false, "reason": "브라우저 확장이 응답하지 않습니다" } }
+{ "type": "dom_text", "data": { "available": false, "via": "extension", "reason": "브라우저 확장이 응답하지 않습니다" } }
+{ "type": "dom_text", "data": { "available": true, "via": "accessibility", "url": "https://news.example.com/article/12345", "title": "반도체 수출 3개월 연속 증가", "text": "홈 뉴스 경제 지난달 반도체 수출액이 …", "truncated": false } }
 ```
 
 ### 4.6 `/ws/ext` — 브라우저 확장 ↔ BE
@@ -2566,7 +2569,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `command_sentence` · `command_progress` · `command_done` · `voice_sentence` · `voice_progress` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
 | `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `dom_text_request` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `command_ready` · `command_progress` · `command_done` · `voice_ready` · `voice_progress` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
 | `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `command_enroll_start` · `command_collect` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` · `dom_text` | §4.5 |
-| `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `ping` | §4.6 |
-| `/ws/ext` | BE → 확장 | `dom_text_request` · `pong` · `error` | §4.6 |
+| `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `browser_open` · `ping` | §4.6 |
+| `/ws/ext` | BE → 확장 | `dom_text_request` · `browser_open_request` · `pong` · `error` | §4.6 |
 
 Swagger UI: BE 기동 중 `http://127.0.0.1:8080/swagger-ui.html` 에서 REST 표면을 확인할 수 있다. WebSocket 은 Swagger 에 나타나지 않는다.

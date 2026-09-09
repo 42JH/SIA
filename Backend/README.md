@@ -71,8 +71,9 @@ com.sia.assistant
 ├── model/         HuggingFace 다운로드·sha256 검증·진행률 (01) — 목록 models.json 은 아직 빈 배열
 ├── mcp/           ToolCatalog(29)·ToolGate·RefResolver·ToolInvoker + tools/
 ├── context/       컨텍스트 체인 판별 (video·youtube·explorer …)
-├── domtext/       확장 왕복 — requestId 상관, 4초 타임아웃, 20,000자 컷
-├── control/process/ 앱 실행(화이트리스트)·앱 스캔·브라우저 검색(확장 탭 ↔ OS 기본 브라우저)
+├── domtext/       확장 왕복 — requestId 상관, 4초 타임아웃, 20,000자 컷 + 미연결 시 접근성 폴백
+├── control/process/ 앱 실행(화이트리스트)·앱 스캔·브라우저 검색(확장 탭 ↔ OS 기본 브라우저)
+├── control/browser/ 확장 없을 때의 본문 공급 — UIA Document TextPattern (control/com 의 ComWorker 스레드)
 ├── session/       세션 타이머 — BE 소유, 만료를 능동 push (ACTIVE/PASSIVE + deadlineMs)
 ├── settings/      설정 싱글턴·blob(wakeword)·제스처 매핑(원천 테이블, 제스처별 템플릿 npz 포함)·전체 삭제
 ├── control/       JNA 창 제어·SendInput(휠·미디어 키)·앱 실행·휴지통·파일 저장·탐색기 항목(com/, explorer/)
