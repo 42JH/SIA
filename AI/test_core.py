@@ -622,6 +622,39 @@ def test_command_enroll():
     assert len(link.sent) == len(SENTENCES) + 2
 
 
+def test_notice_data():
+    """안내 문구 notice(207) — kind 없으면 message 만, confirm 은 kind·timeoutSec, unknown_command 는 transcript 동봉,
+    값 없는 필드는 빠진다. _say 는 오버레이(60자 넘으면 패널)와 BE notice 송신을 한 번에 한다."""
+    from brain import Brain, notice_data
+
+    assert notice_data("네, 듣고 있어요") == {"message": "네, 듣고 있어요"}
+    assert notice_data("닫을까요?", "confirm", timeoutSec=12) == {"message": "닫을까요?", "kind": "confirm", "timeoutSec": 12}
+    assert notice_data("명령을 이해하지 못했습니다.", "unknown_command", transcript="어쩌구") == {
+        "message": "명령을 이해하지 못했습니다.", "kind": "unknown_command", "transcript": "어쩌구"}
+    assert notice_data("x", None, transcript="", timeoutSec=None) == {"message": "x"}
+
+    class Overlay:
+        def __init__(self): self.calls = []
+        def toast(self, m, s=None): self.calls.append(("toast", m, s))
+        def panel(self, m): self.calls.append(("panel", m))
+
+    class Link:
+        def __init__(self): self.sent = []
+        def _send(self, o): self.sent.append(o)
+
+    b = Brain.__new__(Brain)                                   # __init__ 없이 — 오버레이·BE 만 가짜로 끼운다
+    b.overlay, link = Overlay(), Link()
+    b._be = lambda: link
+    b._say("창을 닫을까요?", "confirm", 12.0, timeoutSec=12)
+    assert b.overlay.calls[-1] == ("toast", "창을 닫을까요?", 12.0)
+    assert link.sent[-1] == {"type": "notice", "data": {"message": "창을 닫을까요?", "kind": "confirm", "timeoutSec": 12}}
+    b._say("가" * 61)
+    assert b.overlay.calls[-1] == ("panel", "가" * 61) and link.sent[-1]["data"] == {"message": "가" * 61}
+    b._be = lambda: None                                       # BE 미접속 — 오버레이만
+    b._say("취소했습니다")
+    assert b.overlay.calls[-1] == ("toast", "취소했습니다", None) and len(link.sent) == 2
+
+
 def test_be_dom_text():
     """BE browser.dom_text 채택 — 성공 payload 만 dom 으로, 세션 전·미접속·빈 본문은 None(스크린샷 폴백)."""
     from brain import be_dom_text
@@ -666,5 +699,6 @@ if __name__ == "__main__":
     test_voice_bridge()
     test_wake_enroll()
     test_command_enroll()
+    test_notice_data()
     test_be_dom_text()
-    print("OK - 21/21 통과")
+    print("OK - 22/22 통과")
