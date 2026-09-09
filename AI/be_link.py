@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
-"""BE 연결 계층 최소판 — runtime.json 읽기 + MCP 클라이언트 (스파이크).
+"""BE 연결 계층 — runtime.json 읽기, WS(/ws/agent) 이벤트 채널, MCP(/mcp) 도구 호출, AI 용 REST 몇 개.
 
-BE 가 기동 시 쓰는 %APPDATA%/SIA/runtime.json 을 읽어 MCP(/mcp)에 접속한다.
-프로토콜: MCP Streamable HTTP — initialize → notifications/initialized →
-tools/list · tools/call. 응답은 application/json 또는 SSE(text/event-stream)
-어느 쪽이든 처리한다. 인증은 Bearer 토큰 + X-Caller.
+BE 가 기동 시 쓰는 %APPDATA%/SIA/runtime.json 에서 포트·토큰을 읽는다. 파일이 없으면 BE 없이 단독으로 돈다.
+- WS: 백그라운드 스레드가 /ws/agent 에 붙어 hello 를 보내고, BE 이벤트(session_state · voice_* · calib_* …)를
+  받아 각 담당(brain · CalibSession · VoiceSession · WakeEnroll)에 넘긴다. 끊기면 잠시 기다렸다 다시 붙는다.
+- MCP: Streamable HTTP — initialize → notifications/initialized → tools/list · tools/call. 응답은
+  application/json 또는 SSE(text/event-stream) 어느 쪽이든 처리한다. 인증은 Bearer 토큰 + X-Caller.
+- REST: 제스처 템플릿 npz 업/다운로드, 사용 통계 배치 전송.
 
-연결 스파이크 사용법 (BE 서버 기동 후):
+단독 점검 (BE 서버 기동 후, MCP 만):
   python be_link.py --check                    runtime 읽기 → initialize → 도구 목록
   python be_link.py --call context.get         읽기 도구 호출 (세션 불필요)
   python be_link.py --call app.launch --json "{\"appRef\":\"app:chrome\"}"
-                                               S 도구 — 세션 없으면 SESSION_REQUIRED 가
-                                               돌아오는 것 자체가 게이트 검증이다
-NOTE(한계): WS 채널은 아직 없다(웹소켓 클라이언트는 -58 본작업). 세션을 열 수
-없으므로 S 도구는 전부 SESSION_REQUIRED 가 정상이다.
+                                               세션이 필요한 도구 — 세션 없으면 SESSION_REQUIRED 가 정상
 """
 import json
 import os
@@ -128,6 +127,8 @@ class AgentLink:
         self._event_lock = threading.Lock()
         self.gesture_ready = False
         self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
+        self.wake = None                # WakeEnroll 또는 None (assistant가 주입) — 온보딩 이름 불러보기(206)
+        self.command = None             # CommandEnroll 또는 None (assistant가 주입) — 온보딩 명령 문장 말하기(206)
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -193,8 +194,14 @@ class AgentLink:
             elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
             elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
             elif t == "voice_changed":     v.on_changed(d)
-        # ponytail: hello_ack/recognition_start/settings_changed/wipe 는 로그만.
-        # 설정·blob 동기화는 9/11 MVP 합류 후 붙인다(-61). 모르는 type 은 무시(§0).
+        elif t == "wakeword_enroll_start" and self.wake:
+            self.wake.on_start()
+        elif t == "command_enroll_start" and self.command:
+            self.command.on_start()
+        elif t == "command_collect" and self.command:
+            self.command.on_collect(d.get("n"))
+        # NOTE(한계): hello_ack · recognition_start · settings_changed 에 실린 설정값과 활성 보이스(blobs.voice), 그리고
+        # wipe 는 아직 처리하지 않는다 — 제스처 템플릿만 assistant 가 동기화한다. 모르는 type 은 무시한다(프로토콜 §1.5).
 
         # Calibration events are handled above. Gesture events are consumed by
         # assistant.py on its main camera loop, not the WebSocket worker thread.
@@ -281,7 +288,7 @@ class AgentLink:
     def renew(self, opening):
         """유효 명령 판정 후에만. opening=True 면 세션 개시, 아니면 연장(MCP session.extend).
         마감시각은 BE 의 session_state push 로 갱신된다.
-        ponytail: WS session_renew 는 합의로 제거, 연장은 session.extend 로 통일."""
+        WS session_renew 는 쓰지 않는다 — 같은 동작인 MCP session.extend 하나로 통일했다(프로토콜 §2)."""
         if opening:
             # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
             # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").

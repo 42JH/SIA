@@ -15,8 +15,13 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 voice_progress{n} 을 보�
 - 로컬 프로필(models/speaker.npz)은 여기서 안 건드린다. 확정은 FE voice_commit 이고, 활성이 되면 BE 가
   voice_changed 를 보내므로 그때 활성 npz 를 내려받아 교체한다 — 중단·미확정 등록이 쓰던 프로필을 덮지 않게.
 
-NOTE(한계): 샘플은 VAD 발화 통째(프리롤 2 s 포함) — CLI 등록과 같은 입력이라 화자 연구소 실측과 조건이 같다.
+NOTE(한계): 샘플은 VAD 가 잘라 준 발화를 자르지 않고 통째로 쓴다(말 시작 전 여유분 2 s 포함) — CLI 등록(voice_enroll.py)과
+같은 입력이라 화자 인증을 실측했을 때와 조건이 같다.
+
+온보딩의 앞 두 단계 — "이름 불러보기"(호출어 샘플 10개) WakeEnroll, "명령 문장 말하기"(문장 5개 연습) CommandEnroll — 도
+여기 둔다(206). BE 이벤트로 시작해 VAD 발화를 세고 완료 이벤트를 보내는 같은 꼴이다.
 """
+import io
 import json
 import threading
 import urllib.request
@@ -34,6 +39,9 @@ SENTENCES = [  # FE 와 공통 상수 — 순서·글자를 바꾸면 FE 도 같
 MIN_SPEECH_S = 1.5     # NOTE(튜닝): 말소리가 이보다 짧으면 문장 낭독이 아니다(헛기침·"어") — 같은 문장을 기다린다. voice_enroll 과 같은 값
 QUALITY_MIN_SIM = 0.5  # NOTE(튜닝): 샘플 간 최소 코사인 유사도 하한. voice_enroll 의 "양호" 기준. 미만이면 FE 에 음질 경고
 NOISE_RMS = 350.0      # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
+WAKE_TOTAL = 10        # 온보딩 "이름 불러보기" 샘플 수 — FE 진행바의 total 과 같은 값
+WAKE_MIN_S = 0.3       # NOTE(튜닝): "시아야" 말소리 하한. 이보다 짧으면 헛기침·클릭음으로 보고 세지 않는다
+WAKE_MAX_S = 2.0       # NOTE(튜닝): 말소리 상한. 이보다 길면 문장을 말한 것이라 이름 부르기로 세지 않는다
 
 
 def noise_level(audio_i16, block=480):
@@ -181,3 +189,109 @@ class VoiceSession:
         req.add_header("Content-Type", ctype)
         with urllib.request.urlopen(req, timeout=15) as r:
             print(f"[BE REST] PUT {url} {ctype} ({len(body)} B) → {r.status}")
+
+
+class WakeEnroll:
+    """온보딩 "이름 불러보기" 의 AI 측 핸들러 — BE wakeword_enroll_start 로 시작 (206).
+
+    FE 가 "시아야" 를 10번 부르게 하고, 부를 때마다 AI 가 wakeword_sample{n, total} 을 보내 진행바를 채운다.
+    10개가 모이면 샘플 원본을 npz 하나로 묶어 PUT /api/agent/blobs/wakeword 로 올리고 wakeword_done 을 보낸다.
+    FE 는 wakeword_done 이 와야 "다음" 버튼을 연다. 호출어 모델(고정 파일)은 여기서 바꾸지 않고 BE 도 npz 를 저장만 한다.
+    NOTE(한계): 샘플 판정은 말소리 길이뿐 — 실제로 "시아야" 라고 했는지는 확인하지 않는다.
+    """
+
+    def __init__(self, link):
+        self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
+        self.active = False
+        self._samples = []
+        self._put = VoiceSession._put       # REST 업로드 — 테스트에서 바꿔 끼운다
+
+    def _tx(self, type_, data):
+        print(f"[BE→] {type_} {json.dumps(data, ensure_ascii=False)}")
+        self.link._send({"type": type_, "data": data})
+
+    # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
+    def on_start(self):
+        log_rx("wakeword_enroll_start", {})
+        self.active, self._samples = True, []
+        print(f"[호출어 수집] 시작 — \"시아야\" {WAKE_TOTAL}번")
+
+    # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──
+    def on_utter(self, audio_i16):
+        if not self.active:
+            return
+        from brain import speech_s
+
+        spoken = speech_s(audio_i16)
+        if not WAKE_MIN_S <= spoken <= WAKE_MAX_S:
+            print(f"[호출어 수집] 말소리 {spoken:.1f} s — 이름 부르기로 안 봄, 다시 기다린다")
+            return
+        self._samples.append(np.asarray(audio_i16, dtype=np.int16))
+        n = len(self._samples)
+        print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} ({spoken:.1f} s)")
+        self._tx("wakeword_sample", {"n": n, "total": WAKE_TOTAL})
+        if n >= WAKE_TOTAL:
+            self._finish()
+
+    # ── 내부 ──
+    def _finish(self):
+        self.active = False                 # 업로드 중 들어온 발화는 세지 않는다
+        buf = io.BytesIO()
+        np.savez(buf, sr=SR, **{f"sample{i:02d}": a for i, a in enumerate(self._samples, 1)})
+        try:
+            self._put(f"http://127.0.0.1:{self.link.rt['port']}/api/agent/blobs/wakeword",
+                      buf.getvalue(), "application/octet-stream")
+        except Exception as e:
+            print(f"[호출어 수집] 업로드 실패: {e}")  # wakeword_done 은 보낸다 — FE 가 멈추지 않게. BE 는 저장만 하는 데이터다
+        self._tx("wakeword_done", {})
+
+
+class CommandEnroll:
+    """온보딩 "명령 문장 말하기" 의 AI 측 핸들러 — BE command_enroll_start 로 시작 (206).
+
+    FE 가 SENTENCES 의 n번째 문장을 띄우고, BE 가 command_collect{n} 으로 "n번 문장" 을 지시한다. AI 는 그 다음 VAD 발화가
+    문장 낭독 길이(MIN_SPEECH_S 이상)면 command_progress{n} 을 보내고, 마지막 문장 뒤에 command_done 을 보낸다.
+    연습 단계라 저장하는 것이 없다 — BE 는 번호만 오가고 tempId · npz 가 없다. 화자 등록(VoiceSession)과 문장은 같지만
+    그쪽은 샘플을 모아 프로필을 만든다는 점이 다르다.
+    NOTE(한계): 낭독 판정은 말소리 길이뿐 — 문장 내용은 확인하지 않는다. 중단 이벤트가 계약에 없어 끝까지 가야 풀린다.
+    """
+
+    def __init__(self, link):
+        self.link = link                    # AgentLink (WS 발신) 또는 스텁
+        self.active = False
+        self.total = len(SENTENCES)
+        self._n = 0                         # 수집 중인 문장(0=대기)
+
+    def _tx(self, type_, data):
+        print(f"[BE→] {type_} {json.dumps(data, ensure_ascii=False)}")
+        self.link._send({"type": type_, "data": data})
+
+    # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
+    def on_start(self):
+        log_rx("command_enroll_start", {})
+        self.active, self._n = True, 0
+        self._tx("command_ready", {})
+
+    def on_collect(self, n):
+        log_rx("command_collect", {"n": n})
+        if not self.active or not n:
+            return
+        self._n = int(n)
+        text = SENTENCES[self._n - 1] if self._n <= len(SENTENCES) else "?"
+        print(f"[명령 문장] {self._n}/{self.total}: \"{text}\"")
+
+    # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──
+    def on_utter(self, audio_i16):
+        if not self.active or self._n == 0:
+            return
+        from brain import speech_s
+
+        spoken = speech_s(audio_i16)
+        if spoken < MIN_SPEECH_S:
+            print(f"[명령 문장] 너무 짧음({spoken:.1f} s) — 문장 {self._n} 을 다시 기다린다")
+            return
+        n, self._n = self._n, 0
+        self._tx("command_progress", {"n": n})
+        if n >= self.total:
+            self.active = False
+            self._tx("command_done", {})
