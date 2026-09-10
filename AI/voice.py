@@ -245,6 +245,11 @@ class VoiceListener(threading.Thread):
         with self._lock:
             return self.out_queue.popleft() if self.out_queue else None
 
+    def reset_audio(self):
+        """화자가 바뀌면 현재 입력은 유지하고 이전 화자의 발화·화면·판정 상태만 비운다."""
+        with self._lock:
+            self._reset()
+
     def stop(self):
         self.running = False
         self._changed.set()
@@ -302,7 +307,8 @@ class VoiceListener(threading.Thread):
                         last_data = time.monotonic()
                         with self._lock:
                             if generation != self._generation:
-                                break
+                                generation = self._generation
+                                continue  # 설정 변경이면 루프가 끝나고, 화자 변경이면 같은 입력으로 이어간다.
                             if overflowed:
                                 # 끊긴 현재 세그먼트만 버린다 — 완성된 발화·확인 대기·추론은 유효하다.
                                 self.seg = VadSegmenter()

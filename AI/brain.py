@@ -615,6 +615,7 @@ class Brain(threading.Thread):
                     continue
                 audio, full_img, crop_img, t_utter, hwnd, dom = self.queue.pop(0)
                 generation, accum = self._audio_generation, self._accum
+                profile = self.speaker.snapshot() if self.speaker is not None else None
             self.busy += 1
             try:
                 if EVAL_CAPTURE:
@@ -641,10 +642,11 @@ class Brain(threading.Thread):
                         # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
                         be = self._be()
                         with self._audio_lock:
-                            if generation != self._audio_generation:
-                                continue
-                            if be and not WAKE_SHADOW:
-                                be.wake_detected()
+                            stale = generation != self._audio_generation
+                        if stale:
+                            continue
+                        if be and not WAKE_SHADOW:
+                            be.wake_detected()
                     if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
                         print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
                         log_utterance(gate="wake_reject", wake_score=wake_score,
@@ -654,22 +656,22 @@ class Brain(threading.Thread):
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
                 sim, crop_t0, crop_t1 = None, None, None
                 accum_n, accum_sim = 0, None  # 이어붙인 조각 수 / 이어붙여 다시 낸 유사도 (로그 근거)
-                if self.speaker is not None and self.speaker.enrolled:
+                if profile is not None and profile[0] is not None:
                     spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
-                    ok, sim = self.speaker.verify(spk_audio)
+                    ok, sim = self.speaker.verify(spk_audio, profile)
                     if not ok:
                         # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
                         # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
                         combined = accum.offer(speech_part(spk_audio), sim, t_utter)
                         if combined is not None:
                             accum_n = accum.n_joined
-                            ok, accum_sim = self.speaker.verify(combined)
+                            ok, accum_sim = self.speaker.verify(combined, profile)
                     if ok:
                         if accum_sim is not None:
                             sim = accum_sim  # 통과시킨 값은 이어붙여 낸 유사도
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                     else:
-                        print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}"
+                        print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
                               + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
                         sp = speech_s(audio)
                         log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
@@ -681,8 +683,9 @@ class Brain(threading.Thread):
                         # 판정할 만큼 말소리가 긴 발화에서만 — 짧은 호출어는 지금은 조용히 버린다(사유는 SPEAKER_JUDGE_SPEECH_S 주석).
                         be = self._be()
                         with self._audio_lock:
-                            if generation == self._audio_generation and be and sp >= SPEAKER_JUDGE_SPEECH_S:
-                                be.voice_rejected()
+                            fresh = generation == self._audio_generation
+                        if fresh and be and sp >= SPEAKER_JUDGE_SPEECH_S:
+                            be.voice_rejected()
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
@@ -721,6 +724,9 @@ class Brain(threading.Thread):
                 self._say(f"오류: {e}")
                 print(f"[brain 오류] {e}")
             finally:
+                with self._audio_lock:
+                    if generation != self._audio_generation:
+                        self._pending = None  # 이미 시작된 이전 액션이 뒤늦게 만든 확인 대기도 새 화자에게 넘기지 않는다.
                 self.busy -= 1
 
     def _try_router(self, audio, t_utter):

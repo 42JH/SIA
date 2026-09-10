@@ -325,8 +325,10 @@ def main():
     if not os.environ.get("SIA_NO_BE"):
         try:
             from be_link import AgentLink
+            from voice_bridge import VoiceProfileSync
 
-            link = AgentLink()
+            voice_sync = VoiceProfileSync(speaker, HERE / "models" / "speaker.npz") if speaker else None
+            link = AgentLink(voice_sync=voice_sync)
             print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
             from calib_bridge import CalibSession
 
@@ -540,6 +542,9 @@ def main():
                         hud_feedback_until = now + 1.5
                         print(f"[BE RESULT] name={data.get('name', '-')} | "
                               f"ok={data.get('ok', False)} | message={hud_feedback}")
+
+            if link and link.voice_sync and link.voice_sync.apply_pending(voice.reset_audio):
+                pending_capture = None
 
             # --- 음성 이벤트 처리 ---
             from brain import active_window_title, foreground_hwnd, press_keys
