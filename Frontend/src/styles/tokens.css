@@ -49,4 +49,12 @@
   --popup-thumbnail-width: 160px;
   --popup-thumbnail-height: 90px;
   --popup-layer: 1000;
+  --dashboard-bg: #f6f6f6;
+  --dashboard-width: 1180px;
+  --dashboard-header: 64px;
+  --dashboard-title: 18px;
+  --dashboard-value: 28px;
+  --dashboard-border: #999999;
+  --dashboard-radius: 8px;
+  --dashboard-bar: #bdbdbd;
 }

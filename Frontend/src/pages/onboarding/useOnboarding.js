@@ -47,7 +47,11 @@ export function useOnboarding() {
         change({ status: { ...state().status, agentConnected: connected } });
       },
       settings_sync: (data) => change({ status: { ...state().status, ...data, settingsPending: data.agentSyncedVersion == null || data.agentSyncedVersion < data.settingsVersion } }),
-      wakeword_progress: (wake) => { if (state().step === 'wake') change({ wake }); },
+      wakeword_progress: (wake) => {
+        if (state().step !== 'wake') return;
+        const n = Math.min(Math.max(Number(wake.n) || 0, 0), 5);
+        change({ wake: { n, total: 5 }, ...(n >= 5 ? { wakeDone: true, pending: false } : {}) });
+      },
       wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, pending: false }); },
       command_sentence: (commandSentence) => {
         if (state().step === 'command') change({ commandSentence, pending: false,

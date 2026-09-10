@@ -3,7 +3,7 @@ import { create } from 'zustand';
 export const useOnboardingStore = create((set) => ({
   step: 'welcome', status: null, error: '', connectionError: '', pending: false,
   request: null, voiceTempId: null, lastEvent: null,
-  wake: { n: 0, total: 10 }, wakeDone: false,
+  wake: { n: 0, total: 5 }, wakeDone: false,
   commandSentence: null, commandCompleted: 0, commandDone: false,
   sentence: null, completed: 0, review: null, warning: null,
   precheck: null, point: null, result: null, poorCount: 0,
