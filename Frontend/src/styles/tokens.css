@@ -23,6 +23,8 @@
   --color-border: #d0d0d0;
   --color-accent: #333333;
   --color-danger: #b00020;
+  --color-muted: #777777;
+  --color-surface-muted: #fafafa;
 
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -31,4 +33,20 @@
 
   --font-size-sm: 13px;
   --font-size-md: 15px;
+
+  --popup-top: 32px;
+  --popup-width: min(696px, calc(100vw - 32px));
+  --popup-min-height: 120px;
+  --popup-padding: 32px 36px;
+  --popup-gap: 20px;
+  --popup-icon-size: 52px;
+  --popup-font-size: 17px;
+  --popup-radius: 16px;
+  --popup-inner-radius: 8px;
+  --popup-border: 2px solid #333333;
+  --popup-background: #ffffff;
+  --popup-shadow: 0 10px 30px rgb(0 0 0 / 8%);
+  --popup-thumbnail-width: 160px;
+  --popup-thumbnail-height: 90px;
+  --popup-layer: 1000;
 }
