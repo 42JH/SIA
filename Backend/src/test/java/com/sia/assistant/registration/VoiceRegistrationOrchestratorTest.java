@@ -25,7 +25,8 @@ import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 보이스 등록 — 5문장 핸드셰이크, 문장 재시도, 커밋 전 임시본, 한도(4개) 거절 (와이어프레임 보이스 섹션).
+ * 보이스 등록 — 5문장 핸드셰이크(진행은 사용자 확인이 방아쇠), 문장 재시도, 커밋 전 임시본,
+ * 한도(4개) 거절 (와이어프레임 보이스 섹션).
  */
 class VoiceRegistrationOrchestratorTest {
 
@@ -56,7 +57,7 @@ class VoiceRegistrationOrchestratorTest {
     }
 
     @Test
-    @DisplayName("문장은 5개 — ready 에 1번, progress n 에 n+1 번 문장이 FE·AI 양쪽으로 나간다")
+    @DisplayName("통과만으로는 다음 문장이 나가지 않는다 — 사용자 확인에서 FE·AI 양쪽으로 나간다")
     void fiveSentenceHandshake() {
         String tempId = startAndGetTempId();
 
@@ -66,10 +67,49 @@ class VoiceRegistrationOrchestratorTest {
 
         orchestrator.onProgress(tempId, 1);
         verify(feHub).send(eq("voice_progress"), argThatMap("n", 1));
-        verify(feHub).send(eq("voice_sentence"), argThatMap("n", 2));
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 2)); // 판독 결과 확인이 먼저다
+        verify(agentHub, never()).send(eq("voice_collect"), argThatMap("n", 2)); // AI 도 아직 수집하지 않는다
 
-        orchestrator.onProgress(tempId, 5); // 마지막 문장 — 다음 문장 없음
+        orchestrator.nextSentence(tempId);
+        verify(feHub).send(eq("voice_sentence"), argThatMap("n", 2));
+        verify(agentHub).send(eq("voice_collect"), argThatMap("n", 2));
+    }
+
+    @Test
+    @DisplayName("마지막 문장에서 '다음'은 발급할 문장이 없다 — AI 의 voice_captured 가 녹음 확인으로 넘긴다")
+    void lastSentenceHasNoNext() {
+        String tempId = startAndGetTempId();
+        orchestrator.onReady(tempId);
+        for (int n = 1; n < 5; n++) {
+            orchestrator.onProgress(tempId, n);
+            orchestrator.nextSentence(tempId);
+        }
+        verify(feHub).send(eq("voice_sentence"), argThatMap("n", 5));
+
+        orchestrator.onProgress(tempId, 5);
+        orchestrator.nextSentence(tempId);
+
         verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 6));
+        verify(agentHub, never()).send(eq("voice_collect"), argThatMap("n", 6));
+    }
+
+    @Test
+    @DisplayName("통과하지 않은 문장에서 '다음'은 무시한다 — 거절 뒤·연타로 문장을 건너뛰지 못한다")
+    void nextIsIgnoredUntilSentencePasses() {
+        String tempId = startAndGetTempId();
+        orchestrator.onReady(tempId);
+
+        orchestrator.nextSentence(tempId); // 아직 읽지도 않았다
+        orchestrator.onSentenceRejected(tempId, om.readTree("{\"n\":1,\"reason\":\"너무 짧게 들렸어요.\"}"));
+        orchestrator.nextSentence(tempId); // 거절된 문장
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 2));
+
+        orchestrator.onProgress(tempId, 1);
+        orchestrator.nextSentence(tempId);
+        orchestrator.nextSentence(tempId); // 연타
+
+        verify(feHub, org.mockito.Mockito.times(1)).send(eq("voice_sentence"), argThatMap("n", 2));
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 3));
     }
 
     @Test
@@ -85,15 +125,22 @@ class VoiceRegistrationOrchestratorTest {
     }
 
     @Test
-    @DisplayName("'이 문장 다시'는 같은 번호의 voice_collect 를 재발급한다")
+    @DisplayName("'이 문장 다시'는 화면에 떠 있는 번호를 재발급하고, 다시 읽기 전에는 '다음'을 막는다")
     void sentenceRetryReissuesSameNumber() {
         String tempId = startAndGetTempId();
         orchestrator.onReady(tempId);
-        orchestrator.onProgress(tempId, 1); // 현재 2번 문장
+        orchestrator.onProgress(tempId, 1); // 1번 통과 — 화면에는 1번의 판독 결과
 
         orchestrator.retrySentence(tempId);
 
-        verify(agentHub, org.mockito.Mockito.times(2)).send(eq("voice_collect"), argThatMap("n", 2));
+        verify(agentHub, org.mockito.Mockito.times(2)).send(eq("voice_collect"), argThatMap("n", 1));
+
+        orchestrator.nextSentence(tempId); // 재녹음이 아직 통과하지 않았다
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 2));
+
+        orchestrator.onProgress(tempId, 1);
+        orchestrator.nextSentence(tempId);
+        verify(feHub).send(eq("voice_sentence"), argThatMap("n", 2));
     }
 
     @Test

@@ -51,7 +51,9 @@ public class FeWsRoutes {
             // ---- 온보딩: 이름 불러보기
             case "wakeword_enroll_start" -> enrollment.startWakeword();
             // ---- 보이스 등록 (5문장 → 녹음 확인 → 등록) — 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다
+            //      문장 진행은 사용자 확인(voice_sentence_next)이 방아쇠다 — 통과만으로 넘어가지 않는다
             case "voice_reg_start" -> voiceRegistration.start();
+            case "voice_sentence_next" -> voiceRegistration.nextSentence(d.path("tempId").asText());
             case "voice_sentence_retry" -> voiceRegistration.retrySentence(d.path("tempId").asText());
             case "voice_reg_retry" -> voiceRegistration.retryAll(d.path("tempId").asText());
             case "voice_accept_anyway" -> voiceRegistration.acceptAnyway(d.path("tempId").asText());

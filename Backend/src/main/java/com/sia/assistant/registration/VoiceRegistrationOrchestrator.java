@@ -22,6 +22,9 @@ import tools.jackson.databind.JsonNode;
  * 낭독 문장 5개의 원문은 FE·AI 가 동일한 상수로 보유한다(불변, 하드코딩) — BE 는 순번(n)만 정해 양쪽에 보낸다.
  * AI 는 문장 단위로 수집하고(voice_collect), 같은 n 이 다시 오면 그 문장을 교체한다. 문장 하나가 미달이면
  * voice_sentence_rejected 로 사유만 알리고 같은 n 을 계속 기다린다.
+ * 문장이 통과해도 BE 가 다음 문장을 바로 발급하지 않는다 — 사용자가 판독 결과를 확인하고 "다음"(voice_sentence_next)
+ * 을 누른 뒤다. 확인 화면이 떠 있는 동안 AI 가 다음 문장을 수집하고 있으면 그 사이의 말·잡음이 다음 문장의
+ * 발화로 섞여 화자 임베딩을 오염시킨다.
  * 임시본(npz·샘플 오디오)은 메모리에만 있다가 사용자의 "등록"(voice_commit)에서 프로필로 확정된다 —
  * 재시작하면 진행 중이던 등록은 사라지는 게 맞고, DB 에 청소할 고아도 남지 않는다.
  */
@@ -41,7 +44,10 @@ public class VoiceRegistrationOrchestrator {
 
     private static final class Draft {
         final String tempId;
+        /** 화면에 떠 있는(= AI 가 수집 중인) 문장. 사용자의 "다음" 에서만 올라간다. */
         volatile int currentN = 1;
+        /** 통과 이벤트를 받은 마지막 문장. {@code passedN >= currentN} 이 곧 "다음" 을 눌러도 되는 상태다. */
+        volatile int passedN;
         volatile byte[] npz;
         volatile String npzSha256;
         volatile byte[] sample;
@@ -87,20 +93,47 @@ public class VoiceRegistrationOrchestrator {
             return;
         }
         draft.currentN = 1;
+        draft.passedN = 0;
         sendSentence(draft, 1);
     }
 
-    /** AI voice_progress {tempId, n} — 진행률 중계 후 다음 문장. "문장을 다 읽으면 자동으로 다음". */
+    /**
+     * AI voice_progress {tempId, n} — 진행률 중계. 다음 문장은 여기서 발급하지 않는다 (사용자 확인 뒤 nextSentence).
+     * 통과 표시만 올려 "다음" 을 열어준다 — 발급한 문장과 다른 n 이 오면 어긋난 것이라 표시하지 않고 경고만 남긴다.
+     */
     public void onProgress(String tempId, int n) {
         Draft draft = match(tempId, "voice_progress");
         if (draft == null) {
             return;
         }
         feHub.send("voice_progress", Map.of("tempId", tempId, "n", n, "total", TOTAL_SENTENCES));
-        if (n >= 1 && n < TOTAL_SENTENCES) {
-            draft.currentN = n + 1;
-            sendSentence(draft, n + 1);
+        if (n == draft.currentN) {
+            draft.passedN = n;
+        } else {
+            log.warn("보이스 등록 {} — voice_progress n={} 이 발급한 문장 {} 과 다릅니다", tempId, n, draft.currentN);
         }
+    }
+
+    /**
+     * FE voice_sentence_next {tempId} — 판독 결과를 확인하고 "다음". 다음 문장을 FE·AI 양쪽에 발급한다.
+     * 통과하지 않은 문장(거절 뒤·재녹음 중)에서는 무시한다 — 연타·오작동으로 문장을 건너뛰지 못하게 하는 잠금이다.
+     * 마지막 문장 뒤에는 발급할 문장이 없다 — AI 가 곧 voice_captured 를 보내 녹음 확인 화면으로 넘어간다.
+     */
+    public void nextSentence(String tempId) {
+        Draft draft = match(tempId, "voice_sentence_next");
+        if (draft == null) {
+            return;
+        }
+        if (draft.passedN < draft.currentN) {
+            log.debug("보이스 등록 {} — 문장 {} 이 아직 통과하지 않아 voice_sentence_next 무시", tempId, draft.currentN);
+            return;
+        }
+        if (draft.currentN >= TOTAL_SENTENCES) {
+            log.debug("보이스 등록 {} — 마지막 문장이라 voice_sentence_next 무시", tempId);
+            return;
+        }
+        draft.currentN += 1;
+        sendSentence(draft, draft.currentN);
     }
 
     /**
@@ -125,12 +158,16 @@ public class VoiceRegistrationOrchestrator {
         feHub.send("voice_sentence_rejected", body);
     }
 
-    /** FE voice_sentence_retry — "이 문장 다시". 같은 n 의 voice_collect 를 재발급한다 (AI 는 교체 수집). */
+    /**
+     * FE voice_sentence_retry — "이 문장 다시". 화면에 떠 있는 문장의 voice_collect 를 재발급한다 (AI 는 교체 수집).
+     * 통과 표시를 내린다 — 다시 읽는 중이니 그 상태로 "다음" 을 눌러 건너뛰면 안 된다.
+     */
     public void retrySentence(String tempId) {
         Draft draft = match(tempId, "voice_sentence_retry");
         if (draft == null) {
             return;
         }
+        draft.passedN = draft.currentN - 1;
         sendSentence(draft, draft.currentN);
     }
 
@@ -141,6 +178,7 @@ public class VoiceRegistrationOrchestrator {
             return;
         }
         draft.currentN = 1;
+        draft.passedN = 0;
         draft.sample = null;
         draft.npz = null;
         sendSentence(draft, 1);
