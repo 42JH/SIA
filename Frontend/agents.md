@@ -80,9 +80,9 @@
 
 소켓 연결 · 재연결 · 파싱은 src/ws/feSocket.js 하나로만 관리하고, 컴포넌트는 src/ws/eventBus.js를 통해 `type`별로 구독한다.
 
-**FE → BE로 보내는 이벤트**: `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `command_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice`
+**FE → BE로 보내는 이벤트**: `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice`
 
-**BE → FE로 오는 이벤트**: `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `command_sentence` · `command_progress` · `command_done` · `voice_sentence` · `voice_progress` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error`
+**BE → FE로 오는 이벤트**: `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `voice_sentence` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error`
 
 - 각 이벤트의 `data` 필드 구성은 API명세서.md §4.2 · §4.3을 그대로 따른다. 필드명을 임의로 축약하거나 새로 만들지 말 것
 - `error`는 보낸 소켓에만 오는 처리 실패 알림이며, `of` 필드로 어떤 요청(`type`)이 실패했는지 알 수 있다 — 토스트 등으로 노출할 때 `of` 기준으로 분기할 것

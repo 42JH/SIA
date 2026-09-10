@@ -5,6 +5,10 @@ import { useOnboardingStore } from '../../store/onboardingStore';
 
 const voiceSteps = ['voice', 'voiceReview'];
 const gazeSteps = ['position', 'gazeGuide', 'measuring', 'result'];
+const voiceRejectionMessages = {
+  TOO_SHORT: '너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.',
+  INCONSISTENT: '앞 문장과 목소리가 다르게 들려요. 같은 분이 조용한 곳에서 다시 읽어주세요.',
+};
 
 export function useOnboarding() {
   useEffect(() => {
@@ -72,17 +76,22 @@ export function useOnboarding() {
           pending: false,
         });
       },
-      command_rejected: (rejection) => {
+      voice_sentence_rejected: (rejection) => {
         if (!voiceSteps.includes(state().step)) return;
-        const currentN = state().voiceSentence?.n ?? Math.min(state().voiceCompleted + 1, 5);
-        const rejectedN = Number(rejection.n) || currentN;
+        const tempId = state().voiceTempId;
+        if (!rejection.tempId || rejection.tempId !== tempId) return;
+        const currentN = Number(state().voiceSentence?.n) || Math.min(state().voiceCompleted + 1, 5);
+        const rejectedN = Number(rejection.n);
         if (rejectedN !== currentN) return;
+        const reason = voiceRejectionMessages[rejection.code]
+          ?? (typeof rejection.reason === 'string' ? rejection.reason.trim() : '');
         change({
           voiceResult: {
             ...rejection,
-            tempId: state().voiceTempId,
+            tempId,
             n: rejectedN,
             total: Number(rejection.total) || 5,
+            reason,
             rejected: true,
           },
           finalVoiceReview: null,

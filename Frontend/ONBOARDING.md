@@ -11,7 +11,8 @@ REST는 기존 Axios 인스턴스를 사용하고 `/api/status`를 3초 간격�
 ## 보이스 계약 적용
 
 - `voice_sentence`와 `voice_progress`에서 받은 `tempId`를 등록이 끝날 때까지 보관한다.
-- 문장 판독 실패는 `command_rejected {n,total,reason,code?}`를 추가로 구독한다. 현재 보이스 등록의 `tempId`와 결합해 실패 결과를 표시하고, 성공 진행률은 올리지 않는다.
+- 문장 판독 실패는 `voice_sentence_rejected {tempId,n,total,reason,code?}`를 구독한다. 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과를 표시하고, 성공 진행률은 올리지 않는다.
+- 알려진 실패 코드 `TOO_SHORT`·`INCONSISTENT`는 FE 문구를 표시하고, 코드가 없거나 모르는 값이면 서버의 `reason`을 표시한다.
 - 문장 다시 녹음은 `voice_sentence_retry {tempId}`, 최종 등록은 `voice_commit {tempId, deviceLabel?}`를 사용한다.
 - `quality`가 null이거나 빈 문자열이면 `미판정`, 실패 `reason`이 비어 있으면 `사유 미판정`으로 표시한다.
 - 다중 모니터 물리 좌표를 정확히 변환하기 위한 원점·배율 계약이 없다.

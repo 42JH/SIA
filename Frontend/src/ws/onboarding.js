@@ -4,7 +4,6 @@ import { useOnboardingStore } from '../store/onboardingStore';
 
 const responses = {
   wakeword_enroll_start: ['wakeword_progress', 'wakeword_done'],
-  command_enroll_start: ['command_sentence', 'command_progress', 'command_done'],
   voice_reg_start: ['voice_sentence', 'voice_reg_denied'],
   voice_sentence_retry: ['voice_sentence'],
   voice_reg_retry: ['voice_sentence'],
@@ -26,7 +25,7 @@ export function sendOnboarding(type, data = {}) {
 export function subscribeOnboarding(handlers) {
   const subscriptions = Object.entries(handlers).map(([type, handler]) => on(type, (data) => {
     const state = useOnboardingStore.getState();
-    if (state.interrupted && /^(wakeword_|command_|voice_|calib_)/.test(type)) return;
+    if (state.interrupted && /^(wakeword_|voice_|calib_)/.test(type)) return;
     state.receiveEvent(type, data);
     handler(data);
   }));

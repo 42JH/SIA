@@ -10,8 +10,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 설정 저장 | PUT /api/settings | 전체 settings와 updatedAt 전송. 장치 이름과 ID 포함 |
 | 앱 등록 | POST /api/apps/scan | 실제 응답 이후 마이크 단계로 이동 |
 | 호출어 | wakeword_enroll_start | wakeword_progress, wakeword_done |
-| 명령 문장 | command_enroll_start | command_sentence, command_progress, command_done |
-| 보이스 | voice_reg_start | voice_sentence, voice_progress, command_rejected, voice_quality_warn, voice_review, voice_reg_denied |
+| 보이스 | voice_reg_start | voice_sentence, voice_progress, voice_sentence_rejected, voice_quality_warn, voice_review, voice_reg_denied |
 | 보이스 재시도 | voice_sentence_retry, voice_reg_retry | voice_sentence 수신 후 진행 |
 | 품질 경고 무시 | voice_accept_anyway | voice_review 수신 후 샘플 확인 |
 | 보이스 저장 | voice_commit | voice_saved 이후 마이크 완료 |
@@ -23,7 +22,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 시선 중단 | calib_cancel | 현재 계약에 완료 응답 없음. 전송만 기록 |
 | 연결 상태 | GET /api/status 주기 조회 | agent_status, settings_sync도 반영 |
 
-`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 보이스 문장 처리 중 수신한 `command_rejected`는 현재 문장 번호와 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다.
+`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 보이스 문장 처리 중 수신한 `voice_sentence_rejected`는 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다. 알려진 `TOO_SHORT`·`INCONSISTENT` 코드는 FE 문구를 사용하고, 없거나 모르는 코드는 서버의 `reason`을 사용한다.
 
 시선은 안내 중 받은 점을 보관한 뒤 주 모니터 전체화면의 실제 코 중심 좌표를 물리 픽셀로 보내며, 오차는 서버 결과를 표시한다.
 
@@ -47,19 +46,9 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 
 이 기능의 존재와 WS 시작 이벤트 연결은 별도로 확인해야 한다. 현재 확인한 `be_link.py`의 `_on_event()`에는 세션·시선 분기가 있으며, 위 등록 함수를 호출하는 보이스 등록 이벤트 분기는 찾지 못했다. 이는 이 로컬 소스의 확인 결과이며, AI 음성 등록 기능이 없다는 뜻이 아니다. 별도 실행본의 반영 여부는 검증하지 않았다.
 
-## 등록은 진행하되 초기 식별자에 따른 제약
+## 등록 식별자 규칙
 
-FE는 `voice_reg_start {}`를 보내고, `tempId`가 없는 `voice_sentence {n,total}`와 `voice_progress {n,total}`도 처리한다. 식별자가 없다는 이유로 문장 수집을 중단하지 않는다. 문장은 확정된 5개를 사용한다.
-
-| 상태 | 가능한 동작 | 제한 |
-|---|---|---|
-| 초기 tempId 미수신 | 문장 표시와 진행 이벤트 수신 | 이 문장 다시·중단 비활성화 |
-| sentence/progress/warning/review에서 tempId 수신 | 서버가 준 식별자 보관·재사용 | 작업 중에는 중복 요청 방지 |
-| 품질 경고 + tempId 수신 | voice_accept_anyway 전송 | 식별자 없으면 계속 진행 버튼 비활성화 |
-| review + tempId + 5문장 진행 수신 | 샘플 재생, voice_commit 전송 | voice_saved 수신 후에만 등록 완료 표시 |
-| review에도 tempId 미수신 | 제공된 샘플 재생 | 저장·다시 녹음 비활성화 및 사유 표시 |
-
-초기 재시도·중단을 지원하려면 BE가 첫 `voice_sentence`에 해당 등록의 `tempId`를 제공해야 한다. FE는 임시 번호를 만들거나 빈 번호로 요청하지 않는다. 리뷰에서 번호를 받으면 전체 다시 녹음은 가능하다. 서버가 일단 제공한 번호는 이후 이벤트에서 생략되어도 유지한다.
+FE는 `voice_reg_start {}`를 보내고, BE가 발급한 `tempId`를 첫 `voice_sentence`부터 등록 완료까지 보관한다. FE는 임시 식별자를 만들지 않는다. 문장 재녹음·품질 경고 무시·최종 저장·등록 중단에는 보관한 `tempId`를 사용한다. `voice_sentence_rejected`는 진행 중인 등록과 `tempId`가 다르거나 현재 문장과 `n`이 다르면 반영하지 않는다.
 
 30초 응답 지연은 실패나 서버 작업 취소로 간주하지 않는다. FE는 기다리면서 후속 이벤트를 처리하며 시작·저장 요청을 자동 재전송하지 않는다.
 
@@ -70,9 +59,9 @@ FE는 `voice_reg_start {}`를 보내고, `tempId`가 없는 `voice_sentence {n,t
 ## 사용자 통신 확인 순서
 
 1. BE·AI·FE 실행 후 기본 설정에서 장치를 선택하고 저장한다.
-2. 호출어 5회, 명령 5문장을 진행한다.
+2. 호출어 5회 후 보이스 등록 문장 5개를 진행한다.
 3. 통신 기록에서 `voice_reg_start` 발신과 `voice_sentence`·`voice_progress` 수신을 확인한다. tempId가 없어도 5문장 수집이 이어져야 한다.
-4. tempId 수신 전 재시도·중단이 비활성화되고, 수신 후 활성화되는지 확인한다.
+4. 첫 `voice_sentence`의 tempId가 이후 재시도·중단 요청에 동일하게 포함되는지 확인한다.
 5. `voice_review`의 샘플 확인 후 등록을 누른다. `voice_commit`에 서버가 준 tempId가 포함되는지 확인한다.
 6. `voice_saved` 수신 후 마이크 설정 완료 화면으로 이동하는지 확인한다.
 7. 시작 이벤트만 있고 응답이 없다면 FE 발신 기록과 BE 중계·AI 수신 로그를 대조한다. 30초 이후에도 도착한 응답은 처리해야 한다.
