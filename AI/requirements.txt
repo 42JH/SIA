@@ -12,9 +12,13 @@ pywin32
 faster-whisper  # 1단 로컬 라우터용 (없으면 자동으로 LLM 단독 경로)
 websockets  # BE 연결 계층 WS(/ws/agent) — 없으면 MCP만, 미연결이면 로컬 폴백
 openwakeword  # 시동어 게이트용 (없으면 게이트 없이 LLM 판정만)
-# 화자 인증·온보딩 화자 등록용 (필수 — 등록 때 문장마다 임베딩하므로 없으면 등록이 실패한다. torch 는 speechbrain 이 CPU 판으로 끌어온다):
-speechbrain
-torchaudio
+# 화자 인증·온보딩 화자 등록용 (필수 — 등록 때 문장마다 임베딩하므로 없으면 등록이 실패한다).
+# torch 와 torchaudio 는 반드시 같은 버전이어야 한다 — 어긋나면 import 때 WinError 127 (지정된 프로시저를 찾을 수 없습니다).
+# 이미 다른 torch 가 깔린 환경(miniforge 등)에서 이 파일로 다시 설치하면 아래 버전으로 맞춰진다.
+torch==2.11.0
+torchaudio==2.11.0
+speechbrain==1.1.1
 soundfile
-# 딥 시선 모델용 (선택, NVIDIA GPU 권장 — 없으면 기하 방식으로 자동 폴백):
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# GPU 로 돌리려면 위 두 줄을 같은 버전으로 cu128 index 에서 먼저 설치한 뒤 -r 을 돌린다 (버전이 같으면 pip 이 다시 안 받는다):
+# pip install torch==2.11.0 torchaudio==2.11.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+# 딥 시선 모델용 torchvision 은 선택 (없으면 기하 방식으로 자동 폴백)
