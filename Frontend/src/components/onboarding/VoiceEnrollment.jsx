@@ -9,16 +9,17 @@ function RecordingView({ current, total, sentence }) {
   </div>;
 }
 
-function ReviewView({ review, current, total, rejected, ready, pending, canRetry, onRetry, onAccept }) {
+function ReviewView({ review, current, total, rejected, ready, pending, canRetry, canAccept, onRetry, onAccept }) {
+  const reason = review.reason?.trim() || '사유 미판정';
   return <div className={styles.enrollment}>
     <h2>{current} / {total} 문장 판독 결과</h2>
-    <p className={styles.description}>{rejected ? '문장을 다시 읽어주세요.' : '판독 결과를 확인한 뒤 다음 문장으로 진행해주세요.'}</p>
+    <p className={styles.description}>{rejected ? reason : '판독 결과를 확인한 뒤 다음 문장으로 진행해주세요.'}</p>
     <div className={styles.quality}>
       <span>녹음 품질 · <strong>{review.quality?.trim() || '미판정'}</strong></span>
     </div>
     <div className={styles.actions}>
       <button onClick={onRetry} disabled={!ready || pending || !canRetry}>다시 녹음</button>
-      {!rejected && <button className={styles.primary} onClick={onAccept} disabled={!ready || pending}>{current >= total ? '등록' : '다음 문장'}</button>}
+      {!rejected && <button className={styles.primary} onClick={onAccept} disabled={!ready || pending || !canAccept}>{current >= total ? '등록' : '다음 문장'}</button>}
     </div>
   </div>;
 }

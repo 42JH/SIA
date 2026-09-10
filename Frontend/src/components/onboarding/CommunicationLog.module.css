@@ -1,6 +1,0 @@
-.panel { width: min(100%, var(--setup-card-width)); margin-top: var(--spacing-md); padding: var(--spacing-md); border: var(--setup-border); background: var(--color-bg); }
-.panel summary { cursor: pointer; }
-.panel ol { max-height: var(--setup-card-height); overflow: auto; padding: var(--spacing-lg); }
-.panel li { margin-bottom: var(--spacing-md); }
-.panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
-.panel button { padding: var(--spacing-sm); }

@@ -9,14 +9,29 @@ export default function GazeMeasurement({ point, ready, connected, onCancel }) {
   const fail = (error) => useOnboardingStore.getState().interrupt(error);
   useEffect(() => {
     const check = () => { if (!document.fullscreenElement) fail('전체화면이 해제되었습니다. 보정을 다시 시작해주세요.'); };
-    const resized = () => fail('화면 크기가 변경되었습니다. 보정을 다시 시작해주세요.');
+    let resizeGuardReady = false;
+    let measuredWidth = window.innerWidth;
+    let measuredHeight = window.innerHeight;
+    const guardTimer = setTimeout(() => {
+      measuredWidth = window.innerWidth;
+      measuredHeight = window.innerHeight;
+      resizeGuardReady = true;
+    }, 1000);
+    const resized = () => {
+      if (!resizeGuardReady || (window.innerWidth === measuredWidth && window.innerHeight === measuredHeight)) return;
+      fail('화면 크기가 변경되었습니다. 보정을 다시 시작해주세요.');
+    };
     document.addEventListener('fullscreenchange', check);
     window.addEventListener('resize', resized);
-    return () => { document.removeEventListener('fullscreenchange', check); window.removeEventListener('resize', resized); };
+    return () => {
+      clearTimeout(guardTimer);
+      document.removeEventListener('fullscreenchange', check);
+      window.removeEventListener('resize', resized);
+    };
   }, []);
   useEffect(() => {
     if (!point || !ready || !document.fullscreenElement || !target.current || sentPoint.current === point.n) return;
-    if (!Number.isInteger(point.n) || point.n < 1 || point.n > 9) { fail('시선 측정 지점 번호가 올바르지 않습니다. 통신 기록을 확인해주세요.'); return; }
+    if (!Number.isInteger(point.n) || point.n < 1 || point.n > 9) { fail('시선 측정 지점 번호가 올바르지 않습니다. 연결 상태를 확인해주세요.'); return; }
     const frame = requestAnimationFrame(() => {
       const rect = target.current.getBoundingClientRect();
       // TODO(BE): 다중 모니터의 물리 좌표 원점·배율 제공 계약이 없어 주 모니터 전체화면만 지원

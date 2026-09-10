@@ -3,8 +3,9 @@ import { create } from 'zustand';
 export const useOnboardingStore = create((set) => ({
   step: 'welcome', status: null, error: '', connectionError: '', pending: false,
   request: null, lastEvent: null,
-  wake: { n: 0, total: 5 }, wakeDone: false,
-  commandSentence: null, commandCompleted: 0, commandReview: null, commandDone: false,
+  wake: { n: 0, total: 10 }, wakeDone: false,
+  voiceTempId: null, voiceSentence: null, voiceCompleted: 0,
+  voiceResult: null, finalVoiceReview: null,
   precheck: null, point: null, result: null, poorCount: 0,
   gazeWaitingSince: null, gazeDelayed: false,
   interrupted: false,

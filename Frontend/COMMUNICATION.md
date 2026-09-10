@@ -11,7 +11,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 앱 등록 | POST /api/apps/scan | 실제 응답 이후 마이크 단계로 이동 |
 | 호출어 | wakeword_enroll_start | wakeword_progress, wakeword_done |
 | 명령 문장 | command_enroll_start | command_sentence, command_progress, command_done |
-| 보이스 | voice_reg_start | voice_sentence, voice_progress, voice_quality_warn, voice_review, voice_reg_denied |
+| 보이스 | voice_reg_start | voice_sentence, voice_progress, command_rejected, voice_quality_warn, voice_review, voice_reg_denied |
 | 보이스 재시도 | voice_sentence_retry, voice_reg_retry | voice_sentence 수신 후 진행 |
 | 품질 경고 무시 | voice_accept_anyway | voice_review 수신 후 샘플 확인 |
 | 보이스 저장 | voice_commit | voice_saved 이후 마이크 완료 |
@@ -23,7 +23,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 시선 중단 | calib_cancel | 현재 계약에 완료 응답 없음. 전송만 기록 |
 | 연결 상태 | GET /api/status 주기 조회 | agent_status, settings_sync도 반영 |
 
-`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다.
+`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 보이스 문장 처리 중 수신한 `command_rejected`는 현재 문장 번호와 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다.
 
 시선은 안내 중 받은 점을 보관한 뒤 주 모니터 전체화면의 실제 코 중심 좌표를 물리 픽셀로 보내며, 오차는 서버 결과를 표시한다.
 

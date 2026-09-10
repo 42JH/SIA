@@ -3,7 +3,7 @@ import { fetchStatus } from '../../api/status';
 import { subscribeOnboarding } from '../../ws/onboarding';
 import { useOnboardingStore } from '../../store/onboardingStore';
 
-const commandSteps = ['command', 'commandReview'];
+const voiceSteps = ['voice', 'voiceReview'];
 const gazeSteps = ['position', 'gazeGuide', 'measuring', 'result'];
 
 export function useOnboarding() {
@@ -11,7 +11,7 @@ export function useOnboarding() {
     let disposed = false;
     let timer;
     const state = () => useOnboardingStore.getState();
-    const active = () => ['wake', ...commandSteps, ...gazeSteps].includes(state().step);
+    const active = () => ['wake', ...voiceSteps, ...gazeSteps].includes(state().step);
     const change = (patch) => state().change(patch);
     async function poll() {
       try {
@@ -38,7 +38,7 @@ export function useOnboarding() {
     }, 1000);
     const stop = subscribeOnboarding({
       __connection__: ({ status }) => {
-        if (status === 'closed' && ['wake', ...commandSteps, ...gazeSteps].includes(state().step)) {
+        if (status === 'closed' && ['wake', ...voiceSteps, ...gazeSteps].includes(state().step)) {
           state().interrupt('연결이 끊겼습니다. 재연결 후 설정을 다시 시작해주세요.');
         }
       },
@@ -49,27 +49,70 @@ export function useOnboarding() {
       settings_sync: (data) => change({ status: { ...state().status, ...data, settingsPending: data.agentSyncedVersion == null || data.agentSyncedVersion < data.settingsVersion } }),
       wakeword_progress: (wake) => {
         if (state().step !== 'wake') return;
-        const n = Math.min(Math.max(Number(wake.n) || 0, 0), 5);
-        change({ wake: { n, total: 5 }, ...(n >= 5 ? { wakeDone: true, pending: false } : {}) });
+        const n = Math.min(Math.max(Number(wake.n) || 0, 0), 10);
+        change({ wake: { n, total: 10 }, ...(n >= 10 ? { wakeDone: true, pending: false } : {}) });
       },
       wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, pending: false }); },
-      command_sentence: (commandSentence) => {
-        if (!commandSteps.includes(state().step)) return;
+      voice_sentence: (voiceSentence) => {
+        if (!voiceSteps.includes(state().step)) return;
         change({
-          commandSentence,
-          ...(state().step === 'command' ? { pending: false } : {}),
-          error: commandSentence.total !== 5 ? '서버의 문장 수가 등록 기준 5문장과 다릅니다.' : '',
+          voiceSentence,
+          voiceTempId: voiceSentence.tempId,
+          ...(state().step === 'voice' ? { pending: false } : {}),
+          error: voiceSentence.total !== 5 ? '서버의 문장 수가 등록 기준 5문장과 다릅니다.' : '',
         });
       },
-      command_progress: (result) => {
-        if (!commandSteps.includes(state().step)) return;
-        change({ commandCompleted: result.n, commandReview: { ...result, rejected: false }, step: 'commandReview', pending: false });
+      voice_progress: (voiceProgress) => {
+        if (!voiceSteps.includes(state().step)) return;
+        change({
+          voiceTempId: voiceProgress.tempId,
+          voiceCompleted: voiceProgress.n,
+          voiceResult: { ...voiceProgress, rejected: false },
+          step: 'voiceReview',
+          pending: false,
+        });
       },
-      command_rejected: (result) => {
-        if (!commandSteps.includes(state().step)) return;
-        change({ commandReview: { ...result, rejected: true }, step: 'commandReview', pending: false });
+      command_rejected: (rejection) => {
+        if (!voiceSteps.includes(state().step)) return;
+        const currentN = state().voiceSentence?.n ?? Math.min(state().voiceCompleted + 1, 5);
+        const rejectedN = Number(rejection.n) || currentN;
+        if (rejectedN !== currentN) return;
+        change({
+          voiceResult: {
+            ...rejection,
+            tempId: state().voiceTempId,
+            n: rejectedN,
+            total: Number(rejection.total) || 5,
+            rejected: true,
+          },
+          finalVoiceReview: null,
+          step: 'voiceReview',
+          pending: false,
+        });
       },
-      command_done: () => { if (commandSteps.includes(state().step)) change({ commandDone: true, pending: false }); },
+      voice_quality_warn: (warning) => {
+        if (!voiceSteps.includes(state().step)) return;
+        const n = Math.max(1, state().voiceCompleted);
+        change({
+          voiceTempId: warning.tempId,
+          voiceResult: { ...warning, n, total: 5, rejected: true },
+          finalVoiceReview: null,
+          step: 'voiceReview',
+          pending: false,
+        });
+      },
+      voice_review: (review) => {
+        if (!voiceSteps.includes(state().step)) return;
+        change({
+          voiceTempId: review.tempId,
+          finalVoiceReview: review,
+          voiceResult: { ...state().voiceResult, ...review, n: 5, total: 5, rejected: false },
+          step: 'voiceReview',
+          pending: false,
+        });
+      },
+      voice_saved: () => { if (voiceSteps.includes(state().step)) change({ step: 'micDone', pending: false, request: null }); },
+      voice_reg_denied: ({ message }) => { if (voiceSteps.includes(state().step)) change({ step: 'micStart', error: message, pending: false }); },
       // TODO(BE): AI가 새 보정마다 precheck를 재전송해야 함. 거리·조명의 실측 여부도 서버에서 제공 필요
       calib_precheck: (precheck) => { if (gazeSteps.includes(state().step)) change({ precheck, gazeWaitingSince: null, gazeDelayed: false }); },
       calib_point: (point) => { if (gazeSteps.includes(state().step)) change({ point, pending: false }); },
@@ -78,7 +121,7 @@ export function useOnboarding() {
       calib_denied: ({ message }) => { if (gazeSteps.includes(state().step)) change({ step: 'gazeStart', error: message, pending: false }); },
       calib_limit: ({ message }) => change({ error: message, pending: false, result: state().result ? { ...state().result, remeasuresLeft: 0 } : null }),
       error: ({ message, of }) => {
-        if (/^(voice_|command_|calib_|wakeword_)/.test(of ?? '')) change({ error: message, pending: false });
+        if (/^(voice_|calib_|wakeword_)/.test(of ?? '')) change({ error: message, pending: false });
       },
     });
     return () => { disposed = true; clearTimeout(timer); clearInterval(watchdog); stop(); };
