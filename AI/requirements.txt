@@ -4,7 +4,7 @@ numpy
 pyautogui
 pynput
 uiautomation
-sounddevice
+sounddevice==0.5.6
 pillow
 google-genai
 send2trash

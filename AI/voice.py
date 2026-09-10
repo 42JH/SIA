@@ -9,14 +9,24 @@
 이벤트 큐로 내보내는 것:
   ("onset", t)          — 발화 시작 감지 (이 순간 화면·응시를 캡처할 것)
   ("utter", t, audio)   — 발화 종료, int16 mono 오디오 전체
+  ("reset", t)          — 장치 전환·입력 중단, 이전 발화의 화면 캡처 폐기
+  ("notice", message)   — 마이크 실패 안내, BE에는 notice {message}로 전달
 """
+import ctypes
+import sys
 import threading
 import time
+from contextlib import closing
+from functools import cache
 
 import numpy as np
 
 SR = 16000
 BLOCK = 480  # 30ms
+MIC_STALL_S = 3.0         # NOTE(튜닝): 입력이 이 시간 동안 없으면 장치 중단으로 보고 복구한다.
+MIC_RETRY_S = 1.0         # NOTE(튜닝): 기본 장치도 실패했을 때 첫 재시도 간격. 이후 두 배씩 늘린다.
+MIC_RETRY_MAX_S = 15.0    # NOTE(튜닝): 복구 지연과 반복 시도 부하 사이의 백오프 상한.
+MIC_OVERFLOW_LOG_S = 15.0  # NOTE(튜닝): CPU 부하로 오버플로가 반복돼도 로그는 이 간격으로 제한한다.
 
 
 class VadSegmenter:
@@ -125,32 +135,201 @@ class VadSegmenter:
         return None
 
 
+@cache
+def _wasapi_dlls(libname):
+    """장치 조회마다 LoadLibrary 참조가 쌓이지 않도록 DLL 핸들을 재사용한다."""
+    return ctypes.CDLL(libname), ctypes.WinDLL("ole32")
+
+
+def wasapi_endpoint_id(sd, index):
+    """PortAudio 소유 IMMDevice의 ID 조회 — GetId가 할당한 문자열만 해제한다."""
+    if sys.platform != "win32":
+        raise OSError("Core Audio 장치 ID는 Windows에서만 지원합니다")
+    # 공개 API로는 엔드포인트 ID 조회·장치 재검색이 안 되어 sounddevice 0.5.6의 사설 API를 사용한다.
+    dll, ole = _wasapi_dlls(sd._libname)
+    get_device = dll.PaWasapi_GetIMMDevice
+    get_device.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+    get_device.restype = ctypes.c_int
+    ole.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole.CoInitializeEx.restype = ctypes.c_long
+    ole.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ole.CoTaskMemFree.restype = None
+    ole.CoUninitialize.argtypes = []
+    ole.CoUninitialize.restype = None
+    hr = ole.CoInitializeEx(None, 0)
+    if hr < 0 and hr != -2147417850:  # RPC_E_CHANGED_MODE: 기존 STA에서도 조회할 수 있다.
+        raise OSError(f"CoInitializeEx: {hr}")
+    value = ctypes.c_void_p()
+    try:
+        device = ctypes.c_void_p()
+        if get_device(index, ctypes.byref(device)) != 0 or not device:
+            raise OSError("WASAPI 장치 ID 조회 실패")
+        table = ctypes.cast(device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        get_id = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                   ctypes.POINTER(ctypes.c_void_p))(table[5])
+        if get_id(device, ctypes.byref(value)) < 0 or not value:
+            raise OSError("IMMDevice.GetId 실패")
+        return ctypes.wstring_at(value)
+    finally:
+        if value:
+            ole.CoTaskMemFree(value)
+        # PaWasapi_GetIMMDevice는 AddRef하지 않는다 — 빌린 포인터를 Release하면 안 된다.
+        if hr >= 0:
+            ole.CoUninitialize()
+
+
+def resolve_input_device(sd, device_id):
+    """엔드포인트 ID를 정확히 대조한다 — PortAudio의 장치 이름 부분 일치로 넘기지 않는다."""
+    hosts = sd.query_hostapis()
+    if device_id is None:
+        return next((h["default_input_device"] for h in hosts
+                     if h["name"] == "Windows WASAPI" and h["default_input_device"] >= 0),
+                    sd.default.device[0])
+    if not isinstance(device_id, str) or not device_id.strip():
+        raise ValueError("잘못된 마이크 장치 ID")
+    matches = []
+    for index, info in enumerate(sd.query_devices()):
+        if info["max_input_channels"] <= 0 or hosts[info["hostapi"]]["name"] != "Windows WASAPI":
+            continue
+        if wasapi_endpoint_id(sd, index).casefold() == device_id.casefold():
+            matches.append(index)
+    if len(matches) != 1:
+        raise OSError("선택한 마이크를 찾을 수 없거나 장치 ID가 모호합니다")
+    return matches[0]
+
+
 class VoiceListener(threading.Thread):
     """마이크 전용 스레드 — VadSegmenter 이벤트를 out_queue로 흘린다."""
 
-    def __init__(self, out_queue, device=None):
+    def __init__(self, out_queue, device=None, on_reset=None):
         super().__init__(daemon=True)
         self.out_queue = out_queue
         self.device = device
         self.seg = VadSegmenter()
         self.running = True
         self.error = None
+        self.on_reset = on_reset
+        self._selection = ("native", device)
+        self._lock = threading.Lock()
+        self._changed = threading.Event()
+        self._generation = 0
+        self._reported = set()
+        self._last_overflow_log = float("-inf")
+
+    def set_settings(self, settings):
+        """키 누락은 현재 입력 유지, 명시적 null은 시스템 기본 마이크 선택."""
+        if not isinstance(settings, dict) or "micDeviceId" not in settings:
+            return False
+        selection = ("endpoint", settings["micDeviceId"])
+        with self._lock:
+            if selection == self._selection or (selection[1] is None and self._selection[1] is None):
+                return False
+            self._selection = selection
+            self._reported.clear()
+            self._reset()
+            self._changed.set()
+        return True
+
+    def _reset(self):
+        """잠금 안에서 호출 — 이전 발화와 연결된 화면 캡처까지 폐기한다."""
+        self._generation += 1
+        self.seg = VadSegmenter()
+        notices = [event for event in self.out_queue if event[0] == "notice"]
+        self.out_queue.clear()
+        self.out_queue.append(("reset", time.monotonic()))
+        self.out_queue.extend(notices)
+        if self.on_reset:
+            self.on_reset()
+
+    def take_event(self):
+        with self._lock:
+            return self.out_queue.popleft() if self.out_queue else None
+
+    def stop(self):
+        self.running = False
+        self._changed.set()
+
+    def _notice(self, key, message):
+        with self._lock:
+            if key not in self._reported:
+                self._reported.add(key)
+                self.out_queue.append(("notice", message))
+                print(message)
 
     @property
     def recording(self):
         return self.seg.recording
 
     def run(self):
-        try:
-            import sounddevice as sd
+        fallback, backoff, refresh = False, MIC_RETRY_S, False
+        while self.running:
+            with self._lock:
+                if self._changed.is_set():
+                    fallback, backoff = False, MIC_RETRY_S
+                    refresh = True
+                    self._changed.clear()
+                selection, generation = self._selection, self._generation
+            try:
+                import sounddevice as sd
 
-            with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
-                                blocksize=BLOCK, device=self.device) as stream:
-                while self.running:
-                    data, _ = stream.read(BLOCK)
-                    ev = self.seg.feed(data[:, 0], time.monotonic())
-                    if ev is not None:
-                        self.out_queue.append(ev)
-        except Exception as e:  # 마이크 없음/점유 등 — 비서는 제스처만으로 계속 동작
-            self.error = e
-            print(f"음성 대기 중단: {e}")
+                if refresh:
+                    # 앱의 유일한 PortAudio 입력을 닫은 뒤 재검색해야 새로 연결된 장치도 보인다.
+                    if sd._initialized:
+                        sd._terminate()
+                    sd._initialize()
+                    refresh = False
+                mode, requested = selection
+                device = (resolve_input_device(sd, None if fallback else requested)
+                          if fallback or mode == "endpoint" or requested is None else requested)
+                info = sd.query_devices(device, "input")
+                extra = (sd.WasapiSettings(auto_convert=True)
+                         if sd.query_hostapis(info["hostapi"])["name"] == "Windows WASAPI" else None)
+                # __enter__에서 start()가 실패하면 __exit__가 안 불린다 — 그때도 반드시 닫는다.
+                with closing(sd.InputStream(samplerate=SR, channels=1, dtype="int16",
+                                            blocksize=BLOCK, device=device, extra_settings=extra)) as stream:
+                    stream.start()
+                    self.device, self.error = device, None
+                    last_data = time.monotonic()
+                    recovered = False
+                    while self.running and not self._changed.is_set():
+                        # 쌓인 블록만 읽어야 끊긴 장치의 read()가 설정 변경을 막지 않는다.
+                        if not stream.active or time.monotonic() - last_data > MIC_STALL_S:
+                            raise OSError("마이크 입력이 중단됐습니다")
+                        if stream.read_available < BLOCK:
+                            self._changed.wait(BLOCK / SR)
+                            continue
+                        data, overflowed = stream.read(BLOCK)
+                        last_data = time.monotonic()
+                        with self._lock:
+                            if generation != self._generation:
+                                break
+                            if overflowed:
+                                # 끊긴 현재 세그먼트만 버린다 — 완성된 발화·확인 대기·추론은 유효하다.
+                                self.seg = VadSegmenter()
+                                if last_data - self._last_overflow_log >= MIC_OVERFLOW_LOG_S:
+                                    print("[마이크] 입력 오버플로 — 진행 중인 발화만 폐기합니다.")
+                                    self._last_overflow_log = last_data
+                                continue
+                            if not recovered:
+                                # 열기 직후 다시 실패하는 장치도 있다 — 정상 블록을 받은 뒤 안내를 재허용한다.
+                                self._reported.clear()
+                                recovered = True
+                            ev = self.seg.feed(data[:, 0], last_data)
+                            if ev is not None:
+                                self.out_queue.append(ev)
+                        backoff = MIC_RETRY_S
+            except Exception as exc:
+                with self._lock:
+                    if generation != self._generation:
+                        continue
+                    self.error = exc
+                    self._reset()
+                if selection[1] is not None and not fallback:
+                    fallback = True
+                    self._notice("fallback", "선택한 마이크를 사용할 수 없어 시스템 기본 마이크로 전환합니다.")
+                    continue
+                self._notice("unavailable", "마이크를 사용할 수 없습니다. 장치 연결과 권한을 확인해 주세요. 자동으로 다시 시도합니다.")
+                self._changed.wait(backoff)
+                backoff = min(backoff * 2, MIC_RETRY_MAX_S)
+                fallback = False
+                refresh = True

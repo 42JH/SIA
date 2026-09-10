@@ -525,6 +525,9 @@ class Brain(threading.Thread):
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
         self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
         self.queue = []
+        self._audio_lock = threading.RLock()
+        self._audio_generation = 0
+        self._audio_since = 0.0
         self.busy = 0
         self.session_until = 0.0
         self._pending = None  # (확인 질문, 종류, 만료 시각)
@@ -585,15 +588,33 @@ class Brain(threading.Thread):
         컨텍스트(크롬 확장 실측, 없으면 None). 세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
         if self.enabled:
-            self.queue.append((audio_i16, full_img, crop_img,
-                               t_utter or time.monotonic(), target_hwnd, dom))
+            with self._audio_lock:
+                t_utter = t_utter or time.monotonic()
+                if t_utter < self._audio_since:
+                    return
+                self.queue.append((audio_i16, full_img, crop_img,
+                                   t_utter, target_hwnd, dom))
+
+    def reset_audio(self):
+        """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
+        with self._audio_lock:
+            self._audio_generation += 1
+            self._audio_since = time.monotonic()
+            self.queue.clear()
+            self._pending = None
+            # 진행 중인 추론은 이전 누적기를 쓴다 — 그 조각이 새 입력에 섞이지 않게 교체한다.
+            self._accum = SpeakerAccum()
 
     def run(self):
         while True:
             if not self.queue:
                 time.sleep(0.05)
                 continue
-            audio, full_img, crop_img, t_utter, hwnd, dom = self.queue.pop(0)
+            with self._audio_lock:
+                if not self.queue:
+                    continue
+                audio, full_img, crop_img, t_utter, hwnd, dom = self.queue.pop(0)
+                generation, accum = self._audio_generation, self._accum
             self.busy += 1
             try:
                 if EVAL_CAPTURE:
@@ -614,13 +635,16 @@ class Brain(threading.Thread):
                     if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
                         i_max = int(np.argmax(scores))
                         if t_utter >= self._session_until():
-                            self._accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
+                            accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
                         # 63: 감지 즉시 BE 에 알린다(FE "듣고 있어요" + 세션 개시). 화자 게이트보다 앞 — 호출어 발화는
                         # 짧아서 아직 미인증인 게 정상(다음 발화와 이어붙여 판정). 섀도는 로그만이라 안 보냄.
                         # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
                         be = self._be()
-                        if be and not WAKE_SHADOW:
-                            be.wake_detected()
+                        with self._audio_lock:
+                            if generation != self._audio_generation:
+                                continue
+                            if be and not WAKE_SHADOW:
+                                be.wake_detected()
                     if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
                         print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
                         log_utterance(gate="wake_reject", wake_score=wake_score,
@@ -636,14 +660,14 @@ class Brain(threading.Thread):
                     if not ok:
                         # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
                         # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
-                        combined = self._accum.offer(speech_part(spk_audio), sim, t_utter)
+                        combined = accum.offer(speech_part(spk_audio), sim, t_utter)
                         if combined is not None:
-                            accum_n = self._accum.n_joined
+                            accum_n = accum.n_joined
                             ok, accum_sim = self.speaker.verify(combined)
                     if ok:
                         if accum_sim is not None:
                             sim = accum_sim  # 통과시킨 값은 이어붙여 낸 유사도
-                        self._accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
+                        accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                     else:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {self.speaker.threshold}"
                               + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
@@ -656,8 +680,9 @@ class Brain(threading.Thread):
                         # BE 이벤트(→ FE "등록된 목소리로 한 명령이 아닙니다", 프로토콜 4.1 voice_rejected {})는
                         # 판정할 만큼 말소리가 긴 발화에서만 — 짧은 호출어는 지금은 조용히 버린다(사유는 SPEAKER_JUDGE_SPEECH_S 주석).
                         be = self._be()
-                        if be and sp >= SPEAKER_JUDGE_SPEECH_S:
-                            be.voice_rejected()
+                        with self._audio_lock:
+                            if generation == self._audio_generation and be and sp >= SPEAKER_JUDGE_SPEECH_S:
+                                be.voice_rejected()
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
@@ -687,7 +712,11 @@ class Brain(threading.Thread):
                               action=result.get("action"),
                               transcript=result.get("transcript", "")[:120],
                               had_dom=dom is not None, **audio_stats(audio))
-                self._execute(result, crop_img, t_utter, hwnd, full_img)
+                with self._audio_lock:
+                    stale = generation != self._audio_generation
+                # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
+                if not stale:
+                    self._execute(result, crop_img, t_utter, hwnd, full_img)
             except Exception as e:
                 self._say(f"오류: {e}")
                 print(f"[brain 오류] {e}")
