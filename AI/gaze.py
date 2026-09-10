@@ -297,17 +297,22 @@ class FaceEngine:
             )
         )
         self._last_ts = 0
+        # detect_for_video는 스레드 안전하지 않고 _last_ts 단조 상태를 공유한다.
+        # 재보정 중엔 GazeWorker 스레드와 CalibSession(메인 루프)이 같은 엔진을 동시에 부르는데,
+        # 락이 없으면 두 스레드가 같은 _last_ts 를 읽어 같은/역전 ts 를 넣어 "타임스탬프가 증가하지 않음"으로 터진다.
+        self._infer_lock = threading.Lock()
 
     def features(self, frame_bgr, ts_ms=None):
         import cv2
 
-        if ts_ms is None:
-            ts_ms = int(time.monotonic() * 1000)
-        ts_ms = max(ts_ms, self._last_ts + 1)  # detect_for_video는 단조증가 필수
-        self._last_ts = ts_ms
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
-        result = self.landmarker.detect_for_video(img, ts_ms)
+        with self._infer_lock:  # ts 갱신 + MediaPipe 호출을 원자적으로 (스레드 직렬화)
+            if ts_ms is None:
+                ts_ms = int(time.monotonic() * 1000)
+            ts_ms = max(ts_ms, self._last_ts + 1)  # detect_for_video는 단조증가 필수
+            self._last_ts = ts_ms
+            result = self.landmarker.detect_for_video(img, ts_ms)
         f = gaze_features(result)
         if f is None or self.deep is None:
             return f
