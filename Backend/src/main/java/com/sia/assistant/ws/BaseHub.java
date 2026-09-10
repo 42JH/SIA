@@ -3,6 +3,7 @@ package com.sia.assistant.ws;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,15 @@ import tools.jackson.databind.ObjectMapper;
 public abstract class BaseHub extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(BaseHub.class);
+
+    /** 콘솔에 남기는 페이로드 미리보기 상한(문자). 넘치면 잘라 붙이고 원본 길이를 표기한다. */
+    private static final int PREVIEW_MAX = 300;
+
+    /**
+     * 초당 수십 번 오가거나(gaze_cursor·ping/pong) 수백 KB 짜리(reg_frame)라 INFO 로 찍으면
+     * 콘솔이 잠기는 type — 이것들만 DEBUG 로 내린다. 나머지 송수신은 전부 INFO 다.
+     */
+    private static final Set<String> NOISY = Set.of("gaze_cursor", "reg_frame", "ping", "pong");
 
     /** 원본 세션 id → 동시 전송 안전 데코레이터 */
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
@@ -53,10 +63,13 @@ public abstract class BaseHub extends TextWebSocketHandler {
             JsonNode root = om.readTree(message.getPayload());
             type = root.path("type").asText(null);
             if (type == null || type.isBlank()) {
+                log.warn("[{}] <- type 없는 메시지 {}", name(), preview(message.getPayload()));
                 sendTo(session.getId(), "error", Map.of("message", "type 이 없습니다"));
                 return;
             }
-            onMessage(type, root.path("data"));
+            JsonNode data = root.path("data");
+            logTraffic("<-", type, data);
+            onMessage(type, data);
         } catch (Exception e) {
             log.warn("[{}] '{}' 처리 실패", name(), type, e);
             Map<String, Object> body = new LinkedHashMap<>();
@@ -84,6 +97,7 @@ public abstract class BaseHub extends TextWebSocketHandler {
             log.error("[{}] '{}' 직렬화 실패", name(), type, e);
             return;
         }
+        logTraffic("->", type, data);
         for (Map.Entry<String, WebSocketSession> entry : sessions.entrySet()) {
             try {
                 entry.getValue().sendMessage(msg);
@@ -107,10 +121,50 @@ public abstract class BaseHub extends TextWebSocketHandler {
             Map<String, Object> envelope = new LinkedHashMap<>();
             envelope.put("type", type);
             envelope.put("data", data == null ? Map.of() : data);
-            session.sendMessage(new TextMessage(om.writeValueAsString(envelope)));
+            String json = om.writeValueAsString(envelope);
+            log.info("[{}] -> {} (개별 회신) {}", name(), type, preview(json));
+            session.sendMessage(new TextMessage(json));
         } catch (Exception e) {
             log.warn("[{}] 개별 전송 실패", name(), e);
         }
+    }
+
+    /**
+     * 송수신 한 건을 한 줄로 — 방향·type·페이로드 미리보기. 시끄러운 type 만 DEBUG 다.
+     * 페이로드 직렬화는 그 레벨이 켜져 있을 때만 한다 (reg_frame 수백 KB 를 헛되이 두 번 만들지 않는다).
+     */
+    private void logTraffic(String arrow, String type, Object data) {
+        boolean noisy = NOISY.contains(type);
+        if (noisy ? !log.isDebugEnabled() : !log.isInfoEnabled()) {
+            return;
+        }
+        String json;
+        try {
+            json = om.writeValueAsString(data == null || (data instanceof JsonNode n && n.isMissingNode())
+                    ? Map.of() : data);
+        } catch (JacksonException e) {
+            json = "(직렬화 불가)";
+        }
+        if (noisy) {
+            log.debug("[{}] {} {} {}", name(), arrow, type, preview(json));
+        } else {
+            log.info("[{}] {} {} {}", name(), arrow, type, preview(json));
+        }
+    }
+
+    /** 로그용 페이로드 절단 — DB 컬럼이 아니라 사람이 읽는 줄이므로 유효 JSON 을 유지할 필요는 없다. */
+    static String preview(String json) {
+        if (json == null) {
+            return "{}";
+        }
+        if (json.length() <= PREVIEW_MAX) {
+            return json;
+        }
+        int cut = PREVIEW_MAX;
+        if (Character.isHighSurrogate(json.charAt(cut - 1))) {
+            cut--;
+        }
+        return json.substring(0, cut) + "…(" + json.length() + "자)";
     }
 
     public boolean connected() {

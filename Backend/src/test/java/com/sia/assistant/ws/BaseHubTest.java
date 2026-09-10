@@ -8,13 +8,18 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -62,11 +67,33 @@ class BaseHubTest {
     private TestHub hub;
     private WebSocketSession session;
 
+    private final ch.qos.logback.classic.Logger hubLogger =
+            (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(BaseHub.class);
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+    private Level previousLevel;
+
     @BeforeEach
     void setUp() {
         hub = new TestHub(om);
         session = mock(WebSocketSession.class);
         when(session.getId()).thenReturn("s1");
+        previousLevel = hubLogger.getLevel();
+        hubLogger.setLevel(Level.DEBUG);
+        logs.start();
+        hubLogger.addAppender(logs);
+    }
+
+    @AfterEach
+    void tearDown() {
+        hubLogger.detachAppender(logs);
+        hubLogger.setLevel(previousLevel);
+    }
+
+    private List<String> messagesAt(Level level) {
+        return logs.list.stream()
+                .filter(e -> e.getLevel() == level)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
     }
 
     private JsonNode lastSentTo(WebSocketSession target) throws Exception {
@@ -150,6 +177,44 @@ class BaseHubTest {
         assertThatCode(() -> hub.send("evt", Map.of())).doesNotThrowAnyException();
 
         assertThat(hub.connected()).isFalse();
+    }
+
+    @Test
+    @DisplayName("송신·수신 한 건마다 방향·type·페이로드가 INFO 한 줄로 남는다")
+    void trafficIsLoggedAtInfo() {
+        hub.afterConnectionEstablished(session);
+
+        hub.handleTextMessage(session, new TextMessage("{\"type\":\"calib_start\",\"data\":{\"n\":1}}"));
+        hub.send("session_state", Map.of("state", "ACTIVE"));
+
+        assertThat(messagesAt(Level.INFO))
+                .anySatisfy(m -> assertThat(m).isEqualTo("[ws/test] <- calib_start {\"n\":1}"))
+                .anySatisfy(m -> assertThat(m).isEqualTo("[ws/test] -> session_state {\"state\":\"ACTIVE\"}"));
+    }
+
+    @Test
+    @DisplayName("gaze_cursor·reg_frame 같은 고빈도 type 은 INFO 가 아니라 DEBUG 로 내려간다")
+    void noisyTypesAreDebug() {
+        hub.afterConnectionEstablished(session);
+
+        hub.handleTextMessage(session, new TextMessage("{\"type\":\"gaze_cursor\",\"data\":{\"x\":3}}"));
+        hub.send("reg_frame", Map.of("seq", 7));
+
+        assertThat(messagesAt(Level.INFO)).noneMatch(m -> m.contains("gaze_cursor") || m.contains("reg_frame"));
+        assertThat(messagesAt(Level.DEBUG))
+                .anyMatch(m -> m.startsWith("[ws/test] <- gaze_cursor"))
+                .anyMatch(m -> m.startsWith("[ws/test] -> reg_frame"));
+    }
+
+    @Test
+    @DisplayName("긴 페이로드는 300자에서 잘리고 원본 길이가 붙는다")
+    void longPayloadIsTruncated() {
+        String big = "x".repeat(1000);
+        String preview = BaseHub.preview(big);
+
+        assertThat(preview).startsWith("x".repeat(300)).endsWith("…(1000자)");
+        assertThat(BaseHub.preview("short")).isEqualTo("short");
+        assertThat(BaseHub.preview(null)).isEqualTo("{}");
     }
 
     @Test

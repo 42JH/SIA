@@ -78,7 +78,7 @@ com.sia.assistant
 ├── settings/      설정 싱글턴·blob(wakeword)·제스처 매핑(원천 테이블, 제스처별 템플릿 npz 포함)·전체 삭제
 ├── control/       JNA 창 제어·SendInput(휠·미디어 키)·앱 실행·휴지통·파일 저장·탐색기 항목(com/, explorer/)
 ├── logging/       tool_call 기록(REQUIRES_NEW)·usage_event 배치(멱등)·400일 보존
-├── config/        WS·보안·토큰·CORS·데이터 디렉터리
+├── config/        WS·보안·토큰·CORS·HTTP 요청 로그·데이터 디렉터리
 └── api/           agent(blobs·gestures·profiles·events) + web(FE REST 전체)
 ```
 
