@@ -538,26 +538,26 @@ GET /api/gestures?dangling=true
 
 | 필드 | 설명 |
 |---|---|
-| `kind` | `HAND` / `FACE`. 모달리티 축 |
-| `hands` | `1` = 한손, `2` = 양손. 형태 축. `FACE` 는 `null` |
-| `motion` | `STATIC` = 정적, `DYNAMIC` = 동적. 형태 축. `FACE` 는 `null` |
+| `kind` | `HAND` / `FACE` |
+| `hands` | `1` = 한손, `2` = 양손. `FACE` 는 `null` |
+| `motion` | `STATIC` = 정적, `DYNAMIC` = 동적. `FACE` 는 `null` |
 | `context` | 매핑이 걸리는 컨텍스트 (`youtube` / `video`). `null` 이면 컨텍스트 제약 없는 기본 매핑 |
 | `enabled` | 켜기/끄기 상태. 꺼지면 AI 감지 제외 + BE 실행 차단 |
 | `custom` | `true` = 사용자 등록 제스처, `false` = 기본 제공 |
 | `createdAt` | 등록일. 기본 제공은 `null` |
-| `videoUrl` | 등록 영상 URL. 없으면 `null` |
+| `videoUrl` | 등록 촬영본 URL. 없으면 `null`. `motion` 이 `DYNAMIC` 이면 영상(webm), `STATIC` 이면 사진(jpg)이다 — FE 는 `motion` 으로 `<video>` / `<img>` 를 고른다 |
 | `runnable` | 모든 스텝의 도구가 이번 기동에 등록되어 있으면 `true`. 스텝이 없으면 `false` |
 | `steps[].available` | 그 스텝 도구의 가용 여부 |
 
 커스텀 제스처 신규 등록은 REST 가 아니라 WS `macro_assign` 경로다.
 
-`hands` · `motion` 은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없다 — 재촬영으로만 바뀐다. 기본 제공 제스처는 전부 한손 정적이고 `FACE` 2건은 두 값이 `null` 이다.
+`hands` · `motion` 은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없다. `motion` 은 등록 시작 시 FE 가 고른 등록 창(`reg_start {motion}`)이고, `hands` 는 AI 가 랜드마크를 보고 보고한 값(`reg_captured {hands}`)이다. 둘 다 재촬영(`reg_start {replaceGestureId}`)으로만 바뀐다. 기본 제공 제스처는 전부 한손 정적이고 `FACE` 2건은 두 값이 `null` 이다.
 
 ### 1.11 `GET /api/gestures/{id}` — 제스처 단건
 
 **200** — §1.10 `items` 원소와 같은 형태. **404 GESTURE_NOT_FOUND**.
 
-### 1.12 `GET /api/gestures/{id}/video` · `GET /api/gestures/{id}/npz` — 등록 영상 · 템플릿 백업
+### 1.12 `GET /api/gestures/{id}/video` · `GET /api/gestures/{id}/npz` — 등록 촬영본 · 템플릿 백업
 
 `/video` — **200** `video/webm`. 없는 id 는 **404 GESTURE_NOT_FOUND**. 제스처는 있지만 등록 영상이 없으면 **404** (본문 없음). 사용자 카메라 영상이므로 PC 밖으로 내보내지 않는다.
 
@@ -581,7 +581,7 @@ GET /api/gestures?dangling=true
 
 ### 1.14 `PUT /api/gestures/{id}` — 커스텀 제스처 수정
 
-이름 · 라벨 · 설명 · 반복 · 기능(스텝)을 바꾼다. 보낸 필드만 바뀐다. 동작(영상) 재촬영은 WS `reg_start {replaceGestureId}` 경로다.
+이름 · 라벨 · 설명 · 반복 · 기능(스텝)을 바꾼다. 보낸 필드만 바뀐다. 동작 재촬영은 WS `reg_start {replaceGestureId}` 경로이고, 형태(`hands` · `motion`)도 그때만 바뀐다.
 
 ```json
 {
@@ -992,15 +992,16 @@ GET /api/dashboard/timeseries?days=7
 }
 ```
 
-### 1.26 `GET /api/previews/{tempId}-{take}.webm` — 등록 미리보기 영상
+### 1.26 `GET /api/previews/{tempId}-{take}.{webm|jpg}` — 등록 미리보기
 
 ```
 GET /api/previews/9f3a2c17-2.webm
+GET /api/previews/9f3a2c17-2.jpg
 ```
 
-**200** `video/webm`. URL 은 WS `reg_recorded` 의 `takes[].webmUrl` 을 그대로 쓴다. **404** 파일 없음 (본문 없음).
+**200** — 동적 등록은 `video/webm`, 정적 등록은 `image/jpeg` 다. Content-Type 은 확장자가 정한다. URL 은 WS `reg_recorded` 의 `takes[].webmUrl` 을 그대로 쓴다. **404** 파일 없음 (본문 없음).
 
-파일명은 `[a-zA-Z0-9-]+\.webm` 패턴만 허용한다. 사용자 카메라 영상이므로 PC 밖으로 내보내지 않는다.
+파일명은 `[a-zA-Z0-9-]+\.(?:webm|jpg)` 패턴만 허용한다. 사용자 카메라 영상·사진이므로 PC 밖으로 내보내지 않는다.
 
 회차 선택이 끝날 때까지만 존재하는 임시 파일이다. `macro_assign` 으로 한 회차가 `gestures/` 로 승격되면 그 등록의 회차 파일은 고른 것까지 모두 삭제되고, 이후 요청은 **404** 다. 거절(`reg_rejected`)·등록 교체(`reg_start`)·BE 재기동 때도 삭제된다.
 
@@ -2152,7 +2153,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 | `type` | `data` | 설명 |
 |---|---|---|
-| `reg_start` | `{replaceGestureId?: long}` | 커스텀 제스처 등록 시작. `replaceGestureId` 가 있으면 그 제스처의 동작 재촬영 |
+| `reg_start` | `{replaceGestureId?: long, motion?: STATIC \| DYNAMIC}` | 커스텀 제스처 등록 시작. `motion` 은 정적/동적 등록 창 중 사용자가 고른 쪽이다 — 생략하면 `DYNAMIC` 이다. `replaceGestureId` 가 있으면 그 제스처의 동작 재촬영. `motion` 이 두 값이 아니면 `error` |
 | `reg_stop` | `{tempId: string}` | 등록 구간 종료. 3회차 촬영이 끝난 뒤 FE 가 보낸다 |
 | `macro_assign` | 아래 상세 | 매크로 지정 · 저장 |
 | `wakeword_enroll_start` | `{}` | 이름 불러보기 시작 |
@@ -2266,7 +2267,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `reg_state` | `{tempId: string, phase: MODE_STARTED \| RECORDING \| REJECTED \| CAPTURED \| ENCODING, reason?: string, similarTo?: string, similarity?: number}` | 등록 진행 상태. `reason` · `similarTo` · `similarity` 는 `REJECTED` 에만 |
 | `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 촬영 회차 진행 |
 | `reg_frame` | `{tempId: string, take: int, seq: long, jpegB64: string}` | 실시간 미리보기 프레임 (JPEG base64) |
-| `reg_recorded` | `{tempId: string, takes: {take: int, webmUrl: string \| null}[], reason?: string}` | 회차별 미리보기 webm. 전 회차 실패면 `reason` |
+| `reg_recorded` | `{tempId: string, takes: {take: int, webmUrl: string \| null}[], reason?: string}` | 회차별 미리보기. 동적은 webm, 정적은 jpg URL 이다 (필드 이름은 `webmUrl` 그대로). 전 회차 실패면 `reason` |
 | `macro_saved` | `{id: long, name: string, videoUrl: string \| null}` | 매크로 저장 완료 |
 
 #### 온보딩 · 보이스
@@ -2393,6 +2394,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 ```
 ```json
 { "type": "reg_recorded", "data": { "tempId": "9f3a2c17", "takes": [ { "take": 1, "webmUrl": "/api/previews/9f3a2c17-1.webm" }, { "take": 2, "webmUrl": "/api/previews/9f3a2c17-2.webm" }, { "take": 3, "webmUrl": null } ] } }
+{ "type": "reg_recorded", "data": { "tempId": "5b1c88d4", "takes": [ { "take": 1, "webmUrl": "/api/previews/5b1c88d4-1.jpg" }, { "take": 2, "webmUrl": "/api/previews/5b1c88d4-2.jpg" }, { "take": 3, "webmUrl": "/api/previews/5b1c88d4-3.jpg" } ] } }
 ```
 ```json
 { "type": "voice_review", "data": { "tempId": "9f3a2c17", "sampleUrl": "/api/voice-reg/9f3a2c17/sample", "durationSec": 4.2, "quality": "양호", "noise": "낮음" } }
@@ -2436,7 +2438,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 회차 진행 |
 | `reg_frame` | `{tempId: string, take: int, seq: long, tsMs: long, jpegB64: string}` | 압축 프레임. `take` 생략 시 1. `tsMs` 는 재생 타이밍 근거 |
 | `reg_rejected` | `{tempId: string, reason: string, similarTo?: string, similarity?: number}` | 품질 검증 미달 |
-| `reg_captured` | `{tempId: string}` | 템플릿 후보 생성 완료. npz 를 `PUT /api/agent/gestures/{tempId}/npz` 로 먼저 올린 뒤 보낸다 |
+| `reg_captured` | `{tempId: string, hands: 1 \| 2}` | 템플릿 후보 생성 완료. npz 를 `PUT /api/agent/gestures/{tempId}/npz` 로 먼저 올린 뒤 보낸다. `hands` 는 랜드마크를 본 AI 만 아는 관측값이다 — 없거나 `1` · `2` 가 아니면 경고를 남기고 `hands` 없이 저장한다(등록 자체는 막지 않는다) |
 
 #### 온보딩 · 보이스
 
@@ -2509,7 +2511,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | `type` | `data` | 설명 |
 |---|---|---|
-| `reg_mode_start` | `{tempId: string, takes: int, countdownSec: int, takeDurationSec: int, replaceGestureName?: string}` | 등록 모드 진입 지시. 값은 3 · 3 · 2 |
+| `reg_mode_start` | `{tempId: string, motion: STATIC \| DYNAMIC, takes: int, countdownSec: int, takeDurationSec?: int, replaceGestureName?: string}` | 등록 모드 진입 지시. `takes` 3 · `countdownSec` 3 · `takeDurationSec` 2. `motion` 이 `STATIC` 이면 회차당 사진 한 장이라 구간이 없어 **`takeDurationSec` 를 아예 보내지 않는다**. AI 는 `motion` 으로 단일 프레임 템플릿과 시퀀스 템플릿 중 무엇을 만들지 촬영 전에 정한다 |
 | `reg_finish` | `{tempId: string}` | 등록 구간 종료 지시 |
 | `gesture_registered` | `{tempId: string, take: int, id: long, name: string, label: string \| null, sha256: string}` | 매크로 지정 완료. `take` 회차 템플릿이 `id` 로 확정됐다. `GET /api/agent/gestures/{id}/npz` 로 내려받아 적재한다 |
 | `gesture_renamed` | `{id: long, oldName: string, newName: string}` | 이름 변경. `id` 의 이름표만 바꾼다. npz 재업로드 없음 |
