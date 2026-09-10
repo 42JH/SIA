@@ -162,4 +162,37 @@ class ToolGateTest {
         verify(recorder).record(eq("context.get"), any(), eq(Caller.LLM),
                 eq("FAILED"), eq("boom"), isNull(), anyLong());
     }
+
+    @Test
+    @DisplayName("도구 실행 한 건마다 이름·caller·인자·결과가 콘솔 INFO 한 줄로 남는다")
+    void everyRunLeavesOneConsoleLine() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ToolGate.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            when(sessionService.activeOrNull()).thenReturn(null);
+            when(sessionService.requireActive())
+                    .thenThrow(new BlockedException(ErrorCode.SESSION_REQUIRED, "세션 없음"));
+
+            gate.run("context.get", Map.of(), Caller.GESTURE, () -> "ctx");
+            gate.run("window.focus", Map.of("winRef", "win:1"), Caller.LLM, () -> null);
+            gate.run("context.get", Map.of(), Caller.LLM, () -> {
+                throw new IllegalStateException("boom");
+            });
+            gate.run("no.such.tool", Map.of(), Caller.LLM, () -> null);
+
+            assertThat(logs.list).extracting(e -> e.getFormattedMessage())
+                    .satisfiesExactly(
+                            m -> assertThat(m).startsWith("[tool] context.get caller=GESTURE args={} -> EXECUTED ("),
+                            m -> assertThat(m).startsWith(
+                                    "[tool] window.focus caller=LLM args={winRef=win:1} -> BLOCKED SESSION_REQUIRED ("),
+                            m -> assertThat(m).startsWith("[tool] context.get caller=LLM args={} -> FAILED boom ("),
+                            m -> assertThat(m).isEqualTo("[tool] no.such.tool caller=LLM args={} -> UNKNOWN"));
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
 }

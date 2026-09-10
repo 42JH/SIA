@@ -3,10 +3,13 @@ package com.sia.assistant.mcp;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.BlockedException;
 import com.sia.assistant.common.ErrorCode;
+import com.sia.assistant.common.LogPreview;
 import com.sia.assistant.logging.ToolCallRecorder;
 import com.sia.assistant.session.SessionService;
 import java.util.Map;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,6 +23,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class ToolGate {
+
+    private static final Logger log = LoggerFactory.getLogger(ToolGate.class);
 
     private final SessionService sessionService;
     private final ToolCallRecorder recorder;
@@ -36,6 +41,7 @@ public class ToolGate {
         ToolCatalog.ToolSpec spec = ToolCatalog.spec(tool);
         if (spec == null) {
             // 카탈로그에 없는 이름은 기록 대상도 아니다 (tool_call.tool_name FK 가 tool 행을 요구한다)
+            log.warn("[tool] {} caller={} args={} -> UNKNOWN", tool, caller, LogPreview.of(safeArgs.toString()));
             return ToolResult.failed("알 수 없는 도구입니다: " + tool);
         }
 
@@ -49,13 +55,17 @@ public class ToolGate {
             }
 
             Object data = action.get();
-            recorder.record(tool, safeArgs, caller, "EXECUTED", null, sessionId,
-                    System.currentTimeMillis() - t0);
+            long ms = System.currentTimeMillis() - t0;
+            log.info("[tool] {} caller={} args={} -> EXECUTED ({}ms)",
+                    tool, caller, LogPreview.of(safeArgs.toString()), ms);
+            recorder.record(tool, safeArgs, caller, "EXECUTED", null, sessionId, ms);
             return ToolResult.ok(data);
 
         } catch (BlockedException e) {
-            recorder.record(tool, safeArgs, caller, "BLOCKED", e.getMessage(), sessionId,
-                    System.currentTimeMillis() - t0);
+            long ms = System.currentTimeMillis() - t0;
+            log.info("[tool] {} caller={} args={} -> BLOCKED {} ({}ms)",
+                    tool, caller, LogPreview.of(safeArgs.toString()), e.code.name(), ms);
+            recorder.record(tool, safeArgs, caller, "BLOCKED", e.getMessage(), sessionId, ms);
             return ToolResult.blocked(e.code.name(), e.getMessage());
         } catch (Exception e) {
             boolean invalidArgs = e instanceof ApiException api && api.code == ErrorCode.INVALID_REQUEST;
@@ -63,9 +73,11 @@ public class ToolGate {
                     ? api.getMessage()
                     : "도구 실행에 실패했습니다";
             String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            long ms = System.currentTimeMillis() - t0;
+            log.info("[tool] {} caller={} args={} -> FAILED {} ({}ms)",
+                    tool, caller, LogPreview.of(safeArgs.toString()), reason, ms);
             // 인자 형식 오류도 정책 차단이 아니므로 outcome 은 FAILED 다 — 나뉘는 건 LLM 이 읽는 code 뿐이다.
-            recorder.record(tool, safeArgs, caller, "FAILED", reason, sessionId,
-                    System.currentTimeMillis() - t0);
+            recorder.record(tool, safeArgs, caller, "FAILED", reason, sessionId, ms);
             return invalidArgs ? ToolResult.invalid(message) : ToolResult.failed(message);
         }
     }

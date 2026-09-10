@@ -209,12 +209,14 @@ class BaseHubTest {
     @Test
     @DisplayName("긴 페이로드는 300자에서 잘리고 원본 길이가 붙는다")
     void longPayloadIsTruncated() {
-        String big = "x".repeat(1000);
-        String preview = BaseHub.preview(big);
+        hub.afterConnectionEstablished(session);
 
-        assertThat(preview).startsWith("x".repeat(300)).endsWith("…(1000자)");
-        assertThat(BaseHub.preview("short")).isEqualTo("short");
-        assertThat(BaseHub.preview(null)).isEqualTo("{}");
+        hub.send("notice", Map.of("text", "x".repeat(1000)));
+
+        assertThat(messagesAt(Level.INFO))
+                .anySatisfy(m -> assertThat(m)
+                        .startsWith("[ws/test] -> notice {\"text\":\"" + "x".repeat(200))
+                        .endsWith("…(1011자)"));
     }
 
     @Test

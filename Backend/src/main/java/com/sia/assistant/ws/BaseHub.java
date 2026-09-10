@@ -1,5 +1,6 @@
 package com.sia.assistant.ws;
 
+import com.sia.assistant.common.LogPreview;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -23,9 +24,6 @@ import tools.jackson.databind.ObjectMapper;
 public abstract class BaseHub extends TextWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(BaseHub.class);
-
-    /** 콘솔에 남기는 페이로드 미리보기 상한(문자). 넘치면 잘라 붙이고 원본 길이를 표기한다. */
-    private static final int PREVIEW_MAX = 300;
 
     /**
      * 초당 수십 번 오가거나(gaze_cursor·ping/pong) 수백 KB 짜리(reg_frame)라 INFO 로 찍으면
@@ -152,19 +150,8 @@ public abstract class BaseHub extends TextWebSocketHandler {
         }
     }
 
-    /** 로그용 페이로드 절단 — DB 컬럼이 아니라 사람이 읽는 줄이므로 유효 JSON 을 유지할 필요는 없다. */
-    static String preview(String json) {
-        if (json == null) {
-            return "{}";
-        }
-        if (json.length() <= PREVIEW_MAX) {
-            return json;
-        }
-        int cut = PREVIEW_MAX;
-        if (Character.isHighSurrogate(json.charAt(cut - 1))) {
-            cut--;
-        }
-        return json.substring(0, cut) + "…(" + json.length() + "자)";
+    private static String preview(String json) {
+        return LogPreview.of(json);
     }
 
     public boolean connected() {
