@@ -18,6 +18,13 @@
   --setup-layer: 1100;
   --setup-audio-height: 90px;
   --setup-video-height: 180px;
+  --setup-voice-card-width: 920px;
+  --setup-voice-card-height: 650px;
+  --setup-voice-padding: 28px;
+  --setup-voice-heading-size: 30px;
+  --setup-sentence-size: 20px;
+  --setup-voice-button-width: 160px;
+  --setup-radius: 6px;
   --color-bg: #ffffff;
   --color-text: #1a1a1a;
   --color-border: #d0d0d0;
