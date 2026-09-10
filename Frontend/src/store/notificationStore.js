@@ -1,143 +1,191 @@
 import { create } from "zustand";
 import { on } from "../ws/eventBus";
 
-// 상단 알림(TopNotification) · 우측하단 부팅 토스트(BootToast) 상태 스토어 (agents.md 5장)
-// 이벤트-화면 매핑은 대화로 확정한 표를 그대로 따른다.
-// WS로 받은 상태는 반드시 이 스토어의 액션을 통해서만 반영한다.
-
+// 상단 알림 상태의 단일 진입점. WS 이벤트는 이 파일에서 화면용 상태로만 변환한다.
 const AUTO_HIDE_MS = 3000;
+const DETAIL_HIDE_MS = 5000;
+const SUMMARY_HIDE_MS = 10000;
+const CONFIRM_TIMEOUT_SEC = 10;
+const CHOICE_TIMEOUT_SEC = 12;
 let hideTimer = null;
-let unknownCommandCount = 0; // 연속 명령 실패 카운트 (agents.md 4.3 표 참고, 서버 값 아님)
 
-function scheduleAutoHide(set) {
+function sessionFallback(get) {
+  const deadlineMs = get().sessionDeadlineMs;
+  return deadlineMs && deadlineMs > Date.now()
+    ? { kind: "session_countdown", deadlineMs }
+    : null;
+}
+
+function clearHideTimer() {
   clearTimeout(hideTimer);
-  hideTimer = setTimeout(() => set({ topNotification: null }), AUTO_HIDE_MS);
+  hideTimer = null;
+}
+
+function scheduleAutoHide(set, get, delay = AUTO_HIDE_MS) {
+  clearHideTimer();
+  hideTimer = setTimeout(() => {
+    set({ topNotification: sessionFallback(get) });
+    hideTimer = null;
+  }, delay);
+}
+
+function showTimed(set, get, notification, delay) {
+  clearHideTimer();
+  set({ topNotification: notification });
+  scheduleAutoHide(set, get, delay);
 }
 
 export const useNotificationStore = create((set, get) => ({
-  topNotification: null, // {kind, ...} 또는 null
+  topNotification: null,
+  sessionDeadlineMs: null,
   bootToastShown: false,
 
   showListening: () => {
-    clearTimeout(hideTimer);
+    clearHideTimer();
     set({ topNotification: { kind: "listening" } });
   },
 
-  // session_state ACTIVE 진입 시 명령 처리 대기 구간을 로컬로 표시
-  // (서버 이벤트가 아니라 FE 추정 상태이므로, 다음 결과 이벤트가 오면 바로 교체된다)
-  showExecuting: () => {
-    clearTimeout(hideTimer);
-    set((prev) =>
-      prev.topNotification?.kind === "executing" ? prev : { topNotification: { kind: "executing" } }
-    );
-  },
-
   showNotice: (data) => {
+    const message = typeof data.message === "string" ? data.message : "";
+
     if (data.kind === "confirm") {
-      clearTimeout(hideTimer);
-      unknownCommandCount = 0;
+      clearHideTimer();
       set({
         topNotification: {
           kind: "confirm",
-          message: data.message,
-          timeoutSec: data.timeoutSec ?? 10, // 확인 Timeout 10초 확정 (FR/NFR 문서)
+          message,
+          // 삭제 확인 표시는 사용자 확정 기준 10초로 고정
+          timeoutSec: CONFIRM_TIMEOUT_SEC,
+        },
+      });
+      return;
+    }
+
+    if (data.kind === "choices") {
+      clearHideTimer();
+      set({
+        topNotification: {
+          kind: "choices",
+          message,
+          choiceId: data.choiceId,
+          choices: Array.isArray(data.choices) ? data.choices : [],
+          timeoutSec: data.timeoutSec ?? CHOICE_TIMEOUT_SEC,
         },
       });
       return;
     }
 
     if (data.kind === "unknown_command") {
-      unknownCommandCount += 1;
-      clearTimeout(hideTimer);
-      set({
-        topNotification: {
-          kind: "unknown_command",
-          transcript: data.transcript,
-          message:
-            unknownCommandCount >= 3
-              ? // TODO(BE): 3회 연속 실패 시 안내 문구가 명세에 확정돼 있지 않음. 임시 문구.
-                "카메라 · 마이크 설정을 다시 확인해보시겠어요?"
-              : data.message,
-        },
-      });
+      // TODO(BE): 3회 연속 실패 판정과 재등록 권유 문구를 AI가 보내는 계약 필요
+      showTimed(set, get, {
+        kind: "unknown_command",
+        message,
+        transcript: data.transcript,
+      }, DETAIL_HIDE_MS);
       return;
     }
 
-    // 그 외 일반 notice (완료 안내, 요약 등)
-    unknownCommandCount = 0;
-    clearTimeout(hideTimer);
-    // TODO(BE): 요약 결과가 message 외 추가 필드(예: summary 배열)로 오는지 미확정.
-    // 지금은 message 문자열만 그대로 표시한다.
-    set({ topNotification: { kind: "notice", message: data.message } });
-    scheduleAutoHide(set);
+    // TODO(BE): progress/success/summary 표시는 현재 notice.kind 계약에 없어 AI·BE 계약 확정 필요
+    if (data.kind === "progress") {
+      clearHideTimer();
+      set({ topNotification: { kind: "progress", message } });
+      return;
+    }
+
+    // 새로 전달된 요약 팝업 사용 확정
+    if (data.kind === "summary" || Array.isArray(data.items)) {
+      showTimed(set, get, {
+        kind: "summary",
+        message,
+        items: Array.isArray(data.items)
+          ? data.items.filter((item) => typeof item === "string")
+          : [],
+      }, SUMMARY_HIDE_MS);
+      return;
+    }
+
+    showTimed(set, get, {
+      kind: data.kind === "success" ? "success" : "notice",
+      message,
+    }, AUTO_HIDE_MS);
   },
 
   showToolResult: (data) => {
-    if (data.tool === "files.delete" && data.outcome === "EXECUTED") {
-      unknownCommandCount = 0;
-      clearTimeout(hideTimer);
-      set({
-        topNotification: {
-          kind: "file_deleted",
-          message: `'${data.path ?? ""}' 파일을 삭제하였습니다.`,
-        },
-      });
-      scheduleAutoHide(set);
-    }
-    // 그 외 tool_result는 지금 단계에서 별도 팝업을 띄우지 않는다 (필요 시 notice로 옴)
+    // 제스처는 여러 스텝의 tool_result 뒤에 사용자 표시용 gesture_result가 따로 온다.
+    if (data.caller === "GESTURE" || data.outcome === "EXECUTED" || !data.message) return;
+    showTimed(set, get, { kind: "error", message: data.message }, DETAIL_HIDE_MS);
+  },
+
+  showGestureResult: (data) => {
+    if (!data.message) return;
+    showTimed(set, get, {
+      kind: data.ok ? "success" : "error",
+      message: data.message,
+    }, AUTO_HIDE_MS);
+  },
+
+  showCaptureSaved: (data) => {
+    clearHideTimer();
+    set({
+      topNotification: {
+        kind: "capture_saved",
+        path: data.path,
+        url: data.url,
+        width: data.width,
+        height: data.height,
+      },
+    });
+    scheduleAutoHide(set, get, DETAIL_HIDE_MS);
   },
 
   showVoiceRejected: (data) => {
-    unknownCommandCount = 0;
-    clearTimeout(hideTimer);
-    set({ topNotification: { kind: "voice_rejected", message: data.message } });
-    scheduleAutoHide(set);
+    if (!data.message) return;
+    showTimed(set, get, { kind: "voice_rejected", message: data.message }, AUTO_HIDE_MS);
   },
 
-  // ACTIVE 세션 남은 시간 표시 (FR-022: BE가 준 deadlineMs 기준으로 FE가 계산)
-  updateSessionCountdown: (data) => {
-    if (!data.deadlineMs) return;
-    set((prev) =>
-      !prev.topNotification || prev.topNotification.kind === "session_countdown"
-        ? { topNotification: { kind: "session_countdown", deadlineMs: data.deadlineMs } }
-        : prev
-    );
+  showError: (data) => {
+    if (!data.message) return;
+    showTimed(set, get, { kind: "error", message: data.message, of: data.of }, DETAIL_HIDE_MS);
   },
 
-  clearSessionCountdown: () => {
-    set((prev) =>
-      prev.topNotification?.kind === "session_countdown" ? { topNotification: null } : {}
-    );
+  updateSession: (data) => {
+    if (data.state === "ACTIVE" && data.deadlineMs) {
+      set((state) => ({
+        sessionDeadlineMs: data.deadlineMs,
+        topNotification:
+          !state.topNotification || state.topNotification.kind === "session_countdown"
+            ? { kind: "session_countdown", deadlineMs: data.deadlineMs }
+            : state.topNotification,
+      }));
+      return;
+    }
+
+    if (data.state === "PASSIVE") {
+      clearHideTimer();
+      set({ sessionDeadlineMs: null, topNotification: null });
+    }
+  },
+
+  dismissNotification: () => {
+    clearHideTimer();
+    set({ topNotification: sessionFallback(get) });
   },
 
   triggerBootToast: () => {
-    if (get().bootToastShown) return; // 최초 1회만
+    if (get().bootToastShown) return;
     set({ bootToastShown: true });
   },
 }));
 
-// --- WS 구독 등록 ---
-
 on("listening", () => useNotificationStore.getState().showListening());
-
 on("notice", (data) => useNotificationStore.getState().showNotice(data));
-
 on("tool_result", (data) => useNotificationStore.getState().showToolResult(data));
-
+on("gesture_result", (data) => useNotificationStore.getState().showGestureResult(data));
+on("capture_saved", (data) => useNotificationStore.getState().showCaptureSaved(data));
 on("voice_rejected", (data) => useNotificationStore.getState().showVoiceRejected(data));
-
+on("error", (data) => useNotificationStore.getState().showError(data));
 on("session_state", (data) => {
   const store = useNotificationStore.getState();
-  if (data.state === "ACTIVE") {
-    store.showExecuting();
-    store.updateSessionCountdown(data);
-    return;
-  }
-  if (data.state === "PASSIVE") {
-    store.clearSessionCountdown();
-    if (!data.reason) {
-      // reason 없는 PASSIVE = AI 부팅 완료 통지, 앱 켤 때 한 번만 온다
-      store.triggerBootToast();
-    }
-  }
+  store.updateSession(data);
+  if (data.state === "PASSIVE" && !data.reason) store.triggerBootToast();
 });

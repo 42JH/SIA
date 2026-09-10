@@ -1,0 +1,13 @@
+{
+  "default": {
+    "Victory": {"run": "notepad", "label": "메모장"},
+    "Thumb_Up": {"run": "calc", "label": "계산기"},
+    "ILoveYou": {"run": "chrome", "label": "크롬"}
+  },
+  "youtube": {
+    "Closed_Fist": {"key": "k", "label": "재생/일시정지"},
+    "Victory": {"key": "l", "label": "10초 앞으로"},
+    "Pointing_Up": {"key": "j", "label": "10초 뒤로"},
+    "Thumb_Up": {"key": "m", "label": "음소거"}
+  }
+}
