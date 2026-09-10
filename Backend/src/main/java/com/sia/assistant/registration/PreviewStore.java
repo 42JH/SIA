@@ -17,7 +17,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * previews/ 디렉터리의 유일한 관리자 — 등록 미리보기 webm 의 수명을 여기 모은다.
+ * previews/ 디렉터리의 유일한 관리자 — 등록 미리보기(동적 webm · 정적 jpg)의 수명을 여기 모은다.
  *
  * <p>미리보기는 reg_recorded 로 회차 3개를 보여 주고 사용자가 하나를 고를 때까지만 쓰는 임시 파일이다.
  * 고른 회차는 gestures/ 로 승격되므로(RegistrationOrchestrator.promoteVideo) 그 뒤로는 3개 전부 쓸모가 없다.
@@ -40,7 +40,7 @@ public class PreviewStore {
         this.dataDirs = dataDirs;
     }
 
-    /** 등록 한 건({tempId}-{take}.webm 전부) 폐기 — 승격 완료·거절·등록 교체 시. */
+    /** 등록 한 건({tempId}-{take}.{webm|jpg} 전부) 폐기 — 승격 완료·거절·등록 교체 시. */
     public void discard(String tempId) {
         if (tempId == null || tempId.isBlank()) {
             return;
@@ -49,7 +49,7 @@ public class PreviewStore {
         String prefix = tempId + "-";
         int deleted = deleteMatching(p -> {
             String name = p.getFileName().toString();
-            return name.startsWith(prefix) && name.endsWith(".webm");
+            return name.startsWith(prefix) && RegistrationMedia.isMediaFile(name);
         });
         if (deleted > 0) {
             log.debug("등록 {} 미리보기 {}개 정리", tempId, deleted);

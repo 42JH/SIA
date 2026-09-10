@@ -8,6 +8,7 @@ import com.sia.assistant.settings.GestureService;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.FeHub;
 import jakarta.annotation.PreDestroy;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -31,8 +32,13 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 커스텀 제스처 등록 오케스트레이터 — 동시 등록은 1건 (와이어프레임 제스처 촬영 흐름).
- * ★ 촬영은 "3초 카운트다운 후 2초간 3회 반복" — 회차(take)별로 프레임을 버퍼링해
- *   회차별 미리보기 webm 을 만들고, 사용자가 고른 회차가 제스처 영상·템플릿이 된다.
+ * ★ 촬영은 3회 반복이다 — 동적은 "3초 카운트다운 후 2초간", 정적은 카운트다운 후 한 장.
+ *   회차(take)별로 프레임을 버퍼링해 회차별 미리보기를 만들고, 사용자가 고른 회차가
+ *   제스처 촬영본·템플릿이 된다.
+ * ★ 등록 창이 정적/동적으로 갈린다 — motion 은 사용자가 촬영 전에 고르는 입력이고
+ *   reg_mode_start 로 AI 에 넘어간다(AI 가 단일 프레임 템플릿을 만들지 시퀀스 템플릿을
+ *   만들지 촬영 전에 알아야 한다). 정적은 구간이 없어 takeDurationSec 를 보내지 않는다.
+ *   반대로 hands(한손/양손)는 랜드마크를 본 AI 만 아는 관측값이라 reg_captured 로 올라온다.
  * ★ 등록 영상은 매크로 지정 시 previews/ 에서 gestures/ 로 옮겨 영구 보관한다 —
  *   목록·상세 화면이 다시 보여 준다 (회의 확정: "등록 때 사용한 영상 저장, 조회 시 FE 전송").
  * ★2026-09-02 흐름도 03 정합: 템플릿 npz 는 제스처별이다. AI 가 reg_captured 전에
@@ -78,10 +84,13 @@ public class RegistrationOrchestrator {
         boolean recordingNotified;
         byte[] npz;                                           // AI 가 PUT 한 템플릿 임시본 — assign 에서 행이 된다
         String npzSha256;
+        Integer hands;                                        // AI reg_captured 의 관측값 (1 | 2). 없으면 NULL 로 확정
+        final String motion;                                  // FE 가 고른 등록 창 (STATIC | DYNAMIC)
 
-        Reg(String tempId, Long replaceGestureId) {
+        Reg(String tempId, Long replaceGestureId, String motion) {
             this.tempId = tempId;
             this.replaceGestureId = replaceGestureId;
+            this.motion = motion;
         }
     }
 
@@ -97,23 +106,32 @@ public class RegistrationOrchestrator {
         this.om = om;
     }
 
-    /** 등록 시작 — tempId 발급, AI 에 등록 모드(촬영 파라미터 포함) 가동 지시. */
-    public String start(Long replaceGestureIdOrNull) {
+    /**
+     * 등록 시작 — tempId 발급, AI 에 등록 모드(촬영 파라미터 포함) 가동 지시.
+     * motion 은 FE 가 고른 등록 창이다. 없으면 DYNAMIC 으로 본다 — 정적 창이 생기기 전의 동작이다.
+     */
+    public String start(Long replaceGestureIdOrNull, String motionOrNull) {
+        String motion = motionOrNull == null || motionOrNull.isBlank()
+                ? "DYNAMIC" : GestureService.requireMotion(motionOrNull);
         String replaceName = null;
         if (replaceGestureIdOrNull != null) {
             replaceName = (String) gestureService.getOne(replaceGestureIdOrNull).get("name");
         }
         String tempId = UUID.randomUUID().toString().substring(0, 8);
-        Reg old = current.getAndSet(new Reg(tempId, replaceGestureIdOrNull));
+        Reg old = current.getAndSet(new Reg(tempId, replaceGestureIdOrNull, motion));
         if (old != null) {
             log.warn("진행 중이던 등록 {} 을 버리고 새 등록 {} 을 시작합니다", old.tempId, tempId);
             previewStore.discard(old.tempId); // 버린 등록의 미리보기는 아무도 고를 수 없다
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tempId", tempId);
+        body.put("motion", motion);
         body.put("takes", TAKES);
         body.put("countdownSec", COUNTDOWN_SEC);
-        body.put("takeDurationSec", TAKE_DURATION_SEC);
+        if (!RegistrationMedia.isStatic(motion)) {
+            // 정적 회차는 구간이 아니라 한 장이다 — 지속 시간이라는 개념이 없어 아예 보내지 않는다.
+            body.put("takeDurationSec", TAKE_DURATION_SEC);
+        }
         if (replaceName != null) {
             body.put("replaceGestureName", replaceName);
         }
@@ -197,10 +215,19 @@ public class RegistrationOrchestrator {
             reg.totalBytes = 0;
             reg.totalFrames = 0;
         }
-        encodeExecutor.submit(() -> encodeAndNotify(tempId, snapshot));
+        String motion = reg.motion;
+        encodeExecutor.submit(() -> encodeAndNotify(tempId, motion, snapshot));
     }
 
-    private void encodeAndNotify(String tempId, Map<Integer, List<WebmEncoder.Frame>> takes) {
+    /**
+     * 회차별 미리보기 만들기. 동적은 프레임 시퀀스를 webm 으로 인코딩하고, 정적은 마지막 프레임의
+     * JPEG 를 그대로 쓴다 — reg_frame 이 처음부터 JPEG 를 보내므로 ffmpeg 를 태울 이유가 없다.
+     * 정적에서 마지막 장을 쓰는 이유: 회차당 한 장이 계약이지만 여러 장이 와도 자세가 가장 정착된 장이다.
+     * webmUrl 이라는 필드 이름은 FE 가 이미 소비 중이라 유지한다 — 정적이면 .jpg 를 가리킨다.
+     */
+    private void encodeAndNotify(String tempId, String motion,
+                                 Map<Integer, List<WebmEncoder.Frame>> takes) {
+        boolean isStatic = RegistrationMedia.isStatic(motion);
         Path previews = dataDirs.previews();
         List<Map<String, Object>> results = new ArrayList<>();
         for (Map.Entry<Integer, List<WebmEncoder.Frame>> entry : takes.entrySet()) {
@@ -208,10 +235,22 @@ public class RegistrationOrchestrator {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("take", entry.getKey());
             try {
-                encoder.encode(baseName, entry.getValue(), previews);
-                item.put("webmUrl", "/api/previews/" + baseName + ".webm");
+                String ext;
+                if (isStatic) {
+                    List<WebmEncoder.Frame> frames = entry.getValue();
+                    if (frames.isEmpty()) {
+                        throw new IOException("촬영된 사진이 없습니다");
+                    }
+                    ext = RegistrationMedia.JPG;
+                    Files.write(previews.resolve(baseName + ext),
+                            frames.get(frames.size() - 1).jpeg());
+                } else {
+                    ext = RegistrationMedia.WEBM;
+                    encoder.encode(baseName, entry.getValue(), previews);
+                }
+                item.put("webmUrl", "/api/previews/" + baseName + ext);
             } catch (Exception e) {
-                log.warn("등록 {} 회차 {} 미리보기 인코딩 실패", tempId, entry.getKey(), e);
+                log.warn("등록 {} 회차 {} 미리보기 생성 실패", tempId, entry.getKey(), e);
                 item.put("webmUrl", null);
             }
             results.add(item);
@@ -220,7 +259,7 @@ public class RegistrationOrchestrator {
         body.put("tempId", tempId);
         body.put("takes", results);
         if (results.isEmpty() || results.stream().allMatch(r -> r.get("webmUrl") == null)) {
-            body.put("reason", "영상 인코딩에 실패했습니다");
+            body.put("reason", isStatic ? "사진을 저장하지 못했습니다" : "영상 인코딩에 실패했습니다");
         }
         feHub.send("reg_recorded", body);
     }
@@ -264,13 +303,28 @@ public class RegistrationOrchestrator {
         }
     }
 
-    /** AI reg_captured — 템플릿 후보 확정(검증 통과). npz 는 이 앞에 PUT 되어 있어야 한다. */
-    public void onCaptured(String tempId) {
+    /**
+     * AI reg_captured {tempId, hands} — 템플릿 후보 확정(검증 통과). npz 는 이 앞에 PUT 되어 있어야 한다.
+     * hands 는 랜드마크를 본 AI 만 아는 관측값이다. 안 오면 NULL 로 두고 넘어간다 —
+     * 사진/영상 보관과 매크로 저장은 motion 만으로 성립하므로 등록 자체를 막지는 않는다.
+     */
+    public void onCaptured(String tempId, JsonNode d) {
         if (mismatch(tempId, "reg_captured")) {
             return;
         }
         Reg reg = current.get();
+        Integer hands = null;
+        if (d != null && d.hasNonNull("hands")) {
+            try {
+                hands = GestureService.requireHands(d.path("hands").asInt());
+            } catch (ApiException e) {
+                log.warn("등록 {} — reg_captured 의 hands 값이 1·2 가 아닙니다: {}", tempId, d.path("hands"));
+            }
+        } else {
+            log.warn("등록 {} — reg_captured 에 hands 가 없습니다. 한손/양손 구분 없이 저장합니다", tempId);
+        }
         synchronized (reg) {
+            reg.hands = hands;
             if (reg.npz == null) {
                 log.warn("등록 {} — reg_captured 가 왔지만 템플릿 npz 가 아직 없습니다. macro_assign 전에 PUT 되어야 합니다",
                         tempId);
@@ -315,9 +369,11 @@ public class RegistrationOrchestrator {
         }
         byte[] npz;
         String npzSha256;
+        Integer hands;
         synchronized (reg) {
             npz = reg.npz;
             npzSha256 = reg.npzSha256;
+            hands = reg.hands;
         }
         if (npz == null) {
             throw new ApiException(ErrorCode.INVALID_REQUEST,
@@ -329,14 +385,14 @@ public class RegistrationOrchestrator {
         if (replaceId != null) {
             gestureService.updateCustom(replaceId, name, label, description, repeatable,
                     steps.isEmpty() ? null : steps);
-            gestureService.updateNpz(replaceId, npz, npzSha256);
+            gestureService.updateNpz(replaceId, npz, npzSha256, hands, reg.motion);
             gestureId = replaceId;
         } else {
             gestureId = gestureService.saveCustom(name, label, context, description, repeatable, steps,
-                    npz, npzSha256);
+                    npz, npzSha256, hands, reg.motion);
         }
 
-        String videoUrl = promoteVideo(tempId, take, gestureId);
+        String videoUrl = promoteVideo(tempId, take, gestureId, reg.motion);
 
         Map<String, Object> registered = new LinkedHashMap<>();
         registered.put("tempId", tempId);
@@ -357,27 +413,29 @@ public class RegistrationOrchestrator {
     }
 
     /**
-     * previews/{tempId}-{take}.webm → gestures/g{gestureId}.webm 승격. 실패해도 저장 자체는 성립한다.
+     * previews/{tempId}-{take}.{ext} → gestures/g{gestureId}.{ext} 승격 (동적 webm · 정적 jpg).
+     * 실패해도 저장 자체는 성립한다.
      * 승격이 끝나면 고른 회차를 포함해 그 등록의 미리보기를 모두 버린다 — 승격본이 gestures/ 에 있다.
      * 실패했을 때는 남겨 둔다(원본이 있어야 재촬영 없이 다시 손쓸 수 있다).
      */
-    private String promoteVideo(String tempId, int take, long gestureId) {
+    private String promoteVideo(String tempId, int take, long gestureId, String motion) {
         if (tempId.isBlank()) {
             return null;
         }
-        Path source = dataDirs.previews().resolve(tempId + "-" + take + ".webm");
+        String ext = RegistrationMedia.extensionFor(motion);
+        Path source = dataDirs.previews().resolve(tempId + "-" + take + ext);
         if (!Files.isRegularFile(source)) {
-            log.warn("등록 {} 회차 {} 미리보기가 없어 제스처 영상을 남기지 못했습니다", tempId, take);
+            log.warn("등록 {} 회차 {} 미리보기가 없어 제스처 촬영본을 남기지 못했습니다", tempId, take);
             return null;
         }
-        String fileName = "g" + gestureId + ".webm";
+        String fileName = "g" + gestureId + ext;
         try {
             Files.copy(source, dataDirs.gestures().resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
             gestureService.setVideoPath(gestureId, fileName);
             previewStore.discard(tempId);
             return "/api/gestures/" + gestureId + "/video";
         } catch (Exception e) {
-            log.warn("제스처 {} 영상 보관 실패", gestureId, e);
+            log.warn("제스처 {} 촬영본 보관 실패", gestureId, e);
             return null;
         }
     }

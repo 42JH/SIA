@@ -81,7 +81,7 @@ public class AgentWsRoutes {
                     d.path("take").asInt(1), d.path("seq").asLong(), d.path("tsMs").asLong(),
                     d.path("jpegB64").asText());
             case "reg_rejected" -> registration.onRejected(d.path("tempId").asText(), d);
-            case "reg_captured" -> registration.onCaptured(d.path("tempId").asText());
+            case "reg_captured" -> registration.onCaptured(d.path("tempId").asText(), d);
             // ---- 온보딩: 이름 불러보기 · 명령 문장 말하기
             case "wakeword_sample" -> enrollment.onWakewordSample(d);
             case "wakeword_done" -> enrollment.onWakewordDone();

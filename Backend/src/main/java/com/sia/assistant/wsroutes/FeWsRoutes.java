@@ -42,9 +42,10 @@ public class FeWsRoutes {
     public void on(WsEvents.FeMessage msg) {
         JsonNode d = msg.data();
         switch (msg.type()) {
-            // ---- 커스텀 제스처 (3회 촬영 · replaceGestureId 면 동작 재촬영)
+            // ---- 커스텀 제스처 (3회 촬영 · motion 은 정적/동적 등록 창 · replaceGestureId 면 동작 재촬영)
             case "reg_start" -> registration.start(
-                    d.hasNonNull("replaceGestureId") ? d.path("replaceGestureId").asLong() : null);
+                    d.hasNonNull("replaceGestureId") ? d.path("replaceGestureId").asLong() : null,
+                    d.hasNonNull("motion") ? d.path("motion").asText() : null);
             case "reg_stop" -> registration.stop(d.path("tempId").asText());
             case "macro_assign" -> registration.assign(d);
             // ---- 온보딩: 이름 불러보기 · 명령 문장 말하기

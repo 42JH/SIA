@@ -5,15 +5,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 등록 미리보기 webm 정적 서빙.
- * ★ 사용자 카메라 영상 — 루프백 FE 전용이며 PC 밖으로 반출하지 않는다.
+ * 등록 미리보기 정적 서빙 — 동적 회차는 webm, 정적 회차는 jpg 다.
+ * ★ 사용자 카메라 영상·사진 — 루프백 FE 전용이며 PC 밖으로 반출하지 않는다.
  */
 @RestController
 public class PreviewController {
@@ -24,7 +23,7 @@ public class PreviewController {
         this.dataDirs = dataDirs;
     }
 
-    @GetMapping("/api/previews/{file:[a-zA-Z0-9-]+\\.webm}")
+    @GetMapping("/api/previews/{file:[a-zA-Z0-9-]+\\.(?:webm|jpg)}")
     public ResponseEntity<Resource> preview(@PathVariable("file") String file) {
         Path base = dataDirs.previews().toAbsolutePath().normalize();
         Path target = base.resolve(file).normalize();
@@ -33,7 +32,7 @@ public class PreviewController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("video/webm"))
+                .contentType(RegistrationMedia.contentTypeOf(file))
                 .body(new FileSystemResource(target));
     }
 }

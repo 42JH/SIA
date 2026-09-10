@@ -257,11 +257,6 @@ public class GestureService {
         return rows.get(0);
     }
 
-    /** 형태를 모르는 호출자용 — 등록 경로가 hands · motion 을 싣기 전까지의 경유지. */
-    public void updateNpz(long id, byte[] npz, String npzSha256) {
-        updateNpz(id, npz, npzSha256, null, null);
-    }
-
     /**
      * 동작 재촬영(reg_start {replaceGestureId})의 템플릿 교체. 기본 제공 제스처에는 쓸 수 없다.
      * 형태(hands · motion)도 함께 바꾼다 — 한손 정적으로 등록한 제스처를 양손 동적으로 다시 찍을 수 있다.
@@ -310,11 +305,6 @@ public class GestureService {
      * @return 저장된 gesture id
      */
     @Transactional
-    public long saveCustom(String name, String label, String context, String description,
-                           boolean repeatable, List<Step> steps, byte[] npz, String npzSha256) {
-        return saveCustom(name, label, context, description, repeatable, steps, npz, npzSha256, null, null);
-    }
-
     public long saveCustom(String name, String label, String context, String description,
                            boolean repeatable, List<Step> steps, byte[] npz, String npzSha256,
                            Integer hands, String motion) {

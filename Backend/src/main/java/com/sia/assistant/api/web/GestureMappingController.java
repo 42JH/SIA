@@ -4,6 +4,7 @@ import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.JsonBody;
 import com.sia.assistant.config.DataDirs;
+import com.sia.assistant.registration.RegistrationMedia;
 import com.sia.assistant.settings.GestureService;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,7 +73,11 @@ public class GestureMappingController {
         return gestureService.getOne(id);
     }
 
-    /** 등록 때 촬영한 webm — 목록·상세의 미리보기. ★ 사용자 카메라 영상, PC 밖 반출 금지. */
+    /**
+     * 등록 때 촬영한 영상(동적, webm) 또는 사진(정적, jpg) — 목록·상세의 미리보기.
+     * 경로는 motion 과 무관하게 하나다. Content-Type 은 보관본의 확장자가 정한다.
+     * ★ 사용자 카메라 영상·사진, PC 밖 반출 금지.
+     */
     @GetMapping("/{id}/video")
     public ResponseEntity<Resource> video(@PathVariable long id) {
         String fileName = gestureService.videoPath(id);
@@ -85,7 +90,7 @@ public class GestureMappingController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("video/webm"))
+                .contentType(RegistrationMedia.contentTypeOf(fileName))
                 .body(new FileSystemResource(target));
     }
 
