@@ -4,7 +4,7 @@ import numpy as np
 
 from gaze import FEATURE_DIM, Calibrator, ClickRecal, GazeBuffer
 from hands import GestureStable, HoldToggle, OneEuro, PinchFSM
-from gesture_be import registration_blocks_gesture_execution
+from gesture_be import GestureRegistration, registration_blocks_gesture_execution
 
 
 def test_registration_execution_gate():
@@ -16,6 +16,30 @@ def test_registration_execution_gate():
     assert not registration_blocks_gesture_execution(None)
     assert not registration_blocks_gesture_execution(Registration(False))
     assert registration_blocks_gesture_execution(Registration(True))
+
+
+def test_registration_timing_contract():
+    """BE 촬영 계획을 쓰며, 조기 reg_finish를 품질 실패로 오인하지 않는다."""
+    class Link:
+        def __init__(self):
+            self.sent = []
+
+        def send_event(self, event_type, data):
+            self.sent.append((event_type, data))
+
+    link = Link()
+    reg = GestureRegistration(link, template_cache=None, custom_store=None)
+    reg.start({"tempId": "t1", "takes": 12, "countdownSec": 15.0,
+               "takeDurationSec": 12.5}, now=10.0)
+    assert (reg.takes, reg.countdown_s, reg.take_s) == (12, 15.0, 12.5)
+    assert reg.tick(None, None, now=24.99)["phase"] == "COUNTDOWN"
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    assert reg.tick(frame, None, now=25.0)["phase"] == "RECORDING"
+
+    reg.finish()  # RECORDING 중 reg_finish → 품질 검사 대신 명시적 중단
+    assert not reg.active
+    assert link.sent[-1][0] == "reg_rejected"
+    assert "촬영이 완료되기 전" in link.sent[-1][1]["reason"]
 
 
 def test_calibrator():
@@ -696,6 +720,7 @@ if __name__ == "__main__":
     test_gaze_buffer_stale()
     test_pinch_fsm()
     test_registration_execution_gate()
+    test_registration_timing_contract()
     test_hold_toggle()
     test_gesture_stable()
     test_click_recal()
@@ -714,4 +739,4 @@ if __name__ == "__main__":
     test_command_enroll()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 23/23 통과")
+    print("OK - 24/24 통과")

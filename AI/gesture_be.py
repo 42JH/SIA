@@ -21,7 +21,7 @@ def registration_blocks_gesture_execution(registration):
     """등록 모드에서는 샘플 수집 외의 제스처 명령을 실행하지 않는다.
 
     카메라와 랜드마크 추론은 계속 필요하지만, 같은 손모양이 정적·동적·양손
-    명령으로 해석되어 로컬 또는 BE에서 실행되면 안 된다(FR-065).
+    명령으로 해석되어 로컬 또는 BE에서 실행되면 안 된다.
     """
     return bool(registration is not None and registration.active)
 
@@ -102,9 +102,9 @@ class GestureTemplateCache:
 class GestureRegistration:
     """BE reg_mode_start에 대응하는 정적 커스텀 제스처 3회 촬영 상태기계."""
 
-    TAKES = 3
-    COUNTDOWN_S = 3.0
-    TAKE_S = 2.0
+    DEFAULT_TAKES = 3
+    DEFAULT_COUNTDOWN_S = 3.0
+    DEFAULT_TAKE_S = 2.0
     FRAME_INTERVAL_S = 0.10
     BUILTIN_OVERLAP = 0.20
     MIN_PALM_SIZE = 0.055
@@ -122,6 +122,10 @@ class GestureRegistration:
         self.temp_id = None
         self.phase = "IDLE"
         self.take = 0
+        # BE reg_mode_start가 주는 촬영 설정을 따른다. 이벤트에 값이 없을 때만 기본값을 쓴다.
+        self.takes = self.DEFAULT_TAKES
+        self.countdown_s = self.DEFAULT_COUNTDOWN_S
+        self.take_s = self.DEFAULT_TAKE_S
         self.phase_at = 0.0
         self.last_frame_at = 0.0
         self.seq = 0
@@ -134,18 +138,40 @@ class GestureRegistration:
     def active(self):
         return self.temp_id is not None
 
+    @staticmethod
+    def _positive_number(data, key, default, integer=False):
+        """BE 촬영 설정은 그대로 쓰고, 누락·형식 오류·0 이하일 때만 기본값을 쓴다."""
+        try:
+            value = int(data.get(key, default)) if integer else float(data.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        if value <= 0:
+            return default
+        return value
+
     def start(self, data, now=None):
         self.reset()
         self.temp_id = str(data.get("tempId", ""))
         if not self.temp_id:
             return
+        # FE 안내, BE 프리뷰 버퍼, AI 샘플 수집 구간을 같은 설정으로 맞춘다.
+        self.takes = self._positive_number(
+            data, "takes", self.DEFAULT_TAKES, integer=True
+        )
+        self.countdown_s = self._positive_number(
+            data, "countdownSec", self.DEFAULT_COUNTDOWN_S
+        )
+        self.take_s = self._positive_number(
+            data, "takeDurationSec", self.DEFAULT_TAKE_S
+        )
         self.take = 1
         self.phase = "COUNTDOWN"
         self.phase_at = time.monotonic() if now is None else now
         self.link.send_event("reg_started", {"tempId": self.temp_id})
         self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                            "phase": "COUNTDOWN"})
-        print(f"[제스처 등록] 시작 tempId={self.temp_id} (3회 촬영)")
+        print(f"[제스처 등록] 시작 tempId={self.temp_id} "
+              f"({self.takes}회, 카운트다운 {self.countdown_s:g}초, 촬영 {self.take_s:g}초)")
 
     def _emit_frame(self, frame, now):
         if now - self.last_frame_at < self.FRAME_INTERVAL_S:
@@ -176,9 +202,9 @@ class GestureRegistration:
         now = time.monotonic() if now is None else now
         elapsed = now - self.phase_at
         if self.phase == "COUNTDOWN":
-            if elapsed < self.COUNTDOWN_S:
+            if elapsed < self.countdown_s:
                 return {"phase": self.phase, "take": self.take,
-                        "remaining": max(0.0, self.COUNTDOWN_S - elapsed)}
+                        "remaining": max(0.0, self.countdown_s - elapsed)}
             self.phase = "RECORDING"
             self.phase_at = now
             self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
@@ -194,8 +220,8 @@ class GestureRegistration:
                 label = hand.get("gesture")
                 if label and label != "None":
                     self.builtin_hits[label] = self.builtin_hits.get(label, 0) + 1
-            if now - self.phase_at >= self.TAKE_S:
-                if self.take < self.TAKES:
+            if now - self.phase_at >= self.take_s:
+                if self.take < self.takes:
                     self.take += 1
                     self.phase = "COUNTDOWN"
                     self.phase_at = now
@@ -211,6 +237,15 @@ class GestureRegistration:
         if not self.active:
             return
         temp_id = self.temp_id
+        if self.phase != "WAIT_FINISH":
+            # BE/FE의 종료 이벤트가 촬영 계획보다 빨리 도착했을 때, 부분 샘플을
+            # '손 랜드마크 부족' 품질 실패로 오인하지 않고 명시적 중단으로 처리한다.
+            reason = (f"촬영이 완료되기 전에 등록이 종료되었습니다 "
+                      f"({self.take}/{self.takes}회, {self.phase}). 다시 촬영하세요.")
+            self.link.send_event("reg_rejected", {"tempId": temp_id, "reason": reason})
+            print(f"[제스처 등록] 중단: {reason}")
+            self.reset()
+            return
         try:
             self._validate_and_upload()
             self.link.send_event("reg_captured", {"tempId": temp_id})
