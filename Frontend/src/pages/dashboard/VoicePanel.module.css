@@ -1,0 +1,58 @@
+.voicePage { display: grid; gap: 16px; }
+.voicePage h2 { margin: 8px 0 0; font-size: 18px; }
+.error { color: var(--color-danger); }
+.empty { padding: 40px; border: 1px dashed var(--color-border); border-radius: var(--dashboard-radius); color: var(--color-muted); text-align: center; }
+.listHeader { display: flex; align-items: center; justify-content: space-between; }
+.voiceList { display: grid; gap: 14px; }
+.voiceCard { position: relative; display: grid; grid-template-columns: 48px minmax(160px, 320px) 1fr auto; align-items: center; gap: 14px; min-height: 94px; padding: 18px 22px; border: 1px solid var(--dashboard-border); border-radius: var(--dashboard-radius); background: var(--color-bg); }
+.activeCard { min-height: 112px; border: 2px solid var(--color-accent); padding-top: 30px; }
+.activeCaption { position: absolute; top: 14px; left: 22px; color: var(--color-muted); }
+.play { display: grid; width: 42px; height: 42px; place-items: center; padding-left: 4px; border: 2px solid var(--color-accent); border-radius: 50%; background: var(--color-bg); cursor: pointer; }
+.play:disabled { cursor: default; opacity: .35; }
+.wave, .liveWave { display: flex; align-items: center; gap: 3px; height: 44px; overflow: hidden; }
+.wave i, .liveWave i { width: 4px; height: 38%; flex: 0 0 4px; border-radius: 3px; background: var(--color-border); }
+.wave i:nth-child(3n), .liveWave i:nth-child(3n) { height: 72%; }
+.wave i:nth-child(5n), .liveWave i:nth-child(5n) { height: 48%; }
+.wave i:nth-child(7n), .liveWave i:nth-child(7n) { height: 88%; }
+.voiceInfo { display: grid; gap: 6px; }
+.voiceInfo strong { display: flex; align-items: center; gap: 5px; }
+.voiceInfo small, .help, .recording > p, .enrollment > p { color: var(--color-muted); }
+.edit { padding: 0; border: 0; background: transparent; cursor: pointer; font-size: 17px; }
+.activeBadge { padding: 9px 18px; border-radius: 999px; background: var(--color-accent); color: var(--color-bg); }
+.primary, .secondary, .deleteActions button, .actionRow button, .modal > button { min-width: 130px; min-height: 46px; padding: 0 24px; border: 1px solid var(--color-accent); border-radius: 6px; background: var(--color-bg); cursor: pointer; }
+.primary { background: var(--color-accent); color: var(--color-bg); }
+.primary:disabled, .secondary:disabled { cursor: default; opacity: .45; }
+.listHeader .primary { margin-left: auto; }
+.help { margin: 8px 0 0; }
+.voicePage > .secondary { width: 190px; }
+.deleteActions { display: flex; align-items: center; gap: 12px; }
+.deleteActions span { color: var(--color-muted); font-size: 13px; }
+.voiceCard > input { width: 19px; height: 19px; accent-color: var(--color-accent); }
+.voiceCard:has(> input) { grid-template-columns: 22px 48px minmax(160px, 320px) 1fr; }
+.backdrop { position: fixed; z-index: 100; inset: var(--dashboard-header) 0 0; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / 32%); }
+.modal { width: min(480px, 100%); padding: 34px 42px; border: 1px solid var(--dashboard-border); border-radius: 12px; background: var(--color-bg); text-align: center; }
+.modal h2 { margin: 12px 0; }
+.modal p { color: var(--color-muted); }
+.modal label { display: grid; gap: 8px; margin-top: 20px; color: var(--color-muted); text-align: left; }
+.modal input { height: 46px; padding: 0 14px; border: 1px solid var(--dashboard-border); border-radius: 6px; color: var(--color-text); }
+.roundIcon { display: grid; width: 70px; height: 70px; place-items: center; margin: 0 auto 18px; border: 2px solid var(--color-accent); border-radius: 50%; font-size: 34px; }
+.actionRow { display: flex; justify-content: center; gap: 14px; margin-top: 28px; }
+.enrollment, .recording { width: min(620px, 100%); margin: 70px auto; text-align: center; }
+.enrollment h2 { margin-top: 16px; font-size: 22px; }
+.device, .quality { display: flex; justify-content: space-between; margin: 26px 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); text-align: left; }
+.device span, .quality span:last-child { color: var(--color-muted); }
+.recordMeta { display: flex; justify-content: space-between; color: var(--color-muted); font-size: 13px; }
+.recording blockquote { margin: 12px 0; padding: 22px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); font-size: 18px; line-height: 1.7; }
+.liveWave { position: relative; justify-content: center; height: 70px; padding: 10px 20px; border: 1px solid var(--dashboard-border); border-radius: 6px; background: var(--color-bg); }
+.liveWave b { width: 8px; height: 8px; flex: 0 0 8px; margin-right: 8px; border-radius: 50%; background: var(--color-accent); }
+.recording progress { width: 100%; height: 8px; margin-top: 14px; accent-color: var(--color-accent); }
+.audio { width: 100%; margin-top: 20px; }
+@media (max-width: 760px) {
+  .voiceCard { grid-template-columns: 42px 1fr; }
+  .wave { display: none; }
+  .voiceInfo { grid-column: 2; }
+  .voiceCard > .secondary, .activeBadge { grid-column: 2; justify-self: start; }
+  .voiceCard:has(> input) { grid-template-columns: 22px 42px 1fr; }
+  .voiceCard:has(> input) .voiceInfo { grid-column: 3; }
+  .actionRow { flex-wrap: wrap; }
+}
