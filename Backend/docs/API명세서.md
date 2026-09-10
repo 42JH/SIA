@@ -2158,7 +2158,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `macro_assign` | 아래 상세 | 매크로 지정 · 저장 |
 | `wakeword_enroll_start` | `{}` | 이름 불러보기 시작 |
 | `voice_reg_start` | `{}` | 보이스 등록 시작. 온보딩에서는 `wakeword_done` 뒤 바로 보낸다 |
-| `voice_sentence_retry` | `{tempId: string}` | 현재 문장 다시 |
+| `voice_sentence_next` | `{tempId: string}` | 판독 결과 확인 후 "다음" — 다음 문장 발급. 통과하지 않은 문장과 마지막 문장에서는 무시 |
+| `voice_sentence_retry` | `{tempId: string}` | 화면에 떠 있는 문장 다시. 다시 읽어 통과할 때까지 `voice_sentence_next` 는 무시된다 |
 | `voice_reg_retry` | `{tempId: string}` | 1번 문장부터 다시 |
 | `voice_accept_anyway` | `{tempId: string}` | 음질 경고를 무시하고 진행 |
 | `voice_commit` | `{tempId: string, name?: string, deviceLabel?: string}` | 보이스 프로필 확정. `name` 생략 시 `내 목소리 N`. `deviceLabel` 은 실제 녹음에 쓴 마이크의 OS 장치 이름 |
@@ -2276,7 +2277,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `wakeword_progress` | `{n: int, total: int}` | 이름 불러보기 진행 (total 5) |
 | `wakeword_done` | `{}` | 호출어 모델 생성 완료 |
 | `voice_sentence` | `{tempId: string, n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수. `tempId` 는 FE→BE 재시도·취소·커밋에 되돌려 보낸다 |
-| `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료 |
+| `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료. 다음 문장은 자동으로 오지 않는다 — 판독 결과를 확인하고 `voice_sentence_next` 를 보내면 발급된다 |
 | `voice_sentence_rejected` | `{tempId: string, n: int, total: int, reason: string, code?: string}` | 문장 n 낭독 실패. `code` 는 사유 분류(`TOO_SHORT` · `INCONSISTENT`), 없거나 모르는 값이면 `reason` 을 쓴다. 순번은 진행하지 않는다 |
 | `voice_quality_warn` | `{tempId: string, reason: string, noise: 낮음 \| 높음 \| null}` | 음질 미달 |
 | `voice_review` | `{tempId: string, sampleUrl: string \| null, durationSec: number \| null, quality: string \| null, noise: string \| null}` | 녹음 확인. `sampleUrl` 은 `/api/voice-reg/{tempId}/sample` |
@@ -2682,7 +2683,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | 채널 | 방향 | `type` | 절 |
 |---|---|---|---|
-| `/ws/fe` | FE → BE | `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
+| `/ws/fe` | FE → BE | `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_next` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
 | `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `voice_sentence` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
 | `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `voice_ready` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
 | `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` | §4.5 |
