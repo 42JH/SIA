@@ -2273,7 +2273,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 | `type` | `data` | 설명 |
 |---|---|---|
-| `wakeword_progress` | `{n: int, total: int}` | 이름 불러보기 진행 (total 10) |
+| `wakeword_progress` | `{n: int, total: int}` | 이름 불러보기 진행 (total 5) |
 | `wakeword_done` | `{}` | 호출어 모델 생성 완료 |
 | `voice_sentence` | `{tempId: string, n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수. `tempId` 는 FE→BE 재시도·취소·커밋에 되돌려 보낸다 |
 | `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료 |
@@ -2440,7 +2440,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | `type` | `data` | 설명 |
 |---|---|---|
-| `wakeword_sample` | `{n: int, total: int}` | 호출어 샘플 수집 진행 (total 10) |
+| `wakeword_sample` | `{n: int, total: int}` | 호출어 샘플 수집 진행 (total 5) |
 | `wakeword_done` | `{}` | 호출어 모델 생성 완료. 모델은 미리 `PUT /api/agent/blobs/wakeword` |
 | `voice_ready` | `{tempId: string}` | 보이스 녹음 준비 완료 |
 | `voice_progress` | `{tempId: string, n: int}` | 문장 n 낭독 완료 |
