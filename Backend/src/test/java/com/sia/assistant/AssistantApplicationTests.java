@@ -51,5 +51,10 @@ class AssistantApplicationTests {
         // DefaultMappingBootstrap(@Order 5) — 빈 gesture 테이블에 기본 매핑 11건 (실행 가능 9건)
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture", Integer.class)).isEqualTo(11);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture_step", Integer.class)).isEqualTo(9);
+        // canned HAND 9건은 전부 한손 정적, FACE 2건은 두 축이 없다 (V3 축 · DefaultMappings)
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE kind = 'HAND'"
+                + " AND hands = 1 AND motion = 'STATIC'", Integer.class)).isEqualTo(9);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE kind = 'FACE'"
+                + " AND hands IS NULL AND motion IS NULL", Integer.class)).isEqualTo(2);
     }
 }

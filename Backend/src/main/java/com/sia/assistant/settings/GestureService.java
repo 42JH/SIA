@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -79,7 +80,8 @@ public class GestureService {
      * runnable = 모든 스텝의 tool 이 이번 기동에 등록(available=1)됐는가.
      * custom 컬럼으로 기본/커스텀을 나눠 불러올 수 있다 (와이어프레임의 두 섹션).
      */
-    public Page list(String kindOrNull, Boolean customOrNull, boolean danglingOnly, int page, int size) {
+    public Page list(String kindOrNull, Boolean customOrNull, Integer handsOrNull, String motionOrNull,
+                     boolean danglingOnly, int page, int size) {
         int pageSize = Math.min(Math.max(size, 1), 100);
         int safePage = Math.max(page, 0);
 
@@ -92,16 +94,26 @@ public class GestureService {
         if (customOrNull != null) {
             where.append(customOrNull ? " AND custom = 1" : " AND custom = 0");
         }
+        if (handsOrNull != null) {
+            where.append(" AND hands = ?");
+            params.add(requireHands(handsOrNull));
+        }
+        if (motionOrNull != null && !motionOrNull.isBlank()) {
+            where.append(" AND motion = ?");
+            params.add(requireMotion(motionOrNull));
+        }
 
         List<Map<String, Object>> gestures = jdbc.query(
                 "SELECT id, custom, kind, context, name, label, description, repeatable,"
-                        + " enabled, created_at, video_path FROM gesture" + where
+                        + " enabled, created_at, video_path, hands, motion FROM gesture" + where
                         + " ORDER BY id",
                 (rs, i) -> {
                     Map<String, Object> g = new LinkedHashMap<>();
                     long id = rs.getLong("id");
                     g.put("id", id);
                     g.put("kind", rs.getString("kind"));
+                    g.put("hands", rs.getObject("hands") == null ? null : rs.getInt("hands"));
+                    g.put("motion", rs.getString("motion"));
                     g.put("context", rs.getString("context"));
                     g.put("name", rs.getString("name"));
                     g.put("label", rs.getString("label"));
@@ -152,11 +164,13 @@ public class GestureService {
     public Map<String, Object> getOne(long id) {
         List<Map<String, Object>> rows = jdbc.query(
                 "SELECT id, custom, kind, context, name, label, description, repeatable,"
-                        + " enabled, created_at, video_path FROM gesture WHERE id = ?",
+                        + " enabled, created_at, video_path, hands, motion FROM gesture WHERE id = ?",
                 (rs, i) -> {
                     Map<String, Object> g = new LinkedHashMap<>();
                     g.put("id", rs.getLong("id"));
                     g.put("kind", rs.getString("kind"));
+                    g.put("hands", rs.getObject("hands") == null ? null : rs.getInt("hands"));
+                    g.put("motion", rs.getString("motion"));
                     g.put("context", rs.getString("context"));
                     g.put("name", rs.getString("name"));
                     g.put("label", rs.getString("label"));
@@ -199,17 +213,21 @@ public class GestureService {
     // ------------------------------------------------------------------ 템플릿 npz (제스처별)
 
     /**
-     * blobs.gestures — 템플릿을 가진 커스텀 제스처 전부 [{id, name, sha256}], id 순.
+     * blobs.gestures — 템플릿을 가진 커스텀 제스처 전부 [{id, name, sha256, hands, motion}], id 순.
      * hello_ack · recognition_start · settings_changed 에 실리고, AI 는 sha256 이 다른 것만 다시 내려받는다.
+     * hands · motion 도 함께 내려 준다 — AI 가 내려받은 npz 의 배열 모양을 역산해 분류를 복원하지 않게 한다.
      */
     public List<Map<String, Object>> customNpzRefs() {
         return jdbc.query(
-                "SELECT id, name, npz_sha256 FROM gesture WHERE custom = 1 AND npz IS NOT NULL ORDER BY id",
+                "SELECT id, name, npz_sha256, hands, motion FROM gesture"
+                        + " WHERE custom = 1 AND npz IS NOT NULL ORDER BY id",
                 (rs, i) -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("id", rs.getLong("id"));
                     m.put("name", rs.getString("name"));
                     m.put("sha256", rs.getString("npz_sha256"));
+                    m.put("hands", rs.getObject("hands") == null ? null : rs.getInt("hands"));
+                    m.put("motion", rs.getString("motion"));
                     return m;
                 });
     }
@@ -239,8 +257,16 @@ public class GestureService {
         return rows.get(0);
     }
 
-    /** 동작 재촬영(reg_start {replaceGestureId})의 템플릿 교체. 기본 제공 제스처에는 쓸 수 없다. */
+    /** 형태를 모르는 호출자용 — 등록 경로가 hands · motion 을 싣기 전까지의 경유지. */
     public void updateNpz(long id, byte[] npz, String npzSha256) {
+        updateNpz(id, npz, npzSha256, null, null);
+    }
+
+    /**
+     * 동작 재촬영(reg_start {replaceGestureId})의 템플릿 교체. 기본 제공 제스처에는 쓸 수 없다.
+     * 형태(hands · motion)도 함께 바꾼다 — 한손 정적으로 등록한 제스처를 양손 동적으로 다시 찍을 수 있다.
+     */
+    public void updateNpz(long id, byte[] npz, String npzSha256, Integer hands, String motion) {
         Row row = requireRow(id);
         if (!row.custom()) {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처에는 템플릿을 넣을 수 없습니다");
@@ -248,8 +274,10 @@ public class GestureService {
         if (npz == null || npz.length == 0) {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "제스처 템플릿(npz)이 필요합니다");
         }
-        jdbc.update("UPDATE gesture SET npz = ?, npz_sha256 = ?, npz_bytes = ? WHERE id = ?",
-                npz, npzSha256, npz.length, id);
+        jdbc.update("UPDATE gesture SET npz = ?, npz_sha256 = ?, npz_bytes = ?, hands = ?, motion = ?"
+                        + " WHERE id = ?",
+                npz, npzSha256, npz.length, hands == null ? null : requireHands(hands),
+                motion == null ? null : requireMotion(motion), id);
     }
 
     // ------------------------------------------------------------------ 실행용 조회
@@ -284,6 +312,12 @@ public class GestureService {
     @Transactional
     public long saveCustom(String name, String label, String context, String description,
                            boolean repeatable, List<Step> steps, byte[] npz, String npzSha256) {
+        return saveCustom(name, label, context, description, repeatable, steps, npz, npzSha256, null, null);
+    }
+
+    public long saveCustom(String name, String label, String context, String description,
+                           boolean repeatable, List<Step> steps, byte[] npz, String npzSha256,
+                           Integer hands, String motion) {
         if (name == null || name.isBlank()) {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "제스처 이름이 필요합니다");
         }
@@ -291,23 +325,27 @@ public class GestureService {
             throw new ApiException(ErrorCode.INVALID_REQUEST, "제스처 템플릿(npz)이 필요합니다");
         }
         String ctx = (context == null || context.isBlank()) ? null : context;
+        Integer safeHands = hands == null ? null : requireHands(hands);
+        String safeMotion = motion == null ? null : requireMotion(motion);
         validateSteps(steps);
 
         // SQLite 의 UNIQUE 는 NULL 끼리 충돌하지 않아 ON CONFLICT 를 못 쓴다 — 직접 조회 후 분기
         Long id = findGestureId("HAND", ctx, name);
         if (id == null) {
             jdbc.update("INSERT INTO gesture (custom, kind, context, name, label, description,"
-                            + " repeatable, enabled, created_at, npz, npz_sha256, npz_bytes)"
-                            + " VALUES (1, 'HAND', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-                    ctx, name, label, description, repeatable ? 1 : 0, Times.now(), npz, npzSha256, npz.length);
+                            + " repeatable, enabled, created_at, npz, npz_sha256, npz_bytes, hands, motion)"
+                            + " VALUES (1, 'HAND', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+                    ctx, name, label, description, repeatable ? 1 : 0, Times.now(), npz, npzSha256, npz.length,
+                    safeHands, safeMotion);
             id = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
         } else {
             if (!requireRow(id).custom()) {
                 throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처와 같은 이름은 쓸 수 없어요: " + name);
             }
             jdbc.update("UPDATE gesture SET label = ?, description = ?, repeatable = ?,"
-                            + " npz = ?, npz_sha256 = ?, npz_bytes = ? WHERE id = ?",
-                    label, description, repeatable ? 1 : 0, npz, npzSha256, npz.length, id);
+                            + " npz = ?, npz_sha256 = ?, npz_bytes = ?, hands = ?, motion = ? WHERE id = ?",
+                    label, description, repeatable ? 1 : 0, npz, npzSha256, npz.length,
+                    safeHands, safeMotion, id);
             jdbc.update("DELETE FROM gesture_step WHERE gesture_id = ?", id);
         }
         writeSteps(id, steps);
@@ -483,6 +521,25 @@ public class GestureService {
         } catch (Exception e) {
             log.warn("제스처 영상 삭제 실패: {}", fileName, e);
         }
+    }
+
+    /**
+     * hands · motion 값 검증. SQLite 의 ALTER TABLE ... ADD COLUMN 은 CHECK 를 받지 않아
+     * V3 마이그레이션이 제약을 걸 수 없다 — 두 축의 유일한 문지기가 여기다.
+     */
+    public static int requireHands(int hands) {
+        if (hands != 1 && hands != 2) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "hands 는 1 또는 2 여야 합니다");
+        }
+        return hands;
+    }
+
+    public static String requireMotion(String motion) {
+        String up = motion == null ? "" : motion.trim().toUpperCase(Locale.ROOT);
+        if (!up.equals("STATIC") && !up.equals("DYNAMIC")) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "motion 은 STATIC 또는 DYNAMIC 이어야 합니다");
+        }
+        return up;
     }
 
     private Long findGestureId(String kind, String ctx, String name) {

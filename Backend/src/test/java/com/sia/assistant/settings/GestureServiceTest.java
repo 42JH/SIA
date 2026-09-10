@@ -53,9 +53,9 @@ class GestureServiceTest {
         // 스텝 검증이 tool 행을 보므로 하나 심는다 (운영은 ToolCatalogSync 가 채운다)
         jdbc.update("INSERT INTO tool (name, description, input_schema_json, session_required, confirm_required,"
                 + " available, synced_at) VALUES ('scroll.step', 'd', '{}', 1, 0, 1, ?)", Times.now());
-        // 기본 제공(canned) 제스처 한 건 — DefaultMappings 와 같은 형태 (custom=0, npz 없음)
-        jdbc.update("INSERT INTO gesture (custom, kind, context, name, label, repeatable)"
-                + " VALUES (0, 'HAND', NULL, 'Open_Palm', '세션 연장', 0)");
+        // 기본 제공(canned) 제스처 한 건 — DefaultMappings 와 같은 형태 (custom=0, npz 없음, 한손 정적)
+        jdbc.update("INSERT INTO gesture (custom, kind, context, name, label, repeatable, hands, motion)"
+                + " VALUES (0, 'HAND', NULL, 'Open_Palm', '세션 연장', 0, 1, 'STATIC')");
         agentHub = mock(AgentHub.class);
         notifier = mock(AgentSyncNotifier.class);
         ObjectProvider<AgentSyncNotifier> notifierProvider = mock(ObjectProvider.class);
@@ -70,8 +70,13 @@ class GestureServiceTest {
     }
 
     private long save(String name, byte[] npz) {
+        return save(name, npz, 2, "DYNAMIC");
+    }
+
+    private long save(String name, byte[] npz, Integer hands, String motion) {
         return service.saveCustom(name, "라벨", null, null, false,
-                List.of(new GestureService.Step("scroll.step", Map.of("dir", "up"), null)), npz, Sha256.hex(npz));
+                List.of(new GestureService.Step("scroll.step", Map.of("dir", "up"), null)), npz, Sha256.hex(npz),
+                hands, motion);
     }
 
     @Test
@@ -102,10 +107,10 @@ class GestureServiceTest {
                 .isInstanceOf(ApiException.class).hasMessageContaining("템플릿이 없습니다");
         assertThatThrownBy(() -> save("Open_Palm", NPZ_A))
                 .isInstanceOf(ApiException.class).hasMessageContaining("기본 제공");
-        assertThatThrownBy(() -> service.updateNpz(canned, NPZ_A, Sha256.hex(NPZ_A)))
+        assertThatThrownBy(() -> service.updateNpz(canned, NPZ_A, Sha256.hex(NPZ_A), 1, "STATIC"))
                 .isInstanceOf(ApiException.class).hasMessageContaining("기본 제공");
         assertThatThrownBy(() -> service.saveCustom("x", null, null, null, false,
-                List.of(new GestureService.Step("scroll.step", Map.of(), null)), null, null))
+                List.of(new GestureService.Step("scroll.step", Map.of(), null)), null, null, 1, "STATIC"))
                 .isInstanceOf(ApiException.class).hasMessageContaining("npz");
     }
 
@@ -146,14 +151,45 @@ class GestureServiceTest {
     }
 
     @Test
-    @DisplayName("재촬영(updateNpz)은 같은 행의 템플릿과 sha256 을 교체한다")
+    @DisplayName("재촬영(updateNpz)은 같은 행의 템플릿·sha256 과 형태(hands·motion)를 함께 교체한다")
     void updateNpzReplacesTemplate() {
-        long a = save("손가락 하트", NPZ_A);
+        long a = save("손가락 하트", NPZ_A, 2, "DYNAMIC");
 
-        service.updateNpz(a, NPZ_B, Sha256.hex(NPZ_B));
+        service.updateNpz(a, NPZ_B, Sha256.hex(NPZ_B), 1, "STATIC");
 
         assertThat(service.npz(a)).isEqualTo(NPZ_B);
         assertThat(service.npzMeta(a).sha256()).isEqualTo(Sha256.hex(NPZ_B));
         assertThat(service.customNpzRefs()).hasSize(1);
+        // 한손 정적으로 다시 찍었으면 그 형태가 남는다
+        assertThat(service.getOne(a)).containsEntry("hands", 1).containsEntry("motion", "STATIC");
+    }
+
+    @Test
+    @DisplayName("목록은 hands·motion 으로 걸러지고, 두 축은 blobs.gestures 에도 실린다")
+    void listFiltersAndBlobsCarryShape() {
+        long twoHandDynamic = save("손가락 하트", NPZ_A, 2, "DYNAMIC");
+        save("주먹", NPZ_B, 1, "STATIC");
+
+        assertThat(service.list(null, true, 2, null, false, 0, 20).items())
+                .extracting(g -> g.get("id")).containsExactly(twoHandDynamic);
+        assertThat(service.list(null, true, null, "DYNAMIC", false, 0, 20).items())
+                .extracting(g -> g.get("id")).containsExactly(twoHandDynamic);
+        // 픽스처의 canned 1건 + 커스텀 1건이 한손 정적이다
+        assertThat(service.list("HAND", null, 1, "STATIC", false, 0, 20).total()).isEqualTo(2);
+
+        assertThat(service.customNpzRefs())
+                .anySatisfy(r -> assertThat(r).containsEntry("hands", 2).containsEntry("motion", "DYNAMIC"))
+                .anySatisfy(r -> assertThat(r).containsEntry("hands", 1).containsEntry("motion", "STATIC"));
+    }
+
+    @Test
+    @DisplayName("hands·motion 은 1·2 와 STATIC·DYNAMIC 만 받는다 — SQLite CHECK 를 못 걸어 서비스가 문지기다")
+    void shapeValuesAreValidated() {
+        assertThatThrownBy(() -> save("셋손", NPZ_A, 3, "STATIC"))
+                .isInstanceOf(ApiException.class).hasMessageContaining("hands");
+        assertThatThrownBy(() -> save("애매", NPZ_A, 1, "WOBBLY"))
+                .isInstanceOf(ApiException.class).hasMessageContaining("motion");
+        assertThatThrownBy(() -> service.list(null, null, 9, null, false, 0, 20))
+                .isInstanceOf(ApiException.class).hasMessageContaining("hands");
     }
 }

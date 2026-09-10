@@ -31,7 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 제스처 매핑 REST (와이어프레임 제스처 섹션).
- *  - 목록은 ★페이지네이션 (?kind&custom&dangling&page&size) — FE 로딩 성능 (회의 확정).
+ *  - 목록은 ★페이지네이션 (?kind&custom&hands&motion&dangling&page&size) — FE 로딩 성능 (회의 확정).
  *  - 켜기/끄기(PATCH {enabled})·수정(PUT)·삭제(DELETE /{id})·등록 영상(GET /{id}/video)·템플릿 백업(GET /{id}/npz).
  * 커스텀 제스처 저장(신규 등록)은 WS macro_assign 경로다 — 여기서는 제공하지 않는다.
  */
@@ -53,10 +53,12 @@ public class GestureMappingController {
     public Map<String, Object> list(
             @RequestParam(name = "kind", required = false) String kind,
             @RequestParam(name = "custom", required = false) Boolean custom,
+            @RequestParam(name = "hands", required = false) Integer hands,
+            @RequestParam(name = "motion", required = false) String motion,
             @RequestParam(name = "dangling", defaultValue = "false") boolean dangling,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size) {
-        GestureService.Page result = gestureService.list(kind, custom, dangling, page, size);
+        GestureService.Page result = gestureService.list(kind, custom, hands, motion, dangling, page, size);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("page", result.page());
         out.put("pageSize", result.pageSize());
