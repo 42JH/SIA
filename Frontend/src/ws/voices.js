@@ -14,6 +14,13 @@ export function initializeVoiceEvents() {
   on('voice_progress', (data) => {
     if (store().stage !== 'list') store().receiveProgress(data);
   });
+  on('voice_sentence_rejected', (data) => {
+    const voice = store();
+    const currentN = Number(voice.sentence?.n) || Math.min(voice.completed + 1, voice.total);
+    if (voice.stage !== 'list' && data.tempId === voice.tempId && Number(data.n) === currentN) {
+      voice.receiveSentenceRejected(data);
+    }
+  });
   on('voice_quality_warn', (data) => {
     if (store().stage !== 'list') store().receiveWarning(data);
   });

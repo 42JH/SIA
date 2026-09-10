@@ -5,6 +5,7 @@ import { useOnboardingStore } from '../store/onboardingStore';
 const responses = {
   wakeword_enroll_start: ['wakeword_progress', 'wakeword_done'],
   voice_reg_start: ['voice_sentence', 'voice_reg_denied'],
+  voice_sentence_next: ['voice_sentence'],
   voice_sentence_retry: ['voice_sentence'],
   voice_reg_retry: ['voice_sentence'],
   voice_accept_anyway: ['voice_review', 'voice_quality_warn'],

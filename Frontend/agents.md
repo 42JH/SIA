@@ -80,7 +80,7 @@
 
 소켓 연결 · 재연결 · 파싱은 src/ws/feSocket.js 하나로만 관리하고, 컴포넌트는 src/ws/eventBus.js를 통해 `type`별로 구독한다.
 
-**FE → BE로 보내는 이벤트**: `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice`
+**FE → BE로 보내는 이벤트**: `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_next` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice`
 
 **BE → FE로 오는 이벤트**: `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `voice_sentence` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error`
 

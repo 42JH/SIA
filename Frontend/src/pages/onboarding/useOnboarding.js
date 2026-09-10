@@ -72,7 +72,6 @@ export function useOnboarding() {
           voiceTempId: voiceProgress.tempId,
           voiceCompleted: voiceProgress.n,
           voiceResult: { ...voiceProgress, rejected: false },
-          step: 'voiceReview',
           pending: false,
         });
       },
@@ -112,10 +111,12 @@ export function useOnboarding() {
       },
       voice_review: (review) => {
         if (!voiceSteps.includes(state().step)) return;
+        // 문장 하나가 끝날 때마다 오며 문장 번호가 없으므로 누적된 진행 수를 사용한다.
+        const n = Math.min(Math.max(1, state().voiceCompleted), 5);
         change({
           voiceTempId: review.tempId,
-          finalVoiceReview: review,
-          voiceResult: { ...state().voiceResult, ...review, n: 5, total: 5, rejected: false },
+          finalVoiceReview: n >= 5 ? review : null,
+          voiceResult: { ...state().voiceResult, ...review, n, total: 5, rejected: false },
           step: 'voiceReview',
           pending: false,
         });
