@@ -94,7 +94,7 @@ public class VoiceRegistrationOrchestrator {
         if (draft == null) {
             return;
         }
-        feHub.send("voice_progress", Map.of("n", n, "total", TOTAL_SENTENCES));
+        feHub.send("voice_progress", Map.of("tempId", tempId, "n", n, "total", TOTAL_SENTENCES));
         if (n >= 1 && n < TOTAL_SENTENCES) {
             draft.currentN = n + 1;
             sendSentence(draft, n + 1);
@@ -237,9 +237,13 @@ public class VoiceRegistrationOrchestrator {
 
     // ------------------------------------------------------------------ 내부
 
-    /** 문장 n 의 순번만 보낸다 — 원문은 FE·AI 가 각자의 상수에서 n 번째를 꺼낸다. */
+    /**
+     * 문장 n 의 순번만 보낸다 — 원문은 FE·AI 가 각자의 상수에서 n 번째를 꺼낸다.
+     * FE 에도 tempId 를 실어 보낸다 — FE→BE 재시도·취소·커밋이 tempId 를 요구하는데, 낭독 단계에서
+     * FE 가 tempId 를 얻을 다른 경로가 없기 때문이다.
+     */
     private void sendSentence(Draft draft, int n) {
-        feHub.send("voice_sentence", Map.of("n", n, "total", TOTAL_SENTENCES));
+        feHub.send("voice_sentence", Map.of("tempId", draft.tempId, "n", n, "total", TOTAL_SENTENCES));
         agentHub.send("voice_collect", Map.of("tempId", draft.tempId, "n", n));
     }
 

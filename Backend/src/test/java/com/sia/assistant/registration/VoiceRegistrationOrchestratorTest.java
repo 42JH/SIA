@@ -72,6 +72,18 @@ class VoiceRegistrationOrchestratorTest {
     }
 
     @Test
+    @DisplayName("voice_sentence·voice_progress 에는 AI 에 발급한 것과 같은 tempId 가 실린다 — FE 가 재시도·취소에 되돌려 보낸다")
+    void sentenceAndProgressCarryTempId() {
+        String tempId = startAndGetTempId();
+
+        orchestrator.onReady(tempId);
+        verify(feHub).send(eq("voice_sentence"), argThatMap("tempId", tempId));
+
+        orchestrator.onProgress(tempId, 1);
+        verify(feHub).send(eq("voice_progress"), argThatMap("tempId", tempId));
+    }
+
+    @Test
     @DisplayName("'이 문장 다시'는 같은 번호의 voice_collect 를 재발급한다")
     void sentenceRetryReissuesSameNumber() {
         String tempId = startAndGetTempId();
