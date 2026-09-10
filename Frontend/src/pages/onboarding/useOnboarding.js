@@ -3,7 +3,7 @@ import { fetchStatus } from '../../api/status';
 import { subscribeOnboarding } from '../../ws/onboarding';
 import { useOnboardingStore } from '../../store/onboardingStore';
 
-const voiceSteps = ['voice', 'voiceReview'];
+const voiceSteps = ['voice', 'voiceProcessing', 'voiceReview'];
 const gazeSteps = ['position', 'gazeGuide', 'measuring', 'result'];
 const voiceRejectionMessages = {
   TOO_SHORT: '너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.',
@@ -68,10 +68,13 @@ export function useOnboarding() {
       },
       voice_progress: (voiceProgress) => {
         if (!voiceSteps.includes(state().step)) return;
+        const total = Number(voiceProgress.total) || 5;
+        const completed = Number(voiceProgress.n) || 0;
         change({
           voiceTempId: voiceProgress.tempId,
-          voiceCompleted: voiceProgress.n,
+          voiceCompleted: completed,
           voiceResult: { ...voiceProgress, rejected: false },
+          ...(completed >= total ? { step: 'voiceProcessing' } : {}),
           pending: false,
         });
       },

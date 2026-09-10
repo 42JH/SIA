@@ -38,6 +38,8 @@
 .roundIcon { display: grid; width: 70px; height: 70px; place-items: center; margin: 0 auto 18px; border: 2px solid var(--color-accent); border-radius: 50%; font-size: 34px; }
 .actionRow { display: flex; justify-content: center; gap: 14px; margin-top: 28px; }
 .enrollment, .recording { width: min(620px, 100%); margin: 70px auto; text-align: center; }
+.enrollmentFullScreen { position: fixed; z-index: 15; inset: var(--dashboard-header) 0 0; display: flex; width: auto; max-width: none; min-height: 0; margin: 0; padding: clamp(24px, 6vw, 90px); flex-direction: column; align-items: center; justify-content: center; background: var(--dashboard-bg); }
+.enrollmentFullScreen > .device { width: min(100%, 620px); }
 .enrollment h2 { margin-top: 16px; font-size: 22px; }
 .device, .quality { display: flex; justify-content: space-between; margin: 26px 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); text-align: left; }
 .device span, .quality span:last-child { color: var(--color-muted); }

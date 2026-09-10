@@ -19,14 +19,14 @@ export const useVoiceStore = create((set) => ({
     stage: n >= (total ?? state.total) ? 'processing' : state.stage, pending: false,
   })),
   receiveWarning: (warning) => set((state) => ({
-    stage: 'warning', warning, tempId: warning.tempId ?? state.tempId, pending: false,
+    stage: 'warning', warning, tempId: warning.tempId ?? state.tempId, pending: false, error: '',
   })),
   receiveReview: (review) => set((state) => ({
-    stage: 'review', review, tempId: review.tempId ?? state.tempId, pending: false,
+    stage: 'review', review, tempId: review.tempId ?? state.tempId, pending: false, error: '',
   })),
   receiveSentenceRejected: (rejection) => set((state) => ({
     stage: 'review', review: { ...rejection, rejected: true },
-    tempId: rejection.tempId ?? state.tempId, pending: false,
+    tempId: rejection.tempId ?? state.tempId, pending: false, error: '',
   })),
-  receiveSaved: () => set({ stage: 'done', pending: false }),
+  receiveSaved: () => set({ stage: 'done', pending: false, error: '' }),
 }));

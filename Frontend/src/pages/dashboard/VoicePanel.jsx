@@ -3,6 +3,7 @@ import { fetchDevices } from '../../api/devices';
 import { fetchSettings } from '../../api/settings';
 import { activateProfile, deleteProfile, fetchProfiles, renameVoiceProfile, voiceSampleUrl } from '../../api/profiles';
 import { ENROLLMENT_SENTENCES } from '../onboarding/enrollmentConstants';
+import VoiceEnrollment from '../../components/onboarding/VoiceEnrollment';
 import { useSessionStore } from '../../store/sessionStore';
 import { useVoiceStore } from '../../store/voiceStore';
 import { initializeVoiceEvents, sendVoice } from '../../ws/voices';
@@ -34,6 +35,11 @@ export default function VoicePanel() {
 
   useEffect(() => { loadProfiles(); }, []);
   useEffect(() => { activeTempId.current = voice.tempId; }, [voice.tempId]);
+  useEffect(() => {
+    if (voice.stage !== 'processing') return undefined;
+    const timer = setTimeout(() => voice.change({ error: '녹음 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.' }), 30000);
+    return () => clearTimeout(timer);
+  }, [voice.stage, voice.change]);
   useEffect(() => () => {
     if (activeTempId.current) {
       try { sendVoice('voice_reg_cancel', { tempId: activeTempId.current }); } catch { /* 페이지 이탈 시 임시 등록 정리 */ }
@@ -77,13 +83,6 @@ export default function VoicePanel() {
     try { sendVoice(type, data); voice.change({ pending: true, error: '', ...patch }); }
     catch (error) { voice.change({ pending: false, error: error.message }); }
   }
-  function cancelEnrollment() {
-    if (voice.tempId && connected) {
-      try { sendVoice('voice_reg_cancel', { tempId: voice.tempId }); } catch { /* 화면 복귀 우선 */ }
-    }
-    activeTempId.current = null;
-    voice.resetEnrollment();
-  }
   async function rename() {
     const name = modal.name.trim();
     if (!name) return;
@@ -116,7 +115,7 @@ export default function VoicePanel() {
   }
   function toggle(id) { setSelected((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]); }
 
-  if (voice.stage !== 'list') return <Enrollment voice={voice} micLabel={micLabel} connected={connected} onStart={startRecording} onRetryMic={prepareEnrollment} onSend={send} onCancel={cancelEnrollment} onSaved={async () => { activeTempId.current = null; await loadProfiles(); voice.resetEnrollment(); }} />;
+  if (voice.stage !== 'list') return <Enrollment voice={voice} micLabel={micLabel} connected={connected} onStart={startRecording} onRetryMic={prepareEnrollment} onSend={send} onSaved={async () => { activeTempId.current = null; await loadProfiles(); voice.resetEnrollment(); }} />;
 
   return <section className={styles.voicePage}>
     {loading && <p role="status">보이스를 불러오는 중입니다.</p>}
@@ -150,21 +149,21 @@ function VoiceCard({ profile, active, deleteMode, checked, onToggle, onRename, o
   </article>;
 }
 
-function Enrollment({ voice, micLabel, connected, onStart, onRetryMic, onSend, onCancel, onSaved }) {
+function Enrollment({ voice, micLabel, connected, onStart, onRetryMic, onSend, onSaved }) {
   const tempId = voice.tempId;
-  if (voice.stage === 'micError') return <div className={styles.enrollment}><div className={styles.roundIcon}>!</div><h2>마이크를 사용할 수 없어요</h2><p>{micLabel ? `${micLabel} 연결 상태를 확인해주세요.` : '마이크 연결 또는 권한 설정을 확인해주세요.'}<br />권한을 허용한 뒤 다시 시도할 수 있습니다.</p><div className={styles.actionRow}>{/* TODO(BE): Windows 마이크 설정을 여는 FE용 REST·WS 계약 필요 */}<button className={styles.secondary} disabled title="백엔드 연동이 필요합니다">시스템 설정 열기</button><button className={styles.primary} onClick={onRetryMic}>다시 확인</button></div></div>;
-  if (voice.stage === 'guide') return <div className={styles.enrollment}><div className={styles.roundIcon}>♩</div><h2>조용한 곳에서 5문장을 읽어주세요</h2><p>화면에 나오는 문장을 자연스럽게 읽으면 됩니다.<br />약 30초 정도 걸립니다.</p><div className={styles.device}>마이크 · {micLabel ?? '시스템 기본 마이크'}<span>정상</span></div><button className={styles.primary} onClick={onStart} disabled={!connected}>녹음 시작</button>{!connected && <p className={styles.error}>실시간 연결을 기다리고 있습니다.</p>}</div>;
-  if (voice.stage === 'warning') return <div className={styles.enrollment}><div className={styles.roundIcon}>!</div><h2>목소리가 잘 들리지 않았어요</h2><p>{voice.warning?.reason ?? '주변 소음이 크거나 마이크와 거리가 멀 수 있습니다.'}<br />조용한 곳에서 다시 읽어주세요.</p><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_accept_anyway', { tempId })} disabled={!tempId || voice.pending}>그대로 진행</button><button className={styles.primary} onClick={() => onSend('voice_reg_retry', { tempId }, { stage: 'recording', completed: 0, sentence: null, warning: null })} disabled={!tempId || voice.pending}>다시 녹음</button></div></div>;
+  if (voice.stage === 'micError') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>!</div><h2>마이크를 사용할 수 없어요</h2><p>{micLabel ? `${micLabel} 연결 상태를 확인해주세요.` : '마이크 연결 또는 권한 설정을 확인해주세요.'}<br />권한을 허용한 뒤 다시 시도할 수 있습니다.</p><div className={styles.actionRow}>{/* TODO(BE): Windows 마이크 설정을 여는 FE용 REST·WS 계약 필요 */}<button className={styles.secondary} disabled title="백엔드 연동이 필요합니다">시스템 설정 열기</button><button className={styles.primary} onClick={onRetryMic}>다시 확인</button></div></div>;
+  if (voice.stage === 'guide') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>♩</div><h2>조용한 곳에서 {voice.total}문장을 읽어주세요</h2><p>화면에 나오는 문장을 자연스럽게 읽으면 됩니다.<br />약 30초 정도 걸립니다.</p><div className={styles.device}>마이크 · {micLabel ?? '시스템 기본 마이크'}<span>정상</span></div><button className={styles.primary} onClick={onStart} disabled={!connected}>녹음 시작</button>{!connected && <p className={styles.error}>실시간 연결을 기다리고 있습니다.</p>}</div>;
+  if (voice.stage === 'warning') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>!</div><h2>목소리가 잘 들리지 않았어요</h2><p>{voice.warning?.reason ?? '주변 소음이 크거나 마이크와 거리가 멀 수 있습니다.'}<br />조용한 곳에서 다시 읽어주세요.</p><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_accept_anyway', { tempId })} disabled={!tempId || voice.pending}>그대로 진행</button><button className={styles.primary} onClick={() => onSend('voice_reg_retry', { tempId }, { stage: 'recording', completed: 0, sentence: null, warning: null })} disabled={!tempId || voice.pending}>다시 녹음</button></div></div>;
+  if (voice.stage === 'processing') return <VoiceEnrollment mode="processing" fullScreen error={voice.error} />;
   if (voice.stage === 'review') {
     const current = Number(voice.review?.n) || Math.max(1, voice.completed);
     const rejected = voice.review?.rejected === true;
     const reason = rejectionMessages[voice.review?.code] ?? voice.review?.reason?.trim() ?? '사유 미판정';
-    if (current < voice.total || rejected) return <div className={styles.enrollment}><h2>{current} / {voice.total} 문장 판독 결과</h2><p>{rejected ? reason : '판독 결과를 확인한 뒤 다음 문장으로 진행해주세요.'}</p><div className={styles.quality}><span>녹음 품질 · {voice.review?.quality ?? '미판정'}</span><span>주변 소음 {voice.review?.noise ?? '미판정'}</span></div><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_sentence_retry', { tempId }, { stage: 'recording', sentence: null, review: null })} disabled={!tempId || voice.pending}>이 문장 다시</button>{!rejected && <button className={styles.primary} onClick={() => onSend('voice_sentence_next', { tempId }, { stage: 'recording', sentence: null, review: null })} disabled={!tempId || voice.pending}>다음 문장</button>}</div>{voice.error && <p className={styles.error}>{voice.error}</p>}</div>;
-    return <div className={styles.enrollment}><h2>이 목소리로 등록할까요?</h2><p>재생해 들어보고, 마음에 들지 않으면 다시 녹음할 수 있습니다.</p>{voice.review?.sampleUrl ? <audio className={styles.audio} controls src={voiceSampleUrl(voice.review.sampleUrl)} /> : <p>재생 가능한 샘플이 없습니다.</p>}<div className={styles.quality}><span>녹음 품질 · {voice.review?.quality ?? '미제공'}</span><span>주변 소음 {voice.review?.noise ?? '미제공'}</span></div><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_reg_retry', { tempId }, { stage: 'recording', completed: 0, sentence: null, review: null })} disabled={!tempId || voice.pending}>다시 녹음</button><button className={styles.primary} onClick={() => onSend('voice_commit', { tempId, ...(micLabel ? { deviceLabel: micLabel } : {}) })} disabled={!tempId || voice.pending || voice.completed < 5}>등록</button></div>{voice.error && <p className={styles.error}>{voice.error}</p>}</div>;
+    return <VoiceEnrollment mode="review" fullScreen review={{ ...voice.review, reason }} current={current} total={voice.total} rejected={rejected} ready={connected} pending={voice.pending} canRetry={Boolean(tempId)} canAccept={Boolean(tempId) && (current < voice.total || Boolean(voice.review))} error={voice.error} onRetry={() => onSend(rejected || current < voice.total ? 'voice_sentence_retry' : 'voice_reg_retry', { tempId }, { stage: 'recording', ...(!rejected && current >= voice.total ? { completed: 0 } : {}), sentence: null, review: null })} onAccept={() => current >= voice.total ? onSend('voice_commit', { tempId, ...(micLabel ? { deviceLabel: micLabel } : {}) }) : onSend('voice_sentence_next', { tempId }, { stage: 'recording', sentence: null, review: null })} />;
   }
-  if (voice.stage === 'done') return <div className={styles.enrollment}><div className={styles.roundIcon}>✓</div><h2>등록 완료!</h2><p>이제 내 목소리를 다른 사람의 말과 구분해<br />명령을 실행합니다!</p><button className={styles.primary} onClick={onSaved}>확인</button></div>;
-  const n = voice.sentence?.n ?? Math.min(voice.completed + 1, 5);
-  return <div className={styles.recording}><div className={styles.recordMeta}><span>{n} / 5 문장</span><span>REC</span></div><blockquote>{ENROLLMENT_SENTENCES[n - 1] ?? '녹음 준비를 기다리고 있습니다.'}</blockquote><div className={styles.liveWave}><b />{Array.from({ length: 46 }, (_, index) => <i key={index} />)}</div><progress max="5" value={voice.completed} /><p>문장을 읽은 뒤 판독 결과를 확인해주세요.</p><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_sentence_retry', { tempId })} disabled={!tempId || voice.pending}>이 문장 다시</button><button className={styles.secondary} onClick={onCancel}>중단</button></div>{voice.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{voice.error && <p className={styles.error}>{voice.error}</p>}</div>;
+  if (voice.stage === 'done') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>✓</div><h2>등록 완료!</h2><p>이제 내 목소리를 다른 사람의 말과 구분해<br />명령을 실행합니다!</p><button className={styles.primary} onClick={onSaved}>확인</button></div>;
+  const n = voice.sentence?.n ?? Math.min(voice.completed + 1, voice.total);
+  return <VoiceEnrollment mode="recording" fullScreen current={n} total={voice.total} sentence={ENROLLMENT_SENTENCES[n - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} />;
 }
 
 function VoiceModal({ modal, setModal, busy, selectedCount, onAdd, onRename, onDelete, onCancelDelete }) {

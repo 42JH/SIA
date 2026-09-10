@@ -148,6 +148,7 @@ export default function OnboardingFlow() {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
       content = <VoiceEnrollment mode="recording" current={current} total={5} sentence={sentences[current - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} />; break;
     }
+    case 'voiceProcessing': content = <VoiceEnrollment mode="processing" />; break;
     case 'voiceReview': {
       const review = f.voiceResult;
       const current = review?.n ?? Math.max(1, f.voiceCompleted);
@@ -171,6 +172,6 @@ export default function OnboardingFlow() {
     case 'gazeDone': content = done('시선 설정', '시선 학습이 완료되었습니다', isCameraOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('camera')) : btn('다음', () => go('done'))); break;
     default: content = done('설정', '이제 SIA를 시작할 수 있습니다.', <Link className={styles.linkButton} to="/dashboard">완료</Link>);
   }
-  const cardClassName = ['voice', 'voiceReview'].includes(f.step) ? `${styles.card} ${styles.wideCard}` : styles.card;
+  const cardClassName = ['voice', 'voiceProcessing', 'voiceReview'].includes(f.step) ? `${styles.card} ${styles.wideCard}` : styles.card;
   return <main className={styles.page}><section className={cardClassName} aria-label="첫 설정">{content}{f.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{f.request?.delayed && <p role="status">{f.request.type} 응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요. 응답이 도착하면 계속 진행합니다.</p>}{f.connectionError && <p className={styles.error} role="alert">{f.connectionError}</p>}{f.error && <p className={styles.error} role="alert">{f.error}</p>}{f.interrupted && btn('처음부터 다시 설정', () => { change({ interrupted: false }); go('welcome'); }, !connected)}</section><p className={styles.connection}>실시간 연결: {connected ? '연결됨' : '대기 중'} · AI: {f.status?.agentConnected ? '연결됨' : '대기 중'}</p></main>;
 }
