@@ -128,7 +128,6 @@ class AgentLink:
         self.gesture_ready = False
         self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
         self.wake = None                # WakeEnroll 또는 None (assistant가 주입) — 온보딩 이름 불러보기(206)
-        self.command = None             # CommandEnroll 또는 None (assistant가 주입) — 온보딩 명령 문장 말하기(206)
         self._send_lock = threading.Lock()
         self._stop = False
         if self.rt:
@@ -190,16 +189,12 @@ class AgentLink:
             v = self.voice
             if t == "voice_reg_start":     v.on_start(d.get("tempId"), d.get("total"))
             elif t == "voice_collect":     v.on_collect(d.get("tempId"), d.get("n"))
-            elif t == "voice_finalize":    v.on_finalize(d.get("tempId"))
             elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
             elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
             elif t == "voice_changed":     v.on_changed(d)
         elif t == "wakeword_enroll_start" and self.wake:
             self.wake.on_start()
-        elif t == "command_enroll_start" and self.command:
-            self.command.on_start()
-        elif t == "command_collect" and self.command:
-            self.command.on_collect(d.get("n"))
+        # 온보딩 "명령 문장 말하기"(command_*) 단계는 폐기됐다(229) — 그 낭독 5문장이 곧 위 voice_* 등록이다
         # NOTE(한계): hello_ack · recognition_start · settings_changed 에 실린 설정값과 활성 보이스(blobs.voice), 그리고
         # wipe 는 아직 처리하지 않는다 — 제스처 템플릿만 assistant 가 동기화한다. 모르는 type 은 무시한다(프로토콜 §1.5).
 
