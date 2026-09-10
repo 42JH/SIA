@@ -2262,6 +2262,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `wakeword_done` | `{}` | 호출어 모델 생성 완료 |
 | `command_sentence` | `{n: int, total: int}` | 읽을 명령 문장의 순번 (total 5). 원문은 FE 상수 |
 | `command_progress` | `{n: int, total: int}` | 명령 문장 n 완료 |
+| `command_rejected` | `{n: int, total: int, reason: string, code?: string}` | 문장 n 낭독 실패. `code` 는 사유 분류(`TOO_SHORT`), 없거나 모르는 값이면 `reason` 을 쓴다 |
 | `command_done` | `{}` | 명령 문장 수집 완료 |
 | `voice_sentence` | `{tempId: string, n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수. `tempId` 는 FE→BE 재시도·취소·커밋에 되돌려 보낸다 |
 | `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료 |
@@ -2430,6 +2431,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `wakeword_done` | `{}` | 호출어 모델 생성 완료. 모델은 미리 `PUT /api/agent/blobs/wakeword` |
 | `command_ready` | `{}` | 명령 문장 수집 준비 완료 |
 | `command_progress` | `{n: int}` | 명령 문장 n 완료 |
+| `command_rejected` | `{n: int, reason: string, code?: string}` | 문장 n 낭독 실패. 문장은 재발급되지 않는다 — 같은 n 을 계속 기다린다 |
 | `command_done` | `{}` | 명령 문장 수집 완료 |
 | `voice_ready` | `{tempId: string}` | 보이스 녹음 준비 완료 |
 | `voice_progress` | `{tempId: string, n: int}` | 문장 n 낭독 완료 |
@@ -2670,8 +2672,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | 채널 | 방향 | `type` | 절 |
 |---|---|---|---|
 | `/ws/fe` | FE → BE | `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `command_enroll_start` · `voice_reg_start` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
-| `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `command_sentence` · `command_progress` · `command_done` · `voice_sentence` · `voice_progress` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
-| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `command_ready` · `command_progress` · `command_done` · `voice_ready` · `voice_progress` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
+| `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `command_sentence` · `command_progress` · `command_rejected` · `command_done` · `voice_sentence` · `voice_progress` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
+| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `command_ready` · `command_progress` · `command_rejected` · `command_done` · `voice_ready` · `voice_progress` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
 | `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `command_enroll_start` · `command_collect` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` | §4.5 |
 | `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `browser_open` · `ping` | §4.6 |
 | `/ws/ext` | BE → 확장 | `dom_text_request` · `browser_open_request` · `pong` · `error` | §4.6 |
