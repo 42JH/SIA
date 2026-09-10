@@ -17,6 +17,15 @@ import numpy as np
 from hands import CustomGestures, normalize_landmarks
 
 
+def registration_blocks_gesture_execution(registration):
+    """등록 모드에서는 샘플 수집 외의 제스처 명령을 실행하지 않는다.
+
+    카메라와 랜드마크 추론은 계속 필요하지만, 같은 손모양이 정적·동적·양손
+    명령으로 해석되어 로컬 또는 BE에서 실행되면 안 된다(FR-065).
+    """
+    return bool(registration is not None and registration.active)
+
+
 class GestureTemplateCache:
     """BE의 제스처별 npz를 받아 기존 kNN 저장소 형식으로 합친다."""
 

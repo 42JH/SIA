@@ -4,6 +4,18 @@ import numpy as np
 
 from gaze import FEATURE_DIM, Calibrator, ClickRecal, GazeBuffer
 from hands import GestureStable, HoldToggle, OneEuro, PinchFSM
+from gesture_be import registration_blocks_gesture_execution
+
+
+def test_registration_execution_gate():
+    """FR-065: 등록 중에는 기존 제스처 명령 실행을 차단한다."""
+    class Registration:
+        def __init__(self, active):
+            self.active = active
+
+    assert not registration_blocks_gesture_execution(None)
+    assert not registration_blocks_gesture_execution(Registration(False))
+    assert registration_blocks_gesture_execution(Registration(True))
 
 
 def test_calibrator():
@@ -683,6 +695,7 @@ if __name__ == "__main__":
     test_gaze_buffer()
     test_gaze_buffer_stale()
     test_pinch_fsm()
+    test_registration_execution_gate()
     test_hold_toggle()
     test_gesture_stable()
     test_click_recal()
@@ -701,4 +714,4 @@ if __name__ == "__main__":
     test_command_enroll()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 22/22 통과")
+    print("OK - 23/23 통과")
