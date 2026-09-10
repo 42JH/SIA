@@ -64,9 +64,9 @@ com.sia.assistant
 ├── ws/            AgentHub·FeHub·ExtHub — 봉투 송수신, 수신은 스프링 이벤트로 발행
 ├── wsroutes/      채널별 type 스위치 (Agent·Fe·Ext)
 ├── bootstrap/     AgentBootstrapper — hello→모델 로드→recognition_start→PASSIVE (01 다이어그램)
-├── registration/  제스처 3회 촬영·보이스 3문장·시선 보정(재측정 3회 카운트) 오케스트레이터 (03·04)
+├── registration/  제스처 3회 촬영·보이스 5문장·시선 보정(재측정 3회 카운트) 오케스트레이터 (03·04)
 ├── gestureexec/   BE 매크로 실행자 — 매핑 조회→enabled·컨텍스트 판별→스텝 실행 (03 실행부)
-├── relay/         온보딩 등록 중계(호출어 10샘플·명령 5문장) + AI 동기화 페이로드 조립(AgentSyncNotifier)
+├── relay/         온보딩 이름 불러보기(호출어 샘플) 중계 + AI 동기화 페이로드 조립(AgentSyncNotifier)
 ├── profile/       ★보이스·시선 보정 프로필 (각 최대 4개 — 사용 1·스톡 3, 장비 맵핑, 프로필별 정확도)
 ├── model/         HuggingFace 다운로드·sha256 검증·진행률 (01) — 목록 models.json 은 아직 빈 배열
 ├── mcp/           ToolCatalog(29)·ToolGate·RefResolver·ToolInvoker + tools/
@@ -136,14 +136,14 @@ com.sia.assistant
 - 삭제 되돌리기(Undo)·기본 제스처 확정은 아직 스코프 밖이다 (API.md §8). 화면 잠금은 `system.lock`, 캡처 결과물 저장·표시는
   `screen.capture`·`screen.capture_region`(좌상단·우하단 두 점 영역) + FE `capture_saved` + `GET /api/captures/{file}` (`~/Pictures/SIA/`), 모델 재다운로드 유도는
   `POST /api/models/{name}/redownload` 로 들어왔다 (2026-09-02, 흐름도 갭 해소).
-- ★온보딩 문장(명령 5·낭독 3)의 원문은 FE·AI 공통 상수다(불변·하드코딩, 2026-09-02) — BE 는 `n` 만 중계하고 `text` 를 보내지 않는다.
+- ★온보딩 낭독 문장 5개("명령하듯 말해보세요" = 보이스 등록, 별도의 명령 문장 단계는 없다)의 원문은 FE·AI 공통 상수다(불변·하드코딩) — BE 는 `n` 만 중계하고 `text` 를 보내지 않는다. 문장 단위 미달은 `voice_sentence_rejected` 로 사유만 중계한다.
 - ★설정 JSON 은 자유 문서지만 **알려진 키 6종은 서버가 지킨다** — PUT 이 통째 교체라 부분 문서 한 번에 `micDevice` 가 사라지면 프로필 장비 맵핑이 영구히 깨진다. 빠진 키는 기존 값으로 채우고, 타입이 틀리면 400 (API.md §1.3).
 - ★장치 이름은 **OS 원문 문자열** 하나로 통일한다(별도 id 없음). 설정이 `null`(시스템 기본)이면 프로필 확정 시 FE 가 `deviceLabel` 로 실명을 보내야 자동 맵핑 후보가 된다.
 - ★보이스·시선 등록의 임시본은 **DB 가 아니라 오케스트레이터 메모리**다 — 커밋(voice_commit/calib_commit)만 프로필 행을 만든다. 재시작하면 진행 중이던 등록은 사라진다 (BLUEPRINT §7 판단 2).
 
 ## 검증
 
-- `./gradlew test` — 34개 클래스 198개 통과 (2026-09-02).
+- `./gradlew test` — 49개 클래스 277개 통과 (2026-09-10).
 - 기동 스모크 기록(2026-08-27~28, 도구가 25개이던 시점): Flyway 적용, MCP `initialize`→`tools/list`,
   `context.get` 실창 열거, `files.delete` 휴지통 이동, WS `hello`→`recognition_start`→세션 수명주기,
   `gesture_exec` 매크로 실행, 탐색기 항목 bounds 12/12, 확장 `/ws/ext` 왕복, `GET /api/apps/scan` 103건.
