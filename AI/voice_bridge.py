@@ -2,14 +2,21 @@
 """화자 등록의 AI 측 핸들러 — BE voice_* WS 이벤트로 구동 (65).
 
 FE 가 낭독 문장을 화면에 띄우고, BE 가 voice_collect{tempId, n} 으로 "n번 문장 수집" 을 지시한다.
-AI 는 그 다음 VAD 발화를 n번 샘플로 받아 voice_progress{n} 을 보내고, 마지막 문장 뒤 샘플들의 평균
-임베딩(centroid)을 npz 로 만들어 REST 로 올린 뒤 voice_captured 를 보낸다. voice_enroll.py 의 CLI 등록을
+AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩을 뽑고 voice_progress{n} 을 보낸다. 마지막 문장 뒤에는
+모아 둔 임베딩의 평균(centroid)을 npz 로 만들어 REST 로 올린 뒤 voice_captured 를 보낸다. voice_enroll.py 의 CLI 등록을
 이벤트 구동으로 옮긴 것 — 임베딩·centroid 계산은 speaker.SpeakerVerifier 그대로 쓴다.
 
 계약(dev/be 71207bb 프로토콜 §8.7):
 - 문장 원문은 BE 가 보내지 않는다. SENTENCES 의 n번째 — FE 상수와 글자 단위로 같아야 한다.
 - 같은 n 이 다시 오면 그 문장을 교체 수집("이 문장 다시"). "다시 녹음" 은 BE 가 n=1 부터 다시 발급한다.
   둘 다 n번과 그 뒤 샘플도 함께 버린다.
+- 문장 하나가 너무 짧거나 앞 문장들과 목소리가 다르면 command_rejected{n, reason, code} 를 보내고 같은 문장을
+  계속 기다린다 — 순번을 진행하지 않는다 (BE 계약 변경 제안 2026-09-10). 온보딩의 "명령 문장 말하기" 단계가 곧
+  이 화자 등록이라 이름이 command_ 다. tempId 는 계약에 없다. 거절은 등록 1회당 REJECT_BUDGET 번까지만 한다.
+  비슷한 이름은 다른 뜻이다 — voice_rejected 는 실행 중 화자 게이트 거부(4.1), voice_reg_denied 는 프로필 4개 초과.
+- 1번 문장이 찌그러진 채 기준이 된 경우: 같은 문장을 두 번 읽었는데 둘은 닮았고 앞 문장 하나와만 다르면 앞 문장을 의심해
+  기준에서 빼고 이번 문장을 받는다(2 대 1). 마지막엔 혼자 튀는 문장 하나를 프로필 평균에서 뺀다. BE 는 순번을 되돌릴 수
+  없어 앞 문장을 다시 읽히진 못한다 — 프로필에서만 걸러낸다.
 - 음질 미달이면 voice_quality_warn 을 보내고 멈춘다. FE "그대로 진행" → voice_finalize 가 와야 업로드한다.
 - 샘플 wav → npz 순으로 PUT 한 뒤 voice_captured. BE 가 곧장 FE 에 voice_review(재생 URL 포함)를 주기 때문.
 - 로컬 프로필(models/speaker.npz)은 여기서 안 건드린다. 확정은 FE voice_commit 이고, 활성이 되면 BE 가
@@ -18,8 +25,9 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 voice_progress{n} 을 보�
 NOTE(한계): 샘플은 VAD 가 잘라 준 발화를 자르지 않고 통째로 쓴다(말 시작 전 여유분 2 s 포함) — CLI 등록(voice_enroll.py)과
 같은 입력이라 화자 인증을 실측했을 때와 조건이 같다.
 
-온보딩의 앞 두 단계 — "이름 불러보기"(호출어 샘플 10개) WakeEnroll, "명령 문장 말하기"(문장 5개 연습) CommandEnroll — 도
-여기 둔다(206). BE 이벤트로 시작해 VAD 발화를 세고 완료 이벤트를 보내는 같은 꼴이다.
+온보딩은 2단계다 — ① "시아야" 5회(WakeEnroll, wakeword_*) → ② 명령 문장 5개 = 화자 인증 등록(VoiceSession, voice_*).
+②에서 문장마다 임베딩하고 프로필을 만든다. 거절 이벤트 이름이 command_rejected 인 건 BE 가 그 이름으로 계약했기 때문이다.
+CommandEnroll(command_*)은 옛 3단계 계약의 "연습" 단계 핸들러다 — FE 가 command_enroll_start 를 안 보내면 돌지 않는다.
 """
 import io
 import json
@@ -29,17 +37,25 @@ import urllib.request
 import numpy as np
 
 SR = 16000
-SENTENCES = [  # FE 와 공통 상수 — 순서·글자를 바꾸면 FE 도 같이 바꿔야 한다
+SENTENCES = [  # 화자 인증 등록 문장 5개 — FE 와 공통 상수. 순서·글자를 바꾸면 FE 도 같이 바꿔야 한다
     "시아야 지금 화면 좀 정리해줘",
     "오늘 날씨가 참 맑고 좋다",
     "이 파일을 다른 폴더로 옮겨줄래",
     "다음 영상으로 넘어가고 음소거 해줘",
     "안녕하세요 저는 이 컴퓨터의 주인입니다",
 ]
-MIN_SPEECH_S = 1.5     # NOTE(튜닝): 말소리가 이보다 짧으면 문장 낭독이 아니다(헛기침·"어") — 같은 문장을 기다린다. voice_enroll 과 같은 값
+MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 ≤ 0.3 s, WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
+                       # 무른다. "문장을 끝까지 읽었나" 는 여기서 안 본다 — 그건 유사도 게이트와 5문장 뒤 voice_quality_warn 몫이다.
+                       # 1.5 였다가 내림: speech_s 는 앞 여유분·단어 틈을 안 세서 녹음 길이의 39%(로그 147건 중앙값)만 잡힌다 —
+                       # 문장을 2 s 에 읽으면 0.8~1.0 s 라 실제 낭독이 거절됐다. voice_enroll 의 1.5 는 녹음 전체 길이 기준이라 다른 자다
 QUALITY_MIN_SIM = 0.5  # NOTE(튜닝): 샘플 간 최소 코사인 유사도 하한. voice_enroll 의 "양호" 기준. 미만이면 FE 에 음질 경고
+VOICE_MIN_SIM = 0.40   # NOTE(튜닝): 문장 하나가 앞 문장들과 이만큼도 안 닮으면 그 문장만 거절한다. QUALITY_MIN_SIM 보다 낮게 둔다 —
+                       # 여기서는 명백한 사고(다른 사람이 읽음·큰 잡음)만 잡고, 미세한 일관성은 5문장을 다 모은 뒤에 본다.
+                       # 잠정값: 본인이 정상 낭독했을 때 문장 사이 유사도가 얼마나 나오는지 아직 안 재 봤다
+REJECT_BUDGET = 2      # 등록 1회당 목소리 불일치 거절 상한. 1번 문장이 잘못 녹음되면 그게 기준이 되어 뒤 문장이 전부 거절되므로,
+                       # 소진되면 거절을 멈추고 길이만 보고 받는다 — 최종 판정은 voice_quality_warn 이 그대로 한다
 NOISE_RMS = 350.0      # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
-WAKE_TOTAL = 10        # 온보딩 "이름 불러보기" 샘플 수 — FE 진행바의 total 과 같은 값
+WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
 WAKE_MIN_S = 0.3       # NOTE(튜닝): "시아야" 말소리 하한. 이보다 짧으면 헛기침·클릭음으로 보고 세지 않는다
 WAKE_MAX_S = 2.0       # NOTE(튜닝): 말소리 상한. 이보다 길면 문장을 말한 것이라 이름 부르기로 세지 않는다
 
@@ -69,6 +85,10 @@ class VoiceSession:
         self.total = len(SENTENCES)
         self._n = 0                         # 수집 중인 문장(0=대기)
         self._samples = {}                  # n -> int16 오디오
+        self._embs = {}                     # n -> 임베딩. 문장을 받을 때 그 자리에서 채운다
+        self._rejects = 0                   # 이번 등록에서 목소리 불일치로 무른 횟수 (REJECT_BUDGET 까지)
+        self._last_reject = None            # (n, 임베딩) — 직전에 목소리 불일치로 무른 시도. 같은 문장 두 시도를 견주는 데 쓴다
+        self._suspect = set()               # 찌그러진 것으로 의심돼 비교 기준에서 뺀 문장 번호
         self._result = None                 # (npz, wav, durationSec, quality, noise) — 경고 뒤 voice_finalize 대기용
         self._preload = None                # 모델 프리로드 스레드
 
@@ -82,7 +102,8 @@ class VoiceSession:
         log_rx("voice_reg_start", {"tempId": tempId, "total": total})
         self.tempId, self.active = tempId, True
         self.total = int(total or len(SENTENCES))
-        self._samples, self._n, self._result = {}, 0, None
+        self._samples, self._embs, self._n, self._rejects, self._result = {}, {}, 0, 0, None
+        self._last_reject, self._suspect = None, set()
         # 모델(첫 로드 12 s)은 낭독하는 동안 미리 — 마무리 때 메인 루프가 멈추지 않게. 이미 로드됐으면 즉시 끝난다
         self._preload = threading.Thread(target=self.speaker._model, daemon=True)
         self._preload.start()
@@ -98,6 +119,12 @@ class VoiceSession:
         keep = {k: v for k, v in self._samples.items() if k < self._n}
         dropped = len(self._samples) - len(keep)
         self._samples = keep
+        self._embs = {k: v for k, v in self._embs.items() if k < self._n}
+        self._suspect = {k for k in self._suspect if k < self._n}
+        if self._last_reject and self._last_reject[0] != self._n:
+            self._last_reject = None        # 다른 문장으로 넘어갔으면 직전 거절은 뜻이 없다
+        if not self._embs:
+            self._rejects = 0               # 앞 문장이 다 사라지면 비교 기준도 사라진다 — 거절 예산도 되돌린다
         self._result = None                 # "다시 녹음" 이면 이전 결과는 폐기
         text = SENTENCES[self._n - 1] if self._n <= len(SENTENCES) else "?"
         if dropped:
@@ -112,7 +139,8 @@ class VoiceSession:
 
     def on_cancel(self, tempId):
         log_rx("voice_reg_cancel", {"tempId": tempId})
-        self.active, self._n, self._samples, self._result = False, 0, {}, None
+        self.active, self._n, self._samples, self._embs, self._rejects, self._result = False, 0, {}, {}, 0, None
+        self._last_reject, self._suspect = None, set()
         print("[화자 등록] 중단 — 이전 프로필 유지")
 
     def on_registered(self, prof_id, is_active):
@@ -142,25 +170,81 @@ class VoiceSession:
             return
         from brain import speech_s
 
+        n = self._n
         spoken = speech_s(audio_i16)
         if spoken < MIN_SPEECH_S:
-            print(f"[화자 등록] 너무 짧음({spoken:.1f} s) — 문장 {self._n} 을 다시 기다린다")
+            self._reject(n, "TOO_SHORT", "너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.", f"말소리 {spoken:.1f} s")
             return
-        n, self._n = self._n, 0
-        self._samples[n] = np.asarray(audio_i16, dtype=np.int16)
+        audio = np.asarray(audio_i16, dtype=np.int16)
+        # 임베딩은 문장을 받은 자리에서 바로 뽑는다 — 5개를 마지막에 몰아 뽑으면 그만큼 마무리가 늦고,
+        # 앞 문장과 닮았는지도 지금 봐야 사용자가 그 문장을 바로 다시 읽을 수 있다
+        if self._preload is not None:
+            self._preload.join()            # 첫 문장이면 모델 로드(첫 12 s)를 여기서 기다린다
+            self._preload = None
+        try:
+            emb = self.speaker.embed(audio)
+            if not np.isfinite(emb).all():
+                raise ValueError("임베딩에 NaN")
+        except Exception as e:
+            # code 없이 사유만 — 계약 어휘에 맞는 코드가 없고 code 는 선택 필드다. 모델이 계속 실패하면 사용자는 매번 이 문구를 보고
+            # "중단" 으로 나간다 — AI 가 등록을 스스로 끝내는 이벤트는 계약에 없다
+            self._reject(n, None, "목소리 분석에 실패했어요. 잠시 후 다시 읽어주세요.", f"임베딩 실패 {e}")
+            return
+        sim = None                          # 앞 문장들과 유사도 — 1번 문장은 비교 대상이 없다
+        ref = [e for k, e in self._embs.items() if k not in self._suspect]   # 의심 문장은 기준에서 뺀다
+        if ref:
+            centroid, _ = self.speaker.centroid_of_embs(ref)
+            sim = float(emb @ centroid)
+            if sim < VOICE_MIN_SIM and self._rejects < REJECT_BUDGET:
+                last = self._last_reject
+                agree = float(emb @ last[1]) if last and last[0] == n else None
+                if len(ref) == 1 and agree is not None and agree >= QUALITY_MIN_SIM:
+                    # 같은 문장을 두 번 읽었는데 둘은 닮았고 앞 문장 하나와만 다르다 — 범인은 앞 문장(찌그러진 앵커)이다.
+                    # 이 문장을 받고 앞 문장은 이후 기준에서 뺀다. 프로필에 넣을지는 _finish 가 다섯 개를 놓고 다시 본다
+                    bad = next(k for k in self._embs if k not in self._suspect)
+                    self._suspect.add(bad)
+                    print(f"[화자 등록] 문장 {n} 두 시도끼리 유사도 {agree:.2f} ≥ {QUALITY_MIN_SIM}, 앞 문장 {bad}과만 다름({sim:.2f}) "
+                          f"— {bad}번을 의심해 기준에서 뺀다")
+                else:
+                    self._rejects += 1
+                    self._last_reject = (n, emb)
+                    self._reject(n, "INCONSISTENT", "앞 문장과 목소리가 다르게 들려요. 같은 분이 조용한 곳에서 다시 읽어주세요.",
+                                 f"앞 문장들과 유사도 {sim:.2f} < {VOICE_MIN_SIM}, 거절 {self._rejects}/{REJECT_BUDGET}")
+                    return
+        self._last_reject = None
+        self._n = 0
+        self._samples[n], self._embs[n] = audio, emb
+        # 통과 로그 — 실측 때 VOICE_MIN_SIM·MIN_SPEECH_S 를 맞추는 근거. 예산 소진 뒤 통과한 문장도 유사도가 남는다
+        print(f"[화자 등록] 문장 {n} 통과 — 말소리 {spoken:.1f} s, "
+              + (f"앞 문장들과 유사도 {sim:.2f}" if sim is not None else "첫 문장(비교 없음)"))
         self._tx("voice_progress", {"tempId": self.tempId, "n": n})
         if all(k in self._samples for k in range(1, self.total + 1)):
             self._finish()
 
     # ── 내부 ──
+    def _reject(self, n, code, reason, why):
+        """문장 하나를 무르고 사유를 보낸다. self._n 은 그대로 둔다 — 순번을 진행하지 않고 같은 문장을 계속 기다린다."""
+        print(f"[화자 등록] 문장 {n} 거절({code or '사유만'}) — {why}, 다시 기다린다")
+        data = {"n": n, "reason": reason}
+        if code:
+            data["code"] = code             # 없으면 키 자체를 넣지 않는다 — BE 계약 (FE 는 reason 으로 폴백)
+        self._tx("command_rejected", data)
+
     def _finish(self):
         from brain import wav_bytes
 
-        if self._preload is not None:
-            self._preload.join()
-        audios = [self._samples[k] for k in range(1, self.total + 1)]
-        centroid, min_sim = self.speaker.centroid_of(audios)
-        wav = np.concatenate(audios)
+        keys = list(range(1, self.total + 1))
+        # 혼자 튀는 문장 하나는 프로필 평균에서 뺀다 — 찌그러진 1번이 기준이 됐던 경우가 여기서 걸러진다.
+        # 각 문장을 나머지 평균과 견줘, 하나만 VOICE_MIN_SIM 아래이고 나머지는 전부 QUALITY_MIN_SIM 이상일 때만 뺀다.
+        # 둘 이상 튀면 어느 쪽이 본인인지 모르니 그대로 두고 voice_quality_warn 에 맡긴다
+        loo = {k: float(self._embs[k] @ self.speaker.centroid_of_embs([self._embs[j] for j in keys if j != k])[0]) for k in keys}
+        low = [k for k in keys if loo[k] < VOICE_MIN_SIM]
+        use = keys
+        if len(low) == 1 and all(loo[k] >= QUALITY_MIN_SIM for k in keys if k != low[0]):
+            use = [k for k in keys if k != low[0]]
+            print(f"[화자 등록] 문장 {low[0]} 이 나머지와 안 닮음(유사도 {loo[low[0]]:.2f}) — 프로필 평균에서 빼고 {len(use)}문장으로 만든다")
+        centroid, min_sim = self.speaker.centroid_of_embs([self._embs[k] for k in use])
+        wav = np.concatenate([self._samples[k] for k in keys])   # 재생용 샘플은 다섯 문장 다 — 사용자가 들은 그대로
         noise = noise_level(wav)
         quality = "양호" if min_sim >= QUALITY_MIN_SIM else "낮음"
         self._result = (self.speaker.npz_bytes(centroid), wav_bytes(wav), round(len(wav) / SR, 1), quality, noise)
@@ -194,8 +278,8 @@ class VoiceSession:
 class WakeEnroll:
     """온보딩 "이름 불러보기" 의 AI 측 핸들러 — BE wakeword_enroll_start 로 시작 (206).
 
-    FE 가 "시아야" 를 10번 부르게 하고, 부를 때마다 AI 가 wakeword_sample{n, total} 을 보내 진행바를 채운다.
-    10개가 모이면 샘플 원본을 npz 하나로 묶어 PUT /api/agent/blobs/wakeword 로 올리고 wakeword_done 을 보낸다.
+    FE 가 "시아야" 를 WAKE_TOTAL(5)번 부르게 하고, 부를 때마다 AI 가 wakeword_sample{n, total} 을 보내 진행바를 채운다.
+    다 모이면 샘플 원본을 npz 하나로 묶어 PUT /api/agent/blobs/wakeword 로 올리고 wakeword_done 을 보낸다.
     FE 는 wakeword_done 이 와야 "다음" 버튼을 연다. 호출어 모델(고정 파일)은 여기서 바꾸지 않고 BE 도 npz 를 저장만 한다.
     NOTE(한계): 샘플 판정은 말소리 길이뿐 — 실제로 "시아야" 라고 했는지는 확인하지 않는다.
     """
@@ -251,6 +335,7 @@ class CommandEnroll:
 
     FE 가 SENTENCES 의 n번째 문장을 띄우고, BE 가 command_collect{n} 으로 "n번 문장" 을 지시한다. AI 는 그 다음 VAD 발화가
     문장 낭독 길이(MIN_SPEECH_S 이상)면 command_progress{n} 을 보내고, 마지막 문장 뒤에 command_done 을 보낸다.
+    짧으면 command_rejected{n, reason, code} 로 사유를 보내고 순번은 진행하지 않는다 — 같은 문장을 계속 기다린다.
     연습 단계라 저장하는 것이 없다 — BE 는 번호만 오가고 tempId · npz 가 없다. 화자 등록(VoiceSession)과 문장은 같지만
     그쪽은 샘플을 모아 프로필을 만든다는 점이 다르다.
     NOTE(한계): 낭독 판정은 말소리 길이뿐 — 문장 내용은 확인하지 않는다. 중단 이벤트가 계약에 없어 끝까지 가야 풀린다.
@@ -288,7 +373,9 @@ class CommandEnroll:
 
         spoken = speech_s(audio_i16)
         if spoken < MIN_SPEECH_S:
-            print(f"[명령 문장] 너무 짧음({spoken:.1f} s) — 문장 {self._n} 을 다시 기다린다")
+            print(f"[명령 문장] 문장 {self._n} 거절(TOO_SHORT) — 말소리 {spoken:.1f} s, 다시 기다린다")
+            self._tx("command_rejected", {
+                "n": self._n, "reason": "너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.", "code": "TOO_SHORT"})
             return
         n, self._n = self._n, 0
         self._tx("command_progress", {"n": n})

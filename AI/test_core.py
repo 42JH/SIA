@@ -516,7 +516,8 @@ def test_mouse_subpixel_accumulator():
 
 def test_voice_bridge():
     """화자 등록 이벤트 흐름(65) — ready → 문장 5개 collect/progress → 샘플·npz 업로드 → captured.
-    짧은 발화는 같은 문장을 다시 기다리고, 샘플이 서로 안 닮으면 voice_quality_warn 뒤 voice_finalize 가 와야 올린다.
+    문장은 받는 자리에서 바로 임베딩하고, 짧거나 앞 문장과 안 닮으면 command_rejected 뒤 같은 문장을 다시 기다린다.
+    5문장이 서로 안 닮으면 voice_quality_warn 뒤 voice_finalize 가 와야 올린다.
     같은 문장을 다시 수집하라는 지시가 오면 그 문장부터 뒤 샘플을 버린다."""
     from speaker import SpeakerVerifier
     from voice_bridge import SENTENCES, VoiceSession
@@ -527,8 +528,13 @@ def test_voice_bridge():
         def _send(self, o): self.sent.append((o["type"], o["data"]))
 
     class FakeSpeaker(SpeakerVerifier):  # 임베딩만 가짜 — centroid·npz 직렬화는 진짜 코드
+        def __init__(self, p):
+            super().__init__(p)
+            self.embeds = 0                                    # 몇 번 뽑았는지 — 문장마다 뽑는지 세려고
         def _model(self): return None
-        def embed(self, a): return np.array([1.0, 0.0]) if a[0] == 7 else np.array([0.0, 1.0])  # 첫 샘플 값 = 화자 표식
+        def embed(self, a):
+            self.embeds += 1
+            return {7: np.array([1.0, 0.0]), 6: np.array([-1.0, 0.0])}.get(int(a[0]), np.array([0.0, 1.0]))  # 첫 샘플 값 = 화자 표식
 
     rng = np.random.default_rng(0)
     def loud(marker, s=2.0):
@@ -537,29 +543,45 @@ def test_voice_bridge():
         return a
 
     link = FakeLink()
-    vs = VoiceSession(link, FakeSpeaker("_no_such_profile.npz"), "_selftest_speaker.npz")
+    spk = FakeSpeaker("_no_such_profile.npz")
+    vs = VoiceSession(link, spk, "_selftest_speaker.npz")
     vs._put = lambda url, body, ctype: link.sent.append(("PUT", ctype))
     assert len(SENTENCES) >= 5                                 # BE 가 total(현재 5)을 정한다 — 상수는 그 이상이면 된다
     vs.on_start("t1", 5)
     assert link.sent[-1] == ("voice_ready", {"tempId": "t1"})
     vs.on_collect("t1", 1)
-    vs.on_utter(loud(7, 0.5))                                  # 말소리 0.5 s — 낭독 아님, 문장 1 그대로
+    vs.on_utter(loud(7, 0.2))                                  # 말소리 0.2 s — 헛기침 길이, 문장 1 그대로
     assert "voice_progress" not in [t for t, _ in link.sent]
+    assert link.sent[-1][1]["code"] == "TOO_SHORT" and spk.embeds == 0   # 짧으면 임베딩까지 가지도 않는다
     for n in (1, 2, 3, 4, 5):
         vs.on_collect("t1", n)
         vs.on_utter(loud(7))
+        assert spk.embeds == n                                 # 문장을 받을 때마다 하나씩 — 마지막에 5개를 몰아 뽑지 않는다
     types = [t for t, _ in link.sent]
     assert types.count("voice_progress") == 5 and types[-3:] == ["PUT", "PUT", "voice_captured"]
     assert [c for t, c in link.sent if t == "PUT"] == ["audio/wav", "application/octet-stream"]
     d = link.sent[-1][1]
     assert d["tempId"] == "t1" and d["quality"] == "양호" and d["noise"] in ("낮음", "높음") and d["durationSec"] > 5
-    # 3번 문장만 다른 목소리 → 샘플 일관성 0.24 < 0.5 → 경고 후 멈춤, finalize 가 와야 업로드
+    # 3번 문장만 다른 목소리 → 그 문장만 무른다. 거절 예산(2회)이 떨어지면 받아 주고, 5문장 일관성 0.24 < 0.5 로 최종 경고
     link.sent.clear()
     vs.on_start("t2", 5)
-    for n, marker in ((1, 7), (2, 7), (3, 9), (4, 7), (5, 7)):
+    for n in (1, 2):
+        vs.on_collect("t2", n)
+        vs.on_utter(loud(7))
+    vs.on_collect("t2", 3)
+    vs.on_utter(loud(9))                                       # 앞 문장과 안 닮음 → 거절 1
+    assert link.sent[-1][0] == "command_rejected" and link.sent[-1][1]["code"] == "INCONSISTENT"
+    assert vs._n == 3 and sorted(vs._samples) == [1, 2]        # 순번은 그대로 — 같은 문장을 계속 기다린다
+    vs.on_utter(loud(7, 0.2))                                  # 짧은 발화(헛기침)는 늘 거절하되 예산은 안 쓴다
+    assert link.sent[-1][1]["code"] == "TOO_SHORT" and vs._rejects == 1
+    vs.on_utter(loud(9))                                       # 거절 2 — 예산 소진
+    assert [t for t, _ in link.sent].count("command_rejected") == 3
+    vs.on_utter(loud(9))                                       # 예산이 없으니 받는다 — 1번 문장이 잘못 녹음돼도 갇히지 않게
+    assert link.sent[-1] == ("voice_progress", {"tempId": "t2", "n": 3})
+    for n, marker in ((4, 9), (5, 6)):                         # 4번도 다른 목소리, 5번은 또 다른 방향 — 튀는 문장이 둘 이상
         vs.on_collect("t2", n)
         vs.on_utter(loud(marker))
-    assert link.sent[-1][0] == "voice_quality_warn" and link.sent[-1][1]["tempId"] == "t2"
+    assert link.sent[-1][0] == "voice_quality_warn" and link.sent[-1][1]["tempId"] == "t2"   # 하나만 뺄 수 없으니 경고
     vs.on_finalize("t2")
     assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "낮음"
     vs.on_cancel("t2")
@@ -584,11 +606,45 @@ def test_voice_bridge():
         vs.on_collect("t4", n)
         vs.on_utter(loud(7))
     vs.on_collect("t4", 2)
-    assert sorted(vs._samples) == [1]
+    assert sorted(vs._samples) == [1] and sorted(vs._embs) == [1]   # 버린 문장은 임베딩도 같이 버린다
+    vs.on_utter(loud(9))                                       # 2번을 다른 목소리로 → 거절
+    assert vs._rejects == 1
+    vs.on_collect("t4", 1)                                     # "다시 녹음" — 비교 기준이 사라지면 예산도 되돌린다
+    assert vs._embs == {} and vs._rejects == 0
+    # 임베딩 자체가 실패(모델 로드 불가 등)하면 사유만 보내고 code 키는 없다 — FE 가 멈춘 것처럼 보이지 않게
+    spk.embed = lambda a: (_ for _ in ()).throw(RuntimeError("모델 없음"))
+    vs.on_utter(loud(7))
+    assert link.sent[-1][0] == "command_rejected" and "code" not in link.sent[-1][1] and vs._n == 1
+    del spk.embed
+    # 1번이 찌그러진 경우 — 2번을 두 번 읽었는데 둘은 닮고 1번과만 다르면 1번을 의심해 기준에서 빼고 2번을 받는다.
+    # 마지막엔 1번이 나머지 넷과 안 닮아 프로필 평균에서 빠진다 → 경고 없이 양호
+    link.sent.clear()
+    vs.on_start("t5", 5)
+    vs.on_collect("t5", 1)
+    vs.on_utter(loud(9))                                       # 찌그러진 1번 — 비교 대상이 없어 그냥 받는다
+    vs.on_collect("t5", 2)
+    vs.on_utter(loud(7))                                       # 본인 — 1번과 안 닮음 → 거절 1
+    assert link.sent[-1][0] == "command_rejected" and vs._rejects == 1
+    vs.on_utter(loud(7))                                       # 다시 읽음 — 첫 시도와 닮음, 1번과만 다름 → 1번 의심, 2번 통과
+    assert link.sent[-1] == ("voice_progress", {"tempId": "t5", "n": 2}) and vs._suspect == {1} and vs._rejects == 1
+    for n in (3, 4, 5):
+        vs.on_collect("t5", n)
+        vs.on_utter(loud(7))                                   # 기준이 2번뿐이라 전부 통과
+    assert [t for t, _ in link.sent].count("command_rejected") == 1
+    assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "양호"   # 1번 제외, 4문장 프로필
+    # 진짜 2번 문제 — 두 시도가 서로도 안 닮으면 앞 문장을 의심하지 않고 그냥 거절 2/2
+    link.sent.clear()
+    vs.on_start("t6", 5)
+    vs.on_collect("t6", 1)
+    vs.on_utter(loud(7))
+    vs.on_collect("t6", 2)
+    vs.on_utter(loud(9))                                       # 1번과 다름 → 거절 1
+    vs.on_utter(loud(6))                                       # 1번과도, 첫 시도와도 다름 → 거절 2
+    assert [t for t, _ in link.sent].count("command_rejected") == 2 and vs._suspect == set() and vs._n == 2
 
 
 def test_wake_enroll():
-    """온보딩 이름 불러보기(206) — wakeword_enroll_start 뒤 "시아야" 길이 발화 10개 → wakeword_sample 10건 → npz PUT → wakeword_done.
+    """온보딩 이름 불러보기(206) — wakeword_enroll_start 뒤 "시아야" 길이 발화 WAKE_TOTAL(5)개 → wakeword_sample 5건 → npz PUT → wakeword_done.
     너무 짧거나(헛기침) 긴(문장) 발화는 세지 않고, 끝난 뒤 다시 시작하면 처음부터 다시 센다."""
     from voice_bridge import WAKE_TOTAL, WakeEnroll
 
@@ -646,16 +702,19 @@ def test_command_enroll():
     assert link.sent == [("command_ready", {})]
     ce.on_utter(loud(2.0))                                     # collect 전 — 무시
     ce.on_collect(1)
-    ce.on_utter(loud(0.5))                                     # 0.5 s — 낭독 아님, 문장 1 그대로
-    assert len(link.sent) == 1
+    ce.on_utter(loud(0.2))                                     # 0.2 s — 헛기침 길이, 문장 1 그대로. 사유는 command_rejected 로 알린다
+    assert link.sent[-1] == ("command_rejected",
+                             {"n": 1, "reason": "너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.", "code": "TOO_SHORT"})
+    assert len(link.sent) == 2
     for n in range(1, len(SENTENCES) + 1):
         ce.on_collect(n)
         ce.on_utter(loud(2.0))
     types = [t for t, _ in link.sent]
     assert types.count("command_progress") == len(SENTENCES) and types[-1] == "command_done" and not ce.active
-    assert link.sent[1][1] == {"n": 1} and link.sent[-2][1] == {"n": len(SENTENCES)}
+    prog = [d for t, d in link.sent if t == "command_progress"]
+    assert prog[0] == {"n": 1} and prog[-1] == {"n": len(SENTENCES)}
     ce.on_utter(loud(2.0))                                     # 끝난 뒤 — 무시
-    assert len(link.sent) == len(SENTENCES) + 2
+    assert len(link.sent) == len(SENTENCES) + 3                # ready + rejected + progress 5 + done
 
 
 def test_notice_data():
