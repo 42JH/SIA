@@ -12,7 +12,7 @@ export const useVoiceStore = create((set) => ({
   receiveSentence: (sentence) => set((state) => ({
     stage: 'recording', sentence, tempId: sentence.tempId ?? state.tempId,
     total: sentence.total ?? state.total,
-    warning: null, pending: false, error: '',
+    warning: null, review: null, pending: false, error: '',
   })),
   receiveProgress: ({ n, total, tempId }) => set((state) => ({
     completed: n, total: total ?? state.total, tempId: tempId ?? state.tempId,
@@ -23,6 +23,10 @@ export const useVoiceStore = create((set) => ({
   })),
   receiveReview: (review) => set((state) => ({
     stage: 'review', review, tempId: review.tempId ?? state.tempId, pending: false,
+  })),
+  receiveSentenceRejected: (rejection) => set((state) => ({
+    stage: 'review', review: { ...rejection, rejected: true },
+    tempId: rejection.tempId ?? state.tempId, pending: false,
   })),
   receiveSaved: () => set({ stage: 'done', pending: false }),
 }));

@@ -155,7 +155,7 @@ export default function OnboardingFlow() {
       const retry = () => send('voice_sentence_retry', { tempId }, { step: 'voice', voiceResult: null, finalVoiceReview: null, pending: false });
       const accept = () => current >= 5
         ? send('voice_commit', { tempId, ...(selectedDeviceLabel('mic') ? { deviceLabel: selectedDeviceLabel('mic') } : {}) })
-        : change({ step: 'voice', voiceResult: null, pending: false });
+        : send('voice_sentence_next', { tempId }, { step: 'voice', voiceSentence: null, voiceResult: null, finalVoiceReview: null });
       content = <VoiceEnrollment mode="review" review={review ?? {}} current={current} total={5} rejected={review?.rejected === true} ready={ready} pending={f.pending} canRetry={Boolean(tempId)} canAccept={current < 5 || Boolean(f.finalVoiceReview)} onRetry={retry} onAccept={accept} />; break;
     }
     case 'micDone': content = done('마이크 설정', '목소리 등록이 완료되었습니다', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;

@@ -11,6 +11,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 앱 등록 | POST /api/apps/scan | 실제 응답 이후 마이크 단계로 이동 |
 | 호출어 | wakeword_enroll_start | wakeword_progress, wakeword_done |
 | 보이스 | voice_reg_start | voice_sentence, voice_progress, voice_sentence_rejected, voice_quality_warn, voice_review, voice_reg_denied |
+| 보이스 다음 문장 | voice_sentence_next | voice_sentence 수신 후 진행 |
 | 보이스 재시도 | voice_sentence_retry, voice_reg_retry | voice_sentence 수신 후 진행 |
 | 품질 경고 무시 | voice_accept_anyway | voice_review 수신 후 샘플 확인 |
 | 보이스 저장 | voice_commit | voice_saved 이후 마이크 완료 |
@@ -22,7 +23,7 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 시선 중단 | calib_cancel | 현재 계약에 완료 응답 없음. 전송만 기록 |
 | 연결 상태 | GET /api/status 주기 조회 | agent_status, settings_sync도 반영 |
 
-`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 보이스 문장 처리 중 수신한 `voice_sentence_rejected`는 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다. 알려진 `TOO_SHORT`·`INCONSISTENT` 코드는 FE 문구를 사용하고, 없거나 모르는 코드는 서버의 `reason`을 사용한다.
+`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 문장 통과 뒤에는 판독 결과를 확인하고 `voice_sentence_next {tempId}`를 보내야 다음 문장을 받는다. `voice_sentence_rejected`는 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다. 알려진 `TOO_SHORT`·`INCONSISTENT` 코드는 FE 문구를 사용하고, 없거나 모르는 코드는 서버의 `reason`을 사용한다.
 
 시선은 안내 중 받은 점을 보관한 뒤 주 모니터 전체화면의 실제 코 중심 좌표를 물리 픽셀로 보내며, 오차는 서버 결과를 표시한다.
 
@@ -60,7 +61,7 @@ FE는 `voice_reg_start {}`를 보내고, BE가 발급한 `tempId`를 첫 `voice_
 
 1. BE·AI·FE 실행 후 기본 설정에서 장치를 선택하고 저장한다.
 2. 호출어 5회 후 보이스 등록 문장 5개를 진행한다.
-3. 통신 기록에서 `voice_reg_start` 발신과 `voice_sentence`·`voice_progress` 수신을 확인한다. tempId가 없어도 5문장 수집이 이어져야 한다.
+3. 통신 기록에서 `voice_reg_start` 발신과 `voice_sentence`·`voice_progress` 수신을 확인한다. 첫 `voice_sentence`의 tempId를 이후 문장 확인 요청에도 동일하게 사용해야 한다.
 4. 첫 `voice_sentence`의 tempId가 이후 재시도·중단 요청에 동일하게 포함되는지 확인한다.
 5. `voice_review`의 샘플 확인 후 등록을 누른다. `voice_commit`에 서버가 준 tempId가 포함되는지 확인한다.
 6. `voice_saved` 수신 후 마이크 설정 완료 화면으로 이동하는지 확인한다.
