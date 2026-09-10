@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 
 // 초 단위 카운트다운 (파괴적 명령 확인 팝업 등, 서버가 준 timeoutSec 기준)
 export function useCountdownFromSeconds(totalSec) {
-  const [remaining, setRemaining] = useState(totalSec);
+  const initial = Number.isFinite(totalSec) ? Math.max(Math.ceil(totalSec), 0) : 0;
+  const [remaining, setRemaining] = useState(initial);
 
   useEffect(() => {
-    setRemaining(totalSec);
+    const next = Number.isFinite(totalSec) ? Math.max(Math.ceil(totalSec), 0) : 0;
+    setRemaining(next);
+    if (next === 0) return undefined;
     const interval = setInterval(() => {
       setRemaining((prev) => Math.max(prev - 1, 0));
     }, 1000);
