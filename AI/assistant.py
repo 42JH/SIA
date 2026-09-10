@@ -430,6 +430,8 @@ def main():
     hud_volume = 50
     hud_feedback = ""
     hud_feedback_until = 0.0
+    dynamic_hud_event = ""
+    dynamic_hud_until = 0.0
     was_gesture_active = False
     loop_fps = 0.0
     loop_frames = 0
@@ -707,6 +709,11 @@ def main():
                 pinch_volume.update(None, now)
                 dynamic_event = None
                 scroll_steps = 0
+            # 동적 제스처는 순간 이벤트라 정적 손모양 HUD와 별도 표시한다.
+            # 실행이 비활성화됐어도 감지 자체는 확인할 수 있어 실측에 유용하다.
+            if dynamic_event:
+                dynamic_hud_event = dynamic_event
+                dynamic_hud_until = now + 0.9
             if (ENABLE_DYNAMIC_GESTURES and not registration_active and dynamic_event
                     and dynamic_event not in disabled_gestures
                     and not args.two_hand_preview):
@@ -775,11 +782,19 @@ def main():
             state = ("THINKING" if brain.busy else "LISTENING" if voice.recording
                      else f"ACTIVE {int(session_left)}s" if gesture_active
                      else "IDLE")
-            cv2.putText(hud, f"{state}  {gesture}", (10, 24),
+            # 상태, 정적 손모양, 동적 이벤트를 같은 형식의 독립된 줄로 보여 준다.
+            # 예: ACTIVE 12s / STATIC: Victory / DYNAMIC: Screen_Next
+            cv2.putText(hud, state, (10, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 220, 80), 2)
+            if gesture_active and not registration_active and gesture not in (None, "None"):
+                cv2.putText(hud, f"STATIC: {gesture}", (10, 48),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (80, 220, 80), 1)
             pose_text = (f"LOOP {loop_fps:.1f} FPS | HAND {hand_infer_ms:.1f}ms"
                          + (f" | POSE {pose.last_infer_ms:.1f}ms/{POSE_MAX_FPS:.0f}Hz" if pose else ""))
-            cv2.putText(hud, pose_text, (10, 48),
+            if now < dynamic_hud_until:
+                cv2.putText(hud, f"DYNAMIC: {dynamic_hud_event}", (10, 70),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (70, 210, 255), 2)
+            cv2.putText(hud, pose_text, (10, 92),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 220, 255), 1)
             if pose_landmarks:
                 # 팔 관절만 표시: 왼/오른 어깨(11,12), 팔꿈치(13,14), 손목(15,16)
