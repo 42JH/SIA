@@ -2263,8 +2263,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `command_sentence` | `{n: int, total: int}` | 읽을 명령 문장의 순번 (total 5). 원문은 FE 상수 |
 | `command_progress` | `{n: int, total: int}` | 명령 문장 n 완료 |
 | `command_done` | `{}` | 명령 문장 수집 완료 |
-| `voice_sentence` | `{n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수 |
-| `voice_progress` | `{n: int, total: int}` | 문장 n 낭독 완료 |
+| `voice_sentence` | `{tempId: string, n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수. `tempId` 는 FE→BE 재시도·취소·커밋에 되돌려 보낸다 |
+| `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료 |
 | `voice_quality_warn` | `{tempId: string, reason: string, noise: 낮음 \| 높음 \| null}` | 음질 미달 |
 | `voice_review` | `{tempId: string, sampleUrl: string \| null, durationSec: number \| null, quality: string \| null, noise: string \| null}` | 녹음 확인. `sampleUrl` 은 `/api/voice-reg/{tempId}/sample` |
 | `voice_saved` | `{id: long, name: string, active: boolean}` | 보이스 프로필 저장 완료 |
