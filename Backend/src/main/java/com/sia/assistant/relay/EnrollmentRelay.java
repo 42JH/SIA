@@ -2,6 +2,7 @@ package com.sia.assistant.relay;
 
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.FeHub;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.stereotype.Component;
@@ -64,6 +65,24 @@ public class EnrollmentRelay {
             commandN.set(n + 1);
             sendCommandSentence(n + 1);
         }
+    }
+
+    /**
+     * AI command_rejected {n, reason, code?} — 낭독 실패 사유 중계.
+     * 문장을 재발급하지 않는 것이 계약이다 — AI 가 같은 n 을 계속 기다리므로 BE 가 끼어들면 순번이 어긋난다.
+     * reason 의 소유자는 AI 다 (FE 가 그대로 띄운다). code 는 선택 필드라 온 경우에만 싣는다 —
+     * 어휘가 늘어도 FE 는 모르는 code 를 reason 으로 폴백한다.
+     */
+    public void onCommandRejected(JsonNode d) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("n", d.path("n").asInt());
+        body.put("total", COMMAND_TOTAL);
+        body.put("reason", d.path("reason").asText(""));
+        String code = d.path("code").asText(null);
+        if (code != null && !code.isBlank()) {
+            body.put("code", code);
+        }
+        feHub.send("command_rejected", body);
     }
 
     public void onCommandDone() {

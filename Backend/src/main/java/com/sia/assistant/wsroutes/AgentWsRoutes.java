@@ -87,6 +87,7 @@ public class AgentWsRoutes {
             case "wakeword_done" -> enrollment.onWakewordDone();
             case "command_ready" -> enrollment.onCommandReady();
             case "command_progress" -> enrollment.onCommandProgress(d);
+            case "command_rejected" -> enrollment.onCommandRejected(d);
             case "command_done" -> enrollment.onCommandDone();
             // ---- 보이스 등록 (5문장)
             case "voice_ready" -> voiceRegistration.onReady(d.path("tempId").asText());
