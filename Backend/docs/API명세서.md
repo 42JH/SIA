@@ -469,6 +469,7 @@ GET /api/gestures?page=0&size=20
 GET /api/gestures?custom=false
 GET /api/gestures?custom=true&page=0&size=20
 GET /api/gestures?kind=HAND
+GET /api/gestures?hands=2&motion=DYNAMIC
 GET /api/gestures?dangling=true
 ```
 
@@ -477,8 +478,12 @@ GET /api/gestures?dangling=true
 | `page` | 0 | 0부터 |
 | `size` | 20 | 1~100 으로 클램프 |
 | `kind` | — | `HAND` / `FACE` |
+| `hands` | — | `1` = 한손만, `2` = 양손만 |
+| `motion` | — | `STATIC` = 정적만, `DYNAMIC` = 동적만. 대소문자 무시 |
 | `custom` | — | `true` = 커스텀만, `false` = 기본 제공만, 생략 = 전부 |
 | `dangling` | `false` | `true` 면 `runnable` 이 `false` 인 것만 |
+
+`hands` 가 `1` · `2` 가 아니거나 `motion` 이 `STATIC` · `DYNAMIC` 이 아니면 **400 INVALID_REQUEST** 다 (`"hands 는 1 또는 2 여야 합니다"` / `"motion 은 STATIC 또는 DYNAMIC 이어야 합니다"`).
 
 **200** — `items` 는 `id` 오름차순.
 
@@ -491,6 +496,8 @@ GET /api/gestures?dangling=true
     {
       "id": 1,
       "kind": "HAND",
+      "hands": 1,
+      "motion": "STATIC",
       "context": null,
       "name": "Open_Palm",
       "label": "세션 연장",
@@ -508,6 +515,8 @@ GET /api/gestures?dangling=true
     {
       "id": 14,
       "kind": "HAND",
+      "hands": 2,
+      "motion": "DYNAMIC",
       "context": null,
       "name": "손가락 하트",
       "label": "음악 재생",
@@ -529,7 +538,9 @@ GET /api/gestures?dangling=true
 
 | 필드 | 설명 |
 |---|---|
-| `kind` | `HAND` / `FACE` |
+| `kind` | `HAND` / `FACE`. 모달리티 축 |
+| `hands` | `1` = 한손, `2` = 양손. 형태 축. `FACE` 는 `null` |
+| `motion` | `STATIC` = 정적, `DYNAMIC` = 동적. 형태 축. `FACE` 는 `null` |
 | `context` | 매핑이 걸리는 컨텍스트 (`youtube` / `video`). `null` 이면 컨텍스트 제약 없는 기본 매핑 |
 | `enabled` | 켜기/끄기 상태. 꺼지면 AI 감지 제외 + BE 실행 차단 |
 | `custom` | `true` = 사용자 등록 제스처, `false` = 기본 제공 |
@@ -539,6 +550,8 @@ GET /api/gestures?dangling=true
 | `steps[].available` | 그 스텝 도구의 가용 여부 |
 
 커스텀 제스처 신규 등록은 REST 가 아니라 WS `macro_assign` 경로다.
+
+`hands` · `motion` 은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없다 — 재촬영으로만 바뀐다. 기본 제공 제스처는 전부 한손 정적이고 `FACE` 2건은 두 값이 `null` 이다.
 
 ### 1.11 `GET /api/gestures/{id}` — 제스처 단건
 
@@ -2483,13 +2496,13 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | 필드 | 타입 | 규칙 |
 |---|---|---|
-| `gestures` | `{id: long, name: string, sha256: string}[]` | 템플릿을 가진 커스텀 제스처 전부. 없으면 `[]`. 목록에 없는 로컬 템플릿은 삭제하고, sha256 이 다른 것만 `GET /api/agent/gestures/{id}/npz` 로 다시 받는다 |
+| `gestures` | `{id: long, name: string, sha256: string, hands: 1 \| 2 \| null, motion: STATIC \| DYNAMIC \| null}[]` | 템플릿을 가진 커스텀 제스처 전부. 없으면 `[]`. 목록에 없는 로컬 템플릿은 삭제하고, sha256 이 다른 것만 `GET /api/agent/gestures/{id}/npz` 로 다시 받는다. `hands` · `motion` 은 그 템플릿의 형태다 — npz 배열 모양을 역산하지 않아도 매처를 고를 수 있다 |
 | `wakeword` | string \| null | 호출어 모델 npz 의 sha256. `null` 이면 로컬 캐시 삭제 |
 | `voice` | `{id: long, sha256: string}` \| null | 활성 보이스 프로필 |
 | `calib` | `{id: long, sha256: string, screenW: int \| null, screenH: int \| null}` \| null | 활성 보정 프로필 |
 
 ```json
-{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam", "micDeviceId": "{0.0.1.00000000}.{a53af75a…}", "cameraDeviceId": "\\?\usb#vid_046d…" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
+{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam", "micDeviceId": "{0.0.1.00000000}.{a53af75a…}", "cameraDeviceId": "\\?\usb#vid_046d…" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…", "hands": 2, "motion": "DYNAMIC" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
 ```
 
 #### 제스처

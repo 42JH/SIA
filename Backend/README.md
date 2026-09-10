@@ -90,7 +90,7 @@ com.sia.assistant
 | 설정 키 | 6종 (`wakeWord`·`sessionSeconds`·`autoStart`·`gazeCursor`·`micDevice`·`cameraDevice`) | `settings/SettingsSchema` — 자유 JSON 이지만 이 키들은 유실·오타입이 막힌다. 옛 `screen` 은 삭제 |
 | 세션 유지 | 15초 (기본, 변경 가능) | `settings.sessionSeconds` — 개시·갱신마다 다시 읽어 다음 세션부터 적용 |
 | 도구 | 30개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region`, 2026-09-07 `volume.set`·`browser.search`, 2026-09-09 `browser.dom_text` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
-| 기본 제스처 매핑 | 11건 (실행 가능 9건) | `DefaultMappings` — 기동 시 gesture 가 비어 있으면 주입. FACE 2건은 스텝 없음 (dangling) |
+| 기본 제스처 매핑 | 11건 (실행 가능 9건) | `DefaultMappings` — 기동 시 gesture 가 비어 있으면 주입. FACE 2건은 스텝 없음 (dangling). HAND 9건은 전부 한손 정적(`hands=1`·`motion=STATIC`), FACE 2건은 두 축이 NULL |
 | 기록 보존 | 400일 | 대시보드의 가장 긴 축이 12개월 |
 | 프로필 | 보이스·시선 각 최대 4개 (사용 1+스톡 3) | 회의 확정 2026-09-01. 시선 재측정은 세션당 3회 (BE 카운트) |
 
@@ -99,6 +99,8 @@ com.sia.assistant
 | | 내용 |
 |---|---|
 | V1 | ERD 의 SQLite 각색 + 설정 싱글턴 시드 (tool·기본 제스처는 기동 시 Java 가 넣는다) |
+| V2 | `calib_profile.grade` — 보정 등급 판정을 AI 로 이관 |
+| V3 | `gesture.hands`·`gesture.motion` — 한손/양손 × 정적/동적 형태 축 (AI 인식 파이프라인 요청). SQLite 의 `ADD COLUMN` 은 CHECK 를 못 받아 값 검증은 `GestureService` 가 단독으로 맡는다 |
 
 2026-09-01 에 옛 V1~V6 을 V1 하나로 압축했고, **같은 날 와이어프레임 확정분(프로필 2테이블·gesture
 3컬럼·usage_event.profile_id·blob 이름 축소)도 V1 에 그대로 흡수했다** — 여전히 커밋 전이라 이력이

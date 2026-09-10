@@ -133,6 +133,8 @@ erDiagram
         INTEGER id PK
         INTEGER custom
         TEXT kind
+        INTEGER hands
+        TEXT motion
         TEXT context
         TEXT name
         TEXT label
@@ -334,7 +336,9 @@ erDiagram
 |---|---|:-:|---|---|
 | `id` | INTEGER | N | 자동 | PK. AI 가 템플릿을 내려받는 키 (`GET /api/agent/gestures/{id}/npz`) |
 | `custom` | INTEGER | N | `0` | `CHECK (0, 1)`. 1 = 사용자 등록 (템플릿 보유), 0 = 기본 제공 |
-| `kind` | TEXT | N | — | `CHECK ('HAND' \| 'FACE')` |
+| `kind` | TEXT | N | — | `CHECK ('HAND' \| 'FACE')`. 모달리티 축 |
+| `hands` | INTEGER | Y | — | `1`(한손) \| `2`(양손). 형태 축. `FACE` 는 NULL. CHECK 없음 — 검증은 서비스 계층 |
+| `motion` | TEXT | Y | — | `STATIC`(정적) \| `DYNAMIC`(동적). 형태 축. `FACE` 는 NULL. CHECK 없음 — 검증은 서비스 계층 |
 | `context` | TEXT | Y | — | 적용 컨텍스트. 현재 쓰이는 값은 `video` · `youtube` 이고 CHECK 로 강제하지 않는다. NULL = 컨텍스트 제약 없는 기본 매핑 |
 | `name` | TEXT | N | — | 제스처 이름. 기본 제공은 MediaPipe 이름, 커스텀은 사용자 지정 |
 | `label` | TEXT | Y | — | UI 표시용 이름 |
@@ -342,12 +346,14 @@ erDiagram
 | `repeatable` | INTEGER | N | `0` | `CHECK (0, 1)`. 반복 가능 여부. 반복 단위는 매크로 전체다 |
 | `enabled` | INTEGER | N | `1` | `CHECK (0, 1)`. 0 이면 AI 감지 제외 + BE 실행 차단 |
 | `created_at` | TEXT | Y | — | 등록일. 기본 제공은 NULL |
-| `video_path` | TEXT | Y | — | 등록 영상 파일명 (`gestures/` 디렉터리). 기본 제공은 NULL |
+| `video_path` | TEXT | Y | — | 등록 촬영본 파일명 (`gestures/` 디렉터리). `motion = 'DYNAMIC'` 은 `.webm`, `'STATIC'` 은 `.jpg`. 기본 제공은 NULL |
 | `npz` | BLOB | Y | — | 템플릿 npz. 커스텀은 항상 값이 있고 기본 제공은 NULL. PC 밖 반출 금지 |
 | `npz_sha256` | TEXT | Y | — | AI 캐시 무효화 기준. REST GET 의 ETag |
 | `npz_bytes` | INTEGER | Y | — | npz 크기 (1 ~ 5242880) |
 
 UNIQUE `(kind, context, name)`.
+
+`kind` 는 모달리티(손 \| 얼굴), `hands` · `motion` 은 형태 축이다. 형태를 `kind` 에 접지 않는 이유는 `kind` 가 UNIQUE 키의 일부여서다 — 접으면 같은 이름이 형태별로 중복 등록될 수 있다. 두 축은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없고, 재촬영으로만 바뀐다.
 
 ### 2.9 `gesture_step` — 매크로 단계
 
@@ -432,6 +438,8 @@ AI 가 `POST /api/agent/events` 로 보내는 이벤트와 BE 가 스스로 기�
 
 SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, context, name)` 에서 `context IS NULL` 인 행의 중복 검사는 서비스 계층이 직접 조회해 수행한다.
 
+`gesture.hands` · `gesture.motion` 에는 CHECK 가 없다. 두 컬럼은 `ALTER TABLE ... ADD COLUMN` 으로 추가됐고 SQLite 는 이 구문에 CHECK 를 받지 않는다 — 값 검증(`1` \| `2`, `STATIC` \| `DYNAMIC`)은 서비스 계층이 단독으로 맡는다.
+
 ### 3.3 인덱스
 
 | 인덱스 | 테이블 | 컬럼 | 용도 |
@@ -470,6 +478,8 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 | `blob.name` | `wakeword` |
 | `session.end_reason` | `EXPIRED` · `STOPPED` · `WATCHDOG` · `SHUTDOWN` |
 | `gesture.kind` | `HAND` · `FACE` |
+| `gesture.hands` | `1` · `2` (`FACE` 는 NULL) |
+| `gesture.motion` | `STATIC` · `DYNAMIC` (`FACE` 는 NULL) |
 | `gesture.context` | NULL(기본) · `video` · `youtube` (현재 쓰이는 값. CHECK 없음) |
 | `tool_call.caller` | `LLM` · `GESTURE` (`UI` 는 CHECK 에만 있는 예약값) |
 | `tool_call.outcome` | `EXECUTED` · `BLOCKED` · `FAILED` |
@@ -537,19 +547,21 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다. V1 이 넣는
 
 기본 제스처 매핑 11건 (`custom = 0`, `npz = NULL`, `enabled = 1`, `created_at = NULL`):
 
-| kind | context | name | label | repeatable | step 1 tool | step 1 args |
-|---|---|---|---|:-:|---|---|
-| HAND | NULL | `Open_Palm` | 세션 연장 | 0 | `session.extend` | `{}` |
-| HAND | NULL | `Thumb_Up` | 위로 스크롤 | 1 | `scroll.step` | `{"dir":"up"}` |
-| HAND | NULL | `Thumb_Down` | 아래로 스크롤 | 1 | `scroll.step` | `{"dir":"down"}` |
-| HAND | NULL | `Closed_Fist` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
-| HAND | `video` | `Open_Palm` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
-| HAND | `video` | `Victory` | 음소거 | 0 | `media.mute_toggle` | `{}` |
-| HAND | `video` | `Thumb_Up` | 볼륨 올리기 | 1 | `volume.step` | `{"dir":"up"}` |
-| HAND | `video` | `Thumb_Down` | 볼륨 내리기 | 1 | `volume.step` | `{"dir":"down"}` |
-| HAND | `youtube` | `Pointing_Up` | 다음 영상 | 0 | `media.next` | `{}` |
-| FACE | NULL | `brow_raise` | 예 | 0 | (없음) | — |
-| FACE | NULL | `smile` | 아니오 | 0 | (없음) | — |
+| kind | hands | motion | context | name | label | repeatable | step 1 tool | step 1 args |
+|---|:-:|---|---|---|---|:-:|---|---|
+| HAND | 1 | STATIC | NULL | `Open_Palm` | 세션 연장 | 0 | `session.extend` | `{}` |
+| HAND | 1 | STATIC | NULL | `Thumb_Up` | 위로 스크롤 | 1 | `scroll.step` | `{"dir":"up"}` |
+| HAND | 1 | STATIC | NULL | `Thumb_Down` | 아래로 스크롤 | 1 | `scroll.step` | `{"dir":"down"}` |
+| HAND | 1 | STATIC | NULL | `Closed_Fist` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
+| HAND | 1 | STATIC | `video` | `Open_Palm` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
+| HAND | 1 | STATIC | `video` | `Victory` | 음소거 | 0 | `media.mute_toggle` | `{}` |
+| HAND | 1 | STATIC | `video` | `Thumb_Up` | 볼륨 올리기 | 1 | `volume.step` | `{"dir":"up"}` |
+| HAND | 1 | STATIC | `video` | `Thumb_Down` | 볼륨 내리기 | 1 | `volume.step` | `{"dir":"down"}` |
+| HAND | 1 | STATIC | `youtube` | `Pointing_Up` | 다음 영상 | 0 | `media.next` | `{}` |
+| FACE | — | — | NULL | `brow_raise` | 예 | 0 | (없음) | — |
+| FACE | — | — | NULL | `smile` | 아니오 | 0 | (없음) | — |
+
+기본 제공 제스처는 MediaPipe 기본 제스처라 전부 한손 정적이다. FACE 2건은 손 개수·동작 구분이 없어 두 축이 NULL 이다.
 
 FACE 2건은 단계가 없다. 확인 응답(예/아니오)은 AI 가 직접 처리하므로 BE 쪽 실행 대상이 없다. `GET /api/gestures?dangling=true` 에 `runnable: false` 로 나타난다.
 
@@ -679,7 +691,9 @@ CREATE TABLE `app_target` (
 CREATE TABLE `gesture` (
 	`id`	BIGINT	NOT NULL,
 	`custom`	TINYINT	NOT NULL	DEFAULT 0	COMMENT '0 | 1. 1 = 사용자 등록(템플릿 npz 보유), 0 = 기본 제공',
-	`kind`	VARCHAR(8)	NOT NULL	COMMENT 'HAND | FACE',
+	`kind`	VARCHAR(8)	NOT NULL	COMMENT 'HAND | FACE. 모달리티 축',
+	`hands`	TINYINT	NULL	COMMENT '1 = 한손 | 2 = 양손. 형태 축. FACE 는 NULL',
+	`motion`	VARCHAR(8)	NULL	COMMENT 'STATIC | DYNAMIC. 형태 축. FACE 는 NULL',
 	`context`	VARCHAR(32)	NULL	COMMENT 'NULL = 기본 매핑. video | youtube',
 	`name`	VARCHAR(64)	NOT NULL	COMMENT '기본 제공은 MediaPipe 이름, 커스텀은 사용자 지정',
 	`label`	VARCHAR(64)	NULL	COMMENT 'UI 표시용 이름',
@@ -687,7 +701,7 @@ CREATE TABLE `gesture` (
 	`repeatable`	TINYINT	NOT NULL	DEFAULT 0	COMMENT '0 | 1. 반복 단위는 매크로 전체',
 	`enabled`	TINYINT	NOT NULL	DEFAULT 1	COMMENT '0 | 1. 0 이면 AI 감지 제외 + BE 실행 차단',
 	`created_at`	TIMESTAMPTZ	NULL	COMMENT '등록일. 기본 제공은 NULL',
-	`video_path`	VARCHAR(128)	NULL	COMMENT '등록 영상 파일명 (gestures/ 디렉터리). 기본 제공은 NULL',
+	`video_path`	VARCHAR(128)	NULL	COMMENT '등록 촬영본 파일명 (gestures/). DYNAMIC 은 .webm, STATIC 은 .jpg. 기본 제공은 NULL',
 	`npz`	BLOB	NULL	COMMENT '템플릿 npz. 제스처별 1개. 기본 제공은 NULL. PC 밖 반출 금지',
 	`npz_sha256`	VARCHAR(64)	NULL	COMMENT 'AI 캐시 무효화 기준. GET 의 ETag',
 	`npz_bytes`	INT	NULL
