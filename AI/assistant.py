@@ -30,7 +30,11 @@ from pathlib import Path
 import cv2
 
 from dombridge import DomBridge
-from gesture_be import GestureRegistration, GestureTemplateCache
+from gesture_be import (
+    GestureRegistration,
+    GestureTemplateCache,
+    registration_blocks_gesture_execution,
+)
 from body_pose import BodyPoseEngine
 from gaze import Calibrator, GazeBuffer, make_engine
 from hands import (CustomGestures, GestureEngine, GestureStable, HoldToggle,
@@ -604,11 +608,14 @@ def main():
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
             gesture = stable.update(raw_gesture, now)
-            if registration and registration.active:
+            registration_active = registration_blocks_gesture_execution(registration)
+            if registration_active:
                 registration.tick(frame, hand, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
             # 전체화면 같은 실제 액션 매핑을 추가한다.
-            two_hand_event = two_hand_motion.update(hands if gesture_active else [], now)
+            two_hand_event = two_hand_motion.update(
+                hands if gesture_active and not registration_active else [], now
+            )
             if two_hand_event:
                 hud_feedback = two_hand_event
                 hud_feedback_until = now + 1.2
@@ -642,7 +649,7 @@ def main():
             mapping = {**gesture_map["default"], **gesture_map.get(context, {})}
             # Two-hand gestures are local fallbacks for now: they do not have a
             # BE default mapping yet, but use the same context map as swipes.
-            if (two_hand_event and gesture_active and not args.two_hand_preview
+            if (two_hand_event and gesture_active and not registration_active and not args.two_hand_preview
                     and two_hand_event not in disabled_gestures):
                 entry = mapping.get(two_hand_event)
                 if entry and not args.be_gesture_only:
@@ -652,7 +659,11 @@ def main():
                     fire_entry(entry, two_hand_event, "양손 제스처")
             for name in static_names:
                 entry = mapping.get(name)
-                fired = gesture_toggles[name].update(gesture_active and gesture == name, now)
+                # 등록 중에는 false를 넣어 홀드 상태도 해제한다. 등록 완료 직후
+                # 직전 손모양이 명령으로 발동하는 것을 막는다.
+                fired = gesture_toggles[name].update(
+                    gesture_active and not registration_active and gesture == name, now
+                )
                 if fired and name not in disabled_gestures and not args.two_hand_preview:
                     be_target = be_gesture_target(
                         name, context, {ref.get("name") for ref in remote_refs.values()}
@@ -672,7 +683,7 @@ def main():
                                          "payload": {"name": name, "context": context,
                                                      "source": "static"},
                                          "occurredAt": int(time.time() * 1000)})
-            if gesture_active:
+            if gesture_active and not registration_active:
                 pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
                 motion_event = palm_motion.update(
                     hand["anchor"] if hand and not pinch_volume._pinched else None, now)
@@ -696,7 +707,8 @@ def main():
                 pinch_volume.update(None, now)
                 dynamic_event = None
                 scroll_steps = 0
-            if (ENABLE_DYNAMIC_GESTURES and dynamic_event and dynamic_event not in disabled_gestures
+            if (ENABLE_DYNAMIC_GESTURES and not registration_active and dynamic_event
+                    and dynamic_event not in disabled_gestures
                     and not args.two_hand_preview):
                 entry = mapping.get(dynamic_event)
                 be_target = be_gesture_target(
