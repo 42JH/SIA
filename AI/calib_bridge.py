@@ -19,6 +19,7 @@ calib_result를 보낸다. calibrate.py의 수집·학습을 이벤트 구동으
 - gaze_cursor(실시간 커서)·samples[](원시 구름)는 계약에 없어 미발신(필요 시 BE에 추가 요청).
 - 활성 npz 리로드 시 런타임 GazeWorker 핫스왑은 상위(assistant)에서 (여기선 파일만 교체).
 """
+import random
 import time
 import urllib.request
 
@@ -54,22 +55,29 @@ class CalibSession:
         self._n = 0                      # 현재 수집 중인 점(0=대기)
         self._until = 0.0                # 수집 창 마감 시각
         self._pts = {}                   # n -> {"x","y","feats":[...]}
+        self._order = []                 # 이번 세션의 점 방문 순서(1~9 랜덤 순열)
+        self._done = 0                   # 지금까지 마친 점 수 — 순서와 무관하게 9면 마감
         self._face_ok = None             # precheck 상태 변화 감지용
 
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출) ──
-    def on_start(self, tempId):
+    def _begin(self, tempId):
+        """점 방문 순서를 1~9 랜덤 순열로 새로 뽑고 첫 점을 요청한다.
+        순차(1→9)면 눈이 다음 칸을 미리 알아 saccade 로 앞서가 fixation 이 흐려진다 —
+        두더지 잡기처럼 예측 불가한 칸에서 튀어나오게 해 실제 응시를 강제한다.
+        좌표는 여전히 FE 가 그 n 을 어디 그렸는지 calib_collect_start{n,x,y} 로 보고한다."""
         self.tempId = tempId
         self.active = True
         self._pts = {}
         self._n = 0
-        self._request_point(1)           # AI가 루프를 연다 — 점 1 요청
+        self._order = random.sample(range(1, TOTAL + 1), TOTAL)
+        self._done = 0
+        self._request_point(self._order[0])
+
+    def on_start(self, tempId):
+        self._begin(tempId)
 
     def on_restart(self, tempId):
-        self.tempId = tempId or self.tempId
-        self._pts = {}
-        self._n = 0
-        self.active = True
-        self._request_point(1)
+        self._begin(tempId or self.tempId)
 
     def on_collect_start(self, n, x, y):
         """FE가 점 n을 (x,y)에 그렸다 → 그 순간부터 수집 창 open."""
@@ -124,8 +132,9 @@ class CalibSession:
         n = self._n
         self._n = 0
         self.link._send({"type": "calib_point_done", "data": {"n": n}})
-        if n < TOTAL:
-            self._request_point(n + 1)
+        self._done += 1
+        if self._done < TOTAL:
+            self._request_point(self._order[self._done])
         else:
             self._finalize()
 
@@ -203,16 +212,22 @@ def _selftest():
     cs = CalibSession((sw, sh), FakeFace(), link, "_selftest_calib.npz")
     cs._upload = lambda p: None  # 업로드 스킵
 
-    # 9점 = 3×3 중앙. 특징 = 목표 좌표(정규화)라 회귀가 거의 항등 → 오차 작음(excellent 기대)
-    pts = [(int((c + 0.5) * sw / 3), int((r + 0.5) * sh / 3)) for r in range(3) for c in range(3)]
+    # 9점 = 3×3 중앙. 점 n 의 목표 좌표 = cell[n-1]. 특징 = 목표 좌표(정규화)라 회귀가 거의 항등.
+    cell = [(int((c + 0.5) * sw / 3), int((r + 0.5) * sh / 3)) for r in range(3) for c in range(3)]
     cs.on_start("t1")
-    assert link.sent[-1][0] == "calib_point_ready" and link.sent[-1][1]["n"] == 1
-    for i, (x, y) in enumerate(pts, 1):
-        cs.on_collect_start(i, x, y)
+    # AI 가 요청한 순서를 그대로 따라간다 — 이제 1→9 순차가 아니라 랜덤 순열이다.
+    requested = []
+    for _ in range(TOTAL):
+        assert link.sent[-1][0] == "calib_point_ready"
+        n = link.sent[-1][1]["n"]
+        requested.append(n)
+        x, y = cell[n - 1]
+        cs.on_collect_start(n, x, y)
         for _ in range(10):
             cs.feed_frame(np.array([x / sw, y / sh], dtype=float))  # 특징=정규화 목표
         cs._until = 0  # 창 강제 마감
         cs.feed_frame(np.array([x / sw, y / sh], dtype=float))
+    assert sorted(requested) == list(range(1, TOTAL + 1)), f"1~9 중복없이 전부여야: {requested}"  # 랜덤 순열
     res = [s for s in link.sent if s[0] == "calib_result"]
     assert res, "calib_result 미발신"
     d = res[-1][1]
@@ -222,7 +237,14 @@ def _selftest():
     import os
     for f in ("_selftest_calib.npz",):
         if os.path.exists(f): os.remove(f)
-    print(f"selftest ok — grade={d['grade']} avg={d['avgErrorPx']}px points={len(d['points'])}")
+    # 랜덤성: on_start 를 여러 번 하면 순서가 매번 같지 않다(순차 회귀 방지 확인)
+    orders = set()
+    for _ in range(20):
+        cs.on_start("t")
+        assert sorted(cs._order) == list(range(1, TOTAL + 1))  # 매번 1~9 완전 순열
+        orders.add(tuple(cs._order))
+    assert len(orders) > 1, "점 순서가 랜덤이 아님(항상 동일)"
+    print(f"selftest ok — grade={d['grade']} avg={d['avgErrorPx']}px 방문순서={requested} 랜덤확인={len(orders)}종")
 
 
 if __name__ == "__main__":
