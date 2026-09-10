@@ -3,6 +3,7 @@ import { fetchStatus } from "../../api/status";
 import { useSessionStore } from "../../store/sessionStore";
 import { on } from "../../ws/eventBus";
 import styles from "./ConnectionCheck.module.css";
+import CommunicationLog from '../../components/onboarding/CommunicationLog';
 
 const LOGGED_TYPES = [
   "listening",
@@ -44,6 +45,7 @@ export default function ConnectionCheck() {
   return (
     <div className={styles.page}>
       <h1>통신 확인</h1>
+      <CommunicationLog />
 
       <section>
         <h2>WS (ws://127.0.0.1:8080/ws/fe)</h2>

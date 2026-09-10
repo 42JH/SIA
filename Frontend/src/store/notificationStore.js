@@ -5,7 +5,8 @@ import { on } from "../ws/eventBus";
 const AUTO_HIDE_MS = 3000;
 const DETAIL_HIDE_MS = 5000;
 const SUMMARY_HIDE_MS = 10000;
-const CONFIRM_TIMEOUT_SEC = 12;
+const CONFIRM_TIMEOUT_SEC = 10;
+const CHOICE_TIMEOUT_SEC = 12;
 let hideTimer = null;
 
 function sessionFallback(get) {
@@ -53,8 +54,8 @@ export const useNotificationStore = create((set, get) => ({
         topNotification: {
           kind: "confirm",
           message,
-          // 확인 제한은 프로토콜 상수 12초. 서버 필드가 추가되면 그 값을 우선 사용한다.
-          timeoutSec: data.timeoutSec ?? CONFIRM_TIMEOUT_SEC,
+          // 삭제 확인 표시는 사용자 확정 기준 10초로 고정
+          timeoutSec: CONFIRM_TIMEOUT_SEC,
         },
       });
       return;
@@ -68,7 +69,7 @@ export const useNotificationStore = create((set, get) => ({
           message,
           choiceId: data.choiceId,
           choices: Array.isArray(data.choices) ? data.choices : [],
-          timeoutSec: data.timeoutSec ?? CONFIRM_TIMEOUT_SEC,
+          timeoutSec: data.timeoutSec ?? CHOICE_TIMEOUT_SEC,
         },
       });
       return;
@@ -91,6 +92,7 @@ export const useNotificationStore = create((set, get) => ({
       return;
     }
 
+    // 새로 전달된 요약 팝업 사용 확정
     if (data.kind === "summary" || Array.isArray(data.items)) {
       showTimed(set, get, {
         kind: "summary",
