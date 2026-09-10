@@ -575,7 +575,7 @@ DB 밖에 두는 자산이다. 루트는 `%APPDATA%/SIA` 이며 (`APPDATA` 가 �
 | 경로 | 내용 | 참조 |
 |---|---|---|
 | `runtime.json` | `{token, port, pid}`. BE 기동 시 1회 기록 | AI 가 접속 시 읽는다 |
-| `previews/{tempId}-{take}.webm` | 제스처 등록 미리보기 영상 (임시) | `GET /api/previews/{tempId}-{take}.webm` |
+| `previews/{tempId}-{take}.webm` | 제스처 등록 미리보기 영상 (임시 — 회차 선택까지) | `GET /api/previews/{tempId}-{take}.webm` |
 | `gestures/g{gestureId}.webm` | 제스처 등록 영상 (영구). 파일명이 `gesture.video_path` | `GET /api/gestures/{id}/video` |
 | `models/` | 다운로드 · sha256 검증이 끝난 모델 파일 | `model_load {name, path}` |
 | `models.json` | 모델 목록. 없으면 classpath 의 `models.json` | 부팅 시 읽는다 |
@@ -583,7 +583,9 @@ DB 밖에 두는 자산이다. 루트는 `%APPDATA%/SIA` 이며 (`APPDATA` 가 �
 | `~/Documents/SIA/` | `files.save` 의 저장 위치 | MCP `files.save` |
 | `~/Pictures/SIA/capture_yyyyMMdd_HHmmss.png` | `screen.capture` · `screen.capture_region` 이 저장한 캡처 PNG | MCP `screen.capture` · `screen.capture_region` · `GET /api/captures/{file}` |
 
-`previews/` · `gestures/` 의 영상은 사용자 카메라 영상이며 PC 밖으로 내보내지 않는다. 전체 삭제 시 `gestures/` 의 파일은 모두 삭제된다.
+`previews/` · `gestures/` 의 영상은 사용자 카메라 영상이며 PC 밖으로 내보내지 않는다. 전체 삭제 시 두 폴더의 파일은 모두 삭제된다.
+
+`previews/` 는 사용자가 회차를 고를 때까지만 유지한다. 승격(`macro_assign`)·거절(`reg_rejected`)·등록 교체(`reg_start`) 시 그 등록의 회차 파일을 모두 지우고, 그래도 남은 고아는 기동 시 전량·매일 04:30 에 6시간 경과분을 정리한다.
 
 ---
 

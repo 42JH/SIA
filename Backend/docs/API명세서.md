@@ -989,6 +989,8 @@ GET /api/previews/9f3a2c17-2.webm
 
 파일명은 `[a-zA-Z0-9-]+\.webm` 패턴만 허용한다. 사용자 카메라 영상이므로 PC 밖으로 내보내지 않는다.
 
+회차 선택이 끝날 때까지만 존재하는 임시 파일이다. `macro_assign` 으로 한 회차가 `gestures/` 로 승격되면 그 등록의 회차 파일은 고른 것까지 모두 삭제되고, 이후 요청은 **404** 다. 거절(`reg_rejected`)·등록 교체(`reg_start`)·BE 재기동 때도 삭제된다.
+
 ### 1.27 `GET /api/export/blobs/{name}` — 호출어 모델 npz 백업
 
 `name` 은 `wakeword` 하나다. 프로필 백업은 `GET /api/voices/{id}/npz` · `GET /api/calibs/{id}/npz`, 커스텀 제스처 템플릿 백업은 `GET /api/gestures/{id}/npz` (§1.12) 다.
