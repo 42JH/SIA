@@ -18,13 +18,15 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩
 - 1번 문장이 찌그러진 채 기준이 된 경우: 같은 문장을 두 번 읽었는데 둘은 닮았고 앞 문장 하나와만 다르면 앞 문장을 의심해
   기준에서 빼고 이번 문장을 받는다(2 대 1). 마지막엔 혼자 튀는 문장 하나를 프로필 평균에서 뺀다. BE 는 순번을 되돌릴 수
   없어 앞 문장을 다시 읽히진 못한다 — 프로필에서만 걸러낸다.
-- 통과한 문장은 voice_progress{tempId, n, durationSec, quality, noise} 로 판독 결과를 같이 보낸다. FE 가 문장마다
-  "판독 결과 · 녹음 품질" 을 띄우고 거기서 "다시 녹음" 을 받기 때문 — 5문장 뒤에 한 번 주면 그 화면이 매번 "미판정" 이다.
-  quality 는 앞 문장들과 유사도가 QUALITY_MIN_SIM 미만이거나 소음이 높으면 "낮음", 1번 문장은 비교 대상이 없어 소음만 본다.
-  NOTE(한계): BE 가 onProgress 에서 이 세 필드를 FE 로 넘겨야 화면에 뜬다 (2026-09-10 실측 19/21, 미통과 2건 중 하나).
-- 5문장을 다 모으면 voice_quality_warn 없이 바로 올린다 — 문장마다 결과를 줬으니 그 자리에서 다시 읽는 쪽이 빠르다.
-- 샘플 wav → npz 순으로 PUT 한 뒤 voice_captured(5문장 전체 판정). BE 가 곧장 FE 에 voice_review(재생 URL 포함)를 주고
-  FE 는 그걸 받아야 "등록" 버튼을 열기 때문.
+- 문장 하나가 통과할 때마다 voice_progress{tempId, n} 뒤에 그 문장 녹음을 PUT 하고 voice_captured 를 보낸다 — BE 가
+  곧장 FE 에 voice_review 를 주므로, 사용자는 방금 읽은 문장을 들어 보고 판독 결과(quality·noise)를 본 자리에서
+  다시 읽을지 정한다. quality 는 앞 문장들과 유사도가 QUALITY_MIN_SIM 미만이거나 소음이 높으면 "낮음", 1번 문장은
+  비교 대상이 없어 소음만 본다. 중간 문장에서는 npz 를 올리지 않는다 — 다섯 문장을 다 모으기 전에 npz 가 서버에
+  있으면 그것만으로 프로필이 확정될 수 있다.
+- 다섯 문장이 다 모이면 이어붙인 wav → npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다. 이때만 npz 가 올라가고
+  FE 의 "등록" 버튼이 열린다. voice_quality_warn 은 보내지 않는다 — 문장마다 결과를 줬으니 그 자리에서 고치는 쪽이 빠르다.
+  NOTE(한계): FE 가 voice_review 를 5번째 문장 것으로만 보고 화면 번호를 5로 고정하면, 1번 문장 뒤에 "등록" 이 열린다.
+  FE 가 자기 진행 번호를 쓰도록 고쳐야 한다 (BE 는 voice_review 에 n 을 싣지 않는다).
 - 로컬 프로필(models/speaker.npz)은 여기서 안 건드린다. 확정은 FE voice_commit 이고, 활성이 되면 BE 가
   voice_changed 를 보내므로 그때 활성 npz 를 내려받아 교체한다 — 중단·미확정 등록이 쓰던 프로필을 덮지 않게.
 
@@ -91,6 +93,7 @@ class VoiceSession:
         self.speaker = speaker              # SpeakerVerifier — 임베딩·centroid 계산, 활성 교체 시 reload
         self.profile_path = str(profile_path)
         self.active = False
+        self.started_at = 0.0               # 이 수집이 시작된 시각 — 두 수집이 겹치면 나중에 시작한 쪽이 발화를 받는다
         self.tempId = None
         self.total = len(SENTENCES)
         self._n = 0                         # 수집 중인 문장(0=대기)
@@ -111,7 +114,7 @@ class VoiceSession:
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
     def on_start(self, tempId, total=None):
         log_rx("voice_reg_start", {"tempId": tempId, "total": total})
-        self.tempId, self.active = tempId, True
+        self.tempId, self.active, self.started_at = tempId, True, time.monotonic()
         self.total = int(total or len(SENTENCES))
         self._samples, self._embs, self._n, self._rejects, self._noisy = {}, {}, 0, 0, 0
         self._last_reject, self._suspect = None, set()
@@ -171,7 +174,13 @@ class VoiceSession:
 
     # ── 메인 루프가 VAD 발화마다 호출 (등록 중엔 brain 대신 여기로) ──
     def on_utter(self, audio_i16, t_utter=None):
-        if not self.active or self._n == 0:
+        from brain import wav_bytes
+
+        if not self.active:
+            return
+        if self._n == 0:
+            # 다섯 문장을 다 읽고 확정을 기다리는 중이다. 명령으로 넘기지 않는 게 맞지만, 왜 안 먹는지는 남겨 둔다
+            print("[화자 등록] 확정 전이라 발화를 받지 않는다 — 등록을 마치거나 중단하세요")
             return
         if t_utter is not None and t_utter < self._collect_t:
             # "이 문장 다시" 를 누르기 직전에 시작한 낭독 — 받으면 방금 무르려던 그 발화로 문장이 넘어간다.
@@ -239,10 +248,13 @@ class VoiceSession:
         print(f"[화자 등록] 문장 {n} 통과 — 말소리 {spoken:.1f} s, "
               + (f"앞 문장들과 유사도 {sim:.2f}" if sim is not None else "첫 문장(비교 없음)")
               + f", 품질 {quality}, 소음 {noise}")
-        self._tx("voice_progress", {"tempId": self.tempId, "n": n, "durationSec": round(len(audio) / SR, 1),
-                                    "quality": quality, "noise": noise})
+        self._tx("voice_progress", {"tempId": self.tempId, "n": n})
         if all(k in self._samples for k in range(1, self.total + 1)):
             self._finish()
+            return
+        # 방금 읽은 문장만 올리고 판독 결과를 보낸다 — FE 가 문장마다 그 녹음을 들어 보고 다시 읽을지 정한다.
+        # npz 는 아직 안 올린다: 다섯 문장을 다 모으기 전 npz 가 서버에 있으면 그것만으로 프로필이 확정될 수 있다
+        self._upload_and_capture(None, wav_bytes(audio), round(len(audio) / SR, 1), quality, noise)
 
     # ── 내부 ──
     def _reject(self, n, code, reason, why):
@@ -274,10 +286,12 @@ class VoiceSession:
         self._upload_and_capture(self.speaker.npz_bytes(centroid), wav_bytes(wav), round(len(wav) / SR, 1), quality, noise)
 
     def _upload_and_capture(self, npz, wav, dur, quality, noise):
+        """샘플(+마지막이면 npz)을 올리고 voice_captured 를 보낸다 — BE 가 곧장 FE 에 voice_review(재생 URL)를 준다."""
         base = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/voices/{self.tempId}"
         try:
             self._put(base + "/sample", wav, "audio/wav")
-            self._put(base + "/npz", npz, "application/octet-stream")
+            if npz is not None:
+                self._put(base + "/npz", npz, "application/octet-stream")
         except Exception as e:
             print(f"[화자 등록] 업로드 실패: {e}")  # voice_captured 는 보낸다 — FE 가 멈추지 않게. 확정(commit)은 BE 가 npz 없음으로 거절한다
         self._tx("voice_captured", {
@@ -303,6 +317,7 @@ class WakeEnroll:
     def __init__(self, link):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
         self.active = False
+        self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
         self._samples = []
         self._put = VoiceSession._put       # REST 업로드 — 테스트에서 바꿔 끼운다
 
@@ -313,7 +328,7 @@ class WakeEnroll:
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
     def on_start(self):
         log_rx("wakeword_enroll_start", {})
-        self.active, self._samples = True, []
+        self.active, self._samples, self.started_at = True, [], time.monotonic()
         print(f"[호출어 수집] 시작 — \"시아야\" {WAKE_TOTAL}번")
 
     # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──

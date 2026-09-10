@@ -549,8 +549,10 @@ def main():
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
                 elif ev[0] == "utter":
-                    sessions = (link.voice, link.wake) if link else ()
-                    enroll = next((s for s in sessions if s and s.active), None)  # 등록·온보딩 수집 중이면 그쪽으로
+                    # 등록·온보딩 수집 중이면 그쪽으로. 둘 다 켜져 있으면 나중에 시작한 쪽 — 화자 등록을 끝내지 않고
+                    # 이름 불러보기로 되돌아가면 BE 가 등록을 접지 않아, 순서를 고정하면 "시아야" 가 낭독 문장으로 먹힌다
+                    open_ = [s for s in (link.voice, link.wake) if s and s.active] if link else []
+                    enroll = max(open_, key=lambda s: s.started_at, default=None)
                     if enroll:
                         pending_capture = None
                         enroll.on_utter(ev[2], ev[1])  # 샘플로만 쓰고 명령 처리는 안 한다. ev[1]은 발화 시작 시각 — "이 문장 다시" 판정용

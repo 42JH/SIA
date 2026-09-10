@@ -560,7 +560,8 @@ def test_voice_bridge():
     vs.on_utter(noisy)
     assert [d.get("code") for t, d in link.sent if t == "voice_sentence_rejected"][-2:] == ["NOISY", "NOISY"] and spk.embeds == 0
     vs.on_utter(noisy)                                         # 소음 거절 예산 소진 — 받되 품질 낮음
-    assert link.sent[-1][0] == "voice_progress" and link.sent[-1][1]["quality"] == "낮음" and spk.embeds == 1
+    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]   # 문장 하나 = 진행 + 샘플 + 판독
+    assert link.sent[-1][1]["quality"] == "낮음" and link.sent[-1][1]["durationSec"] == 2.0 and spk.embeds == 1
     spk.embeds = 0
     link.sent.clear()
     vs.on_start("t1", 5)
@@ -576,13 +577,12 @@ def test_voice_bridge():
         assert spk.embeds == n                                 # 문장을 받을 때마다 하나씩 — 마지막에 5개를 몰아 뽑지 않는다
     types = [t for t, _ in link.sent]
     assert types.count("voice_progress") == 5 and types[-3:] == ["PUT", "PUT", "voice_captured"]
-    assert [c for t, c in link.sent if t == "PUT"] == ["audio/wav", "application/octet-stream"]
-    d = link.sent[-1][1]
-    assert d["tempId"] == "t1" and d["quality"] == "양호" and d["noise"] in ("낮음", "높음") and d["durationSec"] > 5
-    # 문장마다 판독 결과가 voice_progress 에 실린다 — FE 가 문장 자리에서 "녹음 품질" 로 보여 준다
-    prog = [d for t, d in link.sent if t == "voice_progress"]
-    assert [d["n"] for d in prog] == [1, 2, 3, 4, 5]
-    assert all(d["tempId"] == "t1" and d["quality"] == "양호" and d["noise"] == "낮음" and d["durationSec"] == 2.6 for d in prog)
+    # 문장마다 판독 결과가 온다 — 1~4번은 그 문장 녹음만(npz 없이), 5번째만 이어붙인 wav 와 npz 를 함께 올린다
+    assert [c for t, c in link.sent if t == "PUT"] == ["audio/wav"] * 4 + ["audio/wav", "application/octet-stream"]
+    caps = [d for t, d in link.sent if t == "voice_captured"]
+    assert len(caps) == 5 and all(c["tempId"] == "t1" and c["quality"] == "양호" for c in caps)
+    assert [c["durationSec"] for c in caps[:4]] == [2.6] * 4   # 앞 네 건은 그 문장 하나 길이
+    assert caps[-1]["durationSec"] > 5 and caps[-1]["noise"] in ("낮음", "높음")   # 마지막은 5문장 전체
     # 3번 문장만 다른 목소리 → 그 문장만 무른다. 거절 예산(2회)이 떨어지면 받아 주고, 5문장 일관성 0.24 < 0.5 로 최종 경고
     link.sent.clear()
     vs.on_start("t2", 5)
@@ -598,7 +598,7 @@ def test_voice_bridge():
     vs.on_utter(loud(9))                                       # 거절 2 — 예산 소진
     assert [t for t, _ in link.sent].count("voice_sentence_rejected") == 3
     vs.on_utter(loud(9))                                       # 예산이 없으니 받는다 — 1번 문장이 잘못 녹음돼도 갇히지 않게
-    assert link.sent[-1][0] == "voice_progress" and link.sent[-1][1]["n"] == 3
+    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]
     assert link.sent[-1][1]["quality"] == "낮음"                # 받긴 하지만 판독 결과는 낮음 — FE 가 그 자리에서 "다시 녹음" 을 연다
     for n, marker in ((4, 9), (5, 6)):                         # 4번도 다른 목소리, 5번은 또 다른 방향 — 튀는 문장이 둘 이상
         vs.on_collect("t2", n)
@@ -616,11 +616,11 @@ def test_voice_bridge():
     vs.on_collect("t3", 1)
     assert vs._samples == {}
     vs.on_utter(loud(7))                                       # 1번만 다시 읽은 상태 — 아직 끝나면 안 된다
-    assert "voice_captured" not in [t for t, _ in link.sent]
+    assert "application/octet-stream" not in [c for t, c in link.sent if t == "PUT"]   # npz 는 다 모여야 올라간다
     for n in (2, 3, 4, 5):
         vs.on_collect("t3", n)
         vs.on_utter(loud(7))
-    assert [t for t, _ in link.sent].count("voice_captured") == 1
+    assert [c for t, c in link.sent if t == "PUT"].count("application/octet-stream") == 1
     # FE "이 문장 다시" — 같은 n 이 다시 오면 그 문장만 버리고 앞 문장은 남는다
     vs.on_start("t4", 5)
     for n in (1, 2):
@@ -637,7 +637,7 @@ def test_voice_bridge():
     vs.on_utter(loud(7), vs._collect_t - 0.1)                  # 지시보다 먼저 시작된 발화
     assert vs._n == 1 and link.sent == []                      # 진행도 거절도 없다 — 같은 문장을 계속 기다린다
     vs.on_utter(loud(7), vs._collect_t + 0.1)                  # 지시 뒤에 시작한 낭독만 센다
-    assert link.sent[-1][0] == "voice_progress" and link.sent[-1][1]["n"] == 1
+    assert [t for t, _ in link.sent] == ["voice_progress", "PUT", "voice_captured"]
     vs.on_collect("t4", 1)                                     # 1번을 다시 — 아래 임베딩 실패 검사의 출발점
     # 임베딩 자체가 실패(모델 로드 불가 등)하면 사유만 보내고 code 키는 없다 — FE 가 멈춘 것처럼 보이지 않게
     spk.embed = lambda a: (_ for _ in ()).throw(RuntimeError("모델 없음"))
@@ -654,7 +654,8 @@ def test_voice_bridge():
     vs.on_utter(loud(7))                                       # 본인 — 1번과 안 닮음 → 거절 1
     assert link.sent[-1][0] == "voice_sentence_rejected" and vs._rejects == 1
     vs.on_utter(loud(7))                                       # 다시 읽음 — 첫 시도와 닮음, 1번과만 다름 → 1번 의심, 2번 통과
-    assert link.sent[-1][0] == "voice_progress" and link.sent[-1][1]["n"] == 2 and vs._suspect == {1} and vs._rejects == 1
+    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]
+    assert vs._suspect == {1} and vs._rejects == 1
     for n in (3, 4, 5):
         vs.on_collect("t5", n)
         vs.on_utter(loud(7))                                   # 기준이 2번뿐이라 전부 통과
