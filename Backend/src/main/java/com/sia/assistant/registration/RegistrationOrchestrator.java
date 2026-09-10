@@ -54,6 +54,7 @@ public class RegistrationOrchestrator {
     private final FeHub feHub;
     private final GestureService gestureService;
     private final WebmEncoder encoder;
+    private final PreviewStore previewStore;
     private final DataDirs dataDirs;
     private final ObjectMapper om;
 
@@ -85,11 +86,13 @@ public class RegistrationOrchestrator {
     }
 
     public RegistrationOrchestrator(AgentHub agentHub, FeHub feHub, GestureService gestureService,
-                                    WebmEncoder encoder, DataDirs dataDirs, ObjectMapper om) {
+                                    WebmEncoder encoder, PreviewStore previewStore, DataDirs dataDirs,
+                                    ObjectMapper om) {
         this.agentHub = agentHub;
         this.feHub = feHub;
         this.gestureService = gestureService;
         this.encoder = encoder;
+        this.previewStore = previewStore;
         this.dataDirs = dataDirs;
         this.om = om;
     }
@@ -104,6 +107,7 @@ public class RegistrationOrchestrator {
         Reg old = current.getAndSet(new Reg(tempId, replaceGestureIdOrNull));
         if (old != null) {
             log.warn("진행 중이던 등록 {} 을 버리고 새 등록 {} 을 시작합니다", old.tempId, tempId);
+            previewStore.discard(old.tempId); // 버린 등록의 미리보기는 아무도 고를 수 없다
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tempId", tempId);
@@ -227,6 +231,7 @@ public class RegistrationOrchestrator {
         if (reg != null && reg.tempId.equals(tempId)) {
             current.compareAndSet(reg, null);
         }
+        previewStore.discard(tempId); // 인코딩까지 갔더라도 거절된 촬영본은 남기지 않는다
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tempId", tempId);
         body.put("phase", "REJECTED");
@@ -351,7 +356,11 @@ public class RegistrationOrchestrator {
         current.compareAndSet(reg, null); // 등록 사이클 완료 — 상태(임시 npz 포함) 해제
     }
 
-    /** previews/{tempId}-{take}.webm → gestures/g{gestureId}.webm 승격. 실패해도 저장 자체는 성립한다. */
+    /**
+     * previews/{tempId}-{take}.webm → gestures/g{gestureId}.webm 승격. 실패해도 저장 자체는 성립한다.
+     * 승격이 끝나면 고른 회차를 포함해 그 등록의 미리보기를 모두 버린다 — 승격본이 gestures/ 에 있다.
+     * 실패했을 때는 남겨 둔다(원본이 있어야 재촬영 없이 다시 손쓸 수 있다).
+     */
     private String promoteVideo(String tempId, int take, long gestureId) {
         if (tempId.isBlank()) {
             return null;
@@ -365,6 +374,7 @@ public class RegistrationOrchestrator {
         try {
             Files.copy(source, dataDirs.gestures().resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
             gestureService.setVideoPath(gestureId, fileName);
+            previewStore.discard(tempId);
             return "/api/gestures/" + gestureId + "/video";
         } catch (Exception e) {
             log.warn("제스처 {} 영상 보관 실패", gestureId, e);

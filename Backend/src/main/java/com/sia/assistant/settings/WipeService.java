@@ -2,6 +2,7 @@ package com.sia.assistant.settings;
 
 import com.sia.assistant.control.process.DefaultAppTargets;
 import com.sia.assistant.profile.CalibProfileService;
+import com.sia.assistant.registration.PreviewStore;
 import com.sia.assistant.profile.VoiceProfileService;
 import com.sia.assistant.session.SessionService;
 import com.sia.assistant.ws.AgentHub;
@@ -33,13 +34,15 @@ public class WipeService {
     private final GestureService gestureService;
     private final VoiceProfileService voiceProfileService;
     private final CalibProfileService calibProfileService;
+    private final PreviewStore previewStore;
     private final AgentHub agentHub;
     private final FeHub feHub;
 
     public WipeService(JdbcTemplate jdbc, PlatformTransactionManager txManager,
                        SettingsService settingsService, SessionService sessionService,
                        GestureService gestureService, VoiceProfileService voiceProfileService,
-                       CalibProfileService calibProfileService, AgentHub agentHub, FeHub feHub) {
+                       CalibProfileService calibProfileService, PreviewStore previewStore,
+                       AgentHub agentHub, FeHub feHub) {
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(txManager);
         this.settingsService = settingsService;
@@ -47,6 +50,7 @@ public class WipeService {
         this.gestureService = gestureService;
         this.voiceProfileService = voiceProfileService;
         this.calibProfileService = calibProfileService;
+        this.previewStore = previewStore;
         this.agentHub = agentHub;
         this.feHub = feHub;
     }
@@ -69,6 +73,7 @@ public class WipeService {
                     seeded, apps);
         });
         gestureService.deleteAllVideos(); // 등록 영상 파일 — 트랜잭션 밖(파일 시스템)
+        previewStore.clearAll();          // 아직 선택되지 않은 등록 미리보기도 같이 지운다
         settingsService.resetToSeed();
         sessionService.reset();
 

@@ -16,6 +16,7 @@ import com.sia.assistant.config.DataDirs;
 import com.sia.assistant.settings.GestureService;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.FeHub;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -37,15 +38,27 @@ class RegistrationOrchestratorTest {
     private AgentHub agentHub;
     private FeHub feHub;
     private GestureService gestureService;
+    private Path previews;
+    private Path gestures;
     private RegistrationOrchestrator orchestrator;
 
     @BeforeEach
-    void setUp(@TempDir Path dir) {
+    void setUp(@TempDir Path dir) throws Exception {
         agentHub = mock(AgentHub.class);
         feHub = mock(FeHub.class);
         gestureService = mock(GestureService.class);
+        DataDirs dataDirs = new DataDirs(dir.toString());
+        previews = Files.createDirectories(dataDirs.previews());
+        gestures = Files.createDirectories(dataDirs.gestures());
         orchestrator = new RegistrationOrchestrator(agentHub, feHub, gestureService, mock(WebmEncoder.class),
-                new DataDirs(dir.toString()), om);
+                new PreviewStore(dataDirs), dataDirs, om);
+    }
+
+    /** reg_recorded 까지 끝난 상태 — 회차 3개가 previews/ 에 있다. */
+    private void recorded(String tempId) throws Exception {
+        for (int take = 1; take <= 3; take++) {
+            Files.write(previews.resolve(tempId + "-" + take + ".webm"), new byte[]{1});
+        }
     }
 
     private JsonNode assignBody(String tempId) throws Exception {
@@ -121,5 +134,44 @@ class RegistrationOrchestratorTest {
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
         verify(agentHub).send(eq("gesture_registered"), captor.capture());
         assertThat(captor.getValue()).containsEntry("id", 7L).containsEntry("sha256", Sha256.hex(npz));
+    }
+
+    @Test
+    @DisplayName("승격이 끝나면 고른 회차를 포함해 그 등록의 미리보기를 모두 지운다 — 다른 등록 것은 남는다")
+    void assignClearsPreviewsOfThatRegistration() throws Exception {
+        String tempId = orchestrator.start(null);
+        orchestrator.attachNpz(tempId, new byte[]{1, 2, 3});
+        recorded(tempId);
+        Files.write(previews.resolve("other11-1.webm"), new byte[]{1});
+        when(gestureService.saveCustom(any(), any(), any(), any(), anyBoolean(), any(), any(), any()))
+                .thenReturn(14L);
+
+        orchestrator.assign(assignBody(tempId)); // take=2
+
+        assertThat(gestures.resolve("g14.webm")).exists();
+        verify(gestureService).setVideoPath(14L, "g14.webm");
+        assertThat(previews.toFile().list()).containsExactly("other11-1.webm");
+    }
+
+    @Test
+    @DisplayName("거절되면 인코딩까지 끝난 촬영본도 남기지 않는다")
+    void rejectClearsPreviews() throws Exception {
+        String tempId = orchestrator.start(null);
+        recorded(tempId);
+
+        orchestrator.onRejected(tempId, om.readTree("{\"reason\":\"손이 화면을 벗어났습니다\"}"));
+
+        assertThat(previews.toFile().list()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("등록을 새로 시작하면 버려지는 이전 등록의 미리보기도 함께 지운다")
+    void restartClearsAbandonedPreviews() throws Exception {
+        String abandoned = orchestrator.start(null);
+        recorded(abandoned);
+
+        orchestrator.start(null);
+
+        assertThat(previews.toFile().list()).isEmpty();
     }
 }
