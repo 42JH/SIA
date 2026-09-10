@@ -70,7 +70,7 @@ FE는 `voice_reg_start {}`를 보내고, `tempId`가 없는 `voice_sentence {n,t
 ## 사용자 통신 확인 순서
 
 1. BE·AI·FE 실행 후 기본 설정에서 장치를 선택하고 저장한다.
-2. 호출어 10회, 명령 5문장을 진행한다.
+2. 호출어 5회, 명령 5문장을 진행한다.
 3. 통신 기록에서 `voice_reg_start` 발신과 `voice_sentence`·`voice_progress` 수신을 확인한다. tempId가 없어도 5문장 수집이 이어져야 한다.
 4. tempId 수신 전 재시도·중단이 비활성화되고, 수신 후 활성화되는지 확인한다.
 5. `voice_review`의 샘플 확인 후 등록을 누른다. `voice_commit`에 서버가 준 tempId가 포함되는지 확인한다.

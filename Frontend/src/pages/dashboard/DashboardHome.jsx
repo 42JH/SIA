@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { fetchDashboardAccuracy, fetchDashboardApps, fetchDashboardLatency, fetchDashboardOverview, fetchDashboardUsage } from '../../api/dashboard';
 import { BarChart, HorizontalBars, LineChart } from './DashboardChart';
+import GesturePanel from './GesturePanel';
 import SettingsPanel from './SettingsPanel';
+import { useGestureStore } from '../../store/gestureStore';
 import styles from './DashboardHome.module.css';
 
 const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
@@ -15,6 +17,7 @@ export default function DashboardHome() {
   useEffect(() => { if (details[view]) load(() => details[view][1](period), setDetail); }, [view, period]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (e) { setError(e.message); } finally { setLoading(false); } }
   const open = (next) => {
+    if (next !== 'gestures') useGestureStore.getState().closeRegistration();
     setMenu(false);
     setView(next);
     setError('');
@@ -23,9 +26,10 @@ export default function DashboardHome() {
       setDetail(null);
     }
   };
-  return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={() => view !== 'home' && open('home')} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : details[view]?.[0]}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
-    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{['제스처', '보이스', '시선'].map((item) => <button key={item} onClick={() => setError(`${item} 관리 화면은 제공된 대시보드 와이어프레임 범위에 없습니다.`)}>{item}<span>›</span></button>)}<button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
-    <section className={styles.content}>{loading && <p role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}{view === 'home' && <Overview data={overview} open={open} />}{details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} />}{view === 'settings' && <SettingsPanel />}</section></main>;
+  const title = view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : view === 'gestures' ? '제스처' : details[view]?.[0];
+  return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={() => view !== 'home' && open('home')} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{title}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
+    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}><button onClick={() => open('gestures')}>제스처<span>›</span></button>{['보이스', '시선'].map((item) => <button key={item} onClick={() => setError(`${item} 관리 화면은 제공된 대시보드 와이어프레임 범위에 없습니다.`)}>{item}<span>›</span></button>)}<button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
+    <section className={styles.content}>{loading && <p role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}{view === 'home' && <Overview data={overview} open={open} />}{details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} />}{view === 'gestures' && <GesturePanel />}{view === 'settings' && <SettingsPanel />}</section></main>;
 }
 
 function Overview({ data, open }) {

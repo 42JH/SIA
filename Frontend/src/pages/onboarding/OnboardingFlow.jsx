@@ -38,7 +38,7 @@ export default function OnboardingFlow() {
       change({
         step: requestedStep, pending: false, error: '', interrupted: false, request: null,
         ...(requestedStep === 'micStart' ? {
-          wake: { n: 0, total: 10 }, wakeDone: false, voiceTempId: null,
+          wake: { n: 0, total: 5 }, wakeDone: false, voiceTempId: null,
           voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null,
         } : {
           precheck: null, point: null, result: null, poorCount: 0,
@@ -142,7 +142,7 @@ export default function OnboardingFlow() {
   switch (f.step) {
     case 'welcome': content = <><h1>SIA</h1>{center(<><div className={styles.icon}>S</div><h2>SIA</h2><p>당신의 AI 비서</p>{btn('SIA 시작하기', basic)}</>)}</>; break;
     case 'basic': content = <><h1>기본 설정</h1><div className={styles.fields}><label>비서 이름<input value={name} readOnly aria-readonly="true" /></label>{[['mics', '마이크 선택', mic, setMic], ['cameras', '카메라 선택 (내장 / 외장)', camera, setCamera]].map(([kind, title, value, setter]) => <label key={kind}>{title}<select value={value} onChange={(e) => setter(e.target.value)}><option value="">시스템 기본 장치</option>{devices[kind].map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? " (기본)" : ""}</option>)}</select></label>)}{btn('장치 목록 새로고침', discover)}{!config && btn('설정 다시 불러오기', basic)}</div>{foot(btn('다음', save, !config))}</>; break;
-    case 'micStart': content = <><h1>마이크 설정</h1>{center(<><h2>마이크 설정을 시작합니다</h2><div className={styles.icon}>♩</div></>)}{foot(<>{isMicOnly ? btn('취소', cancelMicEnrollment) : btn('건너뛰기', () => go('gazeStart'))}{btn('시작하기', () => send('wakeword_enroll_start', {}, { step: 'wake', wake: { n: 0, total: 10 }, wakeDone: false, pending: false }), !ready)}</>)}</>; break;
+    case 'micStart': content = <><h1>마이크 설정</h1>{center(<><h2>마이크 설정을 시작합니다</h2><div className={styles.icon}>♩</div></>)}{foot(<>{isMicOnly ? btn('취소', cancelMicEnrollment) : btn('건너뛰기', () => go('gazeStart'))}{btn('시작하기', () => send('wakeword_enroll_start', {}, { step: 'wake', wake: { n: 0, total: 5 }, wakeDone: false, pending: false }), !ready)}</>)}</>; break;
     case 'wake': content = <><h1>이름 불러보기</h1>{center(<><h2>"시아야" 라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 한 번에 약 {WAKE_SAMPLE_SECONDS}초 안에 또렷하게 불러주세요</p></>)}{foot(btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone))}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
