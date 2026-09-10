@@ -188,10 +188,12 @@ def live_test(camera_idx, distance="미기록", lighting="미기록", hand_side=
             infer_count += 1
             label = "-"
             if hand:
+                # assistant.py와 같은 우선순위: 등록 템플릿에 충분히 가까우면
+                # 약한 내장 분류 결과보다 커스텀 라벨을 먼저 사용한다.
+                custom_label, _ = store.classify_with_distance(hand["landmarks"])
                 g = hand["gesture"]
-                label = g if g and g != "None" else (store.classify(hand["landmarks"]) or "-")
-                if g in (None, "None") and label != "-":
-                    label += " (custom)"
+                label = (f"{custom_label} (custom)" if custom_label
+                         else (g if g and g != "None" else "-"))
             if label != last_label:
                 print(f"[인식] {label} | 추론 {infer_ms:.1f}ms | "
                       f"거리={distance}, 조명={lighting}, 손={hand_side}")
@@ -240,10 +242,11 @@ def trial_test(camera_idx, target, trials, distance="미기록", lighting="미�
             infer_samples.append(infer_ms)
             label = "-"
             if hand:
+                # 실서비스와 같은 kNN 우선 판정으로 측정한다.
+                custom_label, _ = store.classify_with_distance(hand["landmarks"])
                 g = hand["gesture"]
-                label = g if g and g != "None" else (store.classify(hand["landmarks"]) or "-")
-                if g in (None, "None") and label != "-":
-                    label += " (custom)"
+                label = (f"{custom_label} (custom)" if custom_label
+                         else (g if g and g != "None" else "-"))
             if label != last_label:
                 print(f"[현재 인식] {label} | 추론 {infer_ms:.1f}ms")
                 last_label = label
@@ -300,7 +303,7 @@ def swipe_trial_test(camera_idx, target, trials, distance="미기록", lighting=
         raise ValueError("유효한 스와이프 목표가 아닙니다.")
     gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
     swiper = (PointerControlDetector() if pointer_mode else
-              PinchVolumeDetector() if pinch_mode else
+              PinchVolumeDetector(enabled=True) if pinch_mode else
               FingerSwipeDetector() if finger_mode else
               # 좌·우 화면 넘김 실측은 assistant.py와 동일한 threshold를 사용한다.
               SwipeDetector(**SCREEN_SWIPE_CONFIG) if target in ("Swipe_Left", "Swipe_Right")

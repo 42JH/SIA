@@ -17,6 +17,15 @@ import numpy as np
 from hands import CustomGestures, normalize_landmarks
 
 
+class GestureRegistrationRejected(ValueError):
+    """FE에 유사 제스처 정보를 함께 알려야 하는 등록 거부."""
+
+    def __init__(self, reason, similar_to=None, similarity=None):
+        super().__init__(reason)
+        self.similar_to = similar_to
+        self.similarity = similarity
+
+
 def registration_blocks_gesture_execution(registration):
     """등록 모드에서는 샘플 수집 외의 제스처 명령을 실행하지 않는다.
 
@@ -100,11 +109,13 @@ class GestureTemplateCache:
 
 
 class GestureRegistration:
-    """BE reg_mode_start에 대응하는 정적 커스텀 제스처 3회 촬영 상태기계."""
+    """BE reg_mode_start에 대응하는 정적/동적 커스텀 제스처 촬영 상태기계."""
 
     DEFAULT_TAKES = 3
     DEFAULT_COUNTDOWN_S = 3.0
     DEFAULT_TAKE_S = 2.0
+    STATIC = "STATIC"
+    DYNAMIC = "DYNAMIC"
     FRAME_INTERVAL_S = 0.10
     BUILTIN_OVERLAP = 0.20
     MIN_PALM_SIZE = 0.055
@@ -126,6 +137,7 @@ class GestureRegistration:
         self.takes = self.DEFAULT_TAKES
         self.countdown_s = self.DEFAULT_COUNTDOWN_S
         self.take_s = self.DEFAULT_TAKE_S
+        self.motion = self.DYNAMIC
         self.phase_at = 0.0
         self.last_frame_at = 0.0
         self.seq = 0
@@ -133,6 +145,7 @@ class GestureRegistration:
         self.sizes = []
         self.angles = []
         self.builtin_hits = {}
+        self.hand_counts = []
 
     @property
     def active(self):
@@ -154,6 +167,8 @@ class GestureRegistration:
         self.temp_id = str(data.get("tempId", ""))
         if not self.temp_id:
             return
+        motion = str(data.get("motion", self.DYNAMIC)).upper()
+        self.motion = motion if motion in (self.STATIC, self.DYNAMIC) else self.DYNAMIC
         # FE 안내, BE 프리뷰 버퍼, AI 샘플 수집 구간을 같은 설정으로 맞춘다.
         self.takes = self._positive_number(
             data, "takes", self.DEFAULT_TAKES, integer=True
@@ -161,9 +176,11 @@ class GestureRegistration:
         self.countdown_s = self._positive_number(
             data, "countdownSec", self.DEFAULT_COUNTDOWN_S
         )
-        self.take_s = self._positive_number(
-            data, "takeDurationSec", self.DEFAULT_TAKE_S
-        )
+        # STATIC은 BE 계약상 한 장 캡처이므로 takeDurationSec 자체가 없다.
+        if self.motion == self.DYNAMIC:
+            self.take_s = self._positive_number(
+                data, "takeDurationSec", self.DEFAULT_TAKE_S
+            )
         self.take = 1
         self.phase = "COUNTDOWN"
         self.phase_at = time.monotonic() if now is None else now
@@ -171,10 +188,11 @@ class GestureRegistration:
         self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                            "phase": "COUNTDOWN"})
         print(f"[제스처 등록] 시작 tempId={self.temp_id} "
-              f"({self.takes}회, 카운트다운 {self.countdown_s:g}초, 촬영 {self.take_s:g}초)")
+              f"({self.motion}, {self.takes}회, 카운트다운 {self.countdown_s:g}초"
+              + (f", 촬영 {self.take_s:g}초)" if self.motion == self.DYNAMIC else ", 회차당 캡처 1장)"))
 
-    def _emit_frame(self, frame, now):
-        if now - self.last_frame_at < self.FRAME_INTERVAL_S:
+    def _emit_frame(self, frame, now, force=False):
+        if not force and now - self.last_frame_at < self.FRAME_INTERVAL_S:
             return
         self.last_frame_at = now
         view = frame
@@ -196,10 +214,31 @@ class GestureRegistration:
         dx, dy = middle[0] - wrist[0], middle[1] - wrist[1]
         return float(np.hypot(dx, dy)), float(np.arctan2(dy, dx))
 
-    def tick(self, frame, hand, now=None):
+    @staticmethod
+    def _as_hands(hands):
+        if hands is None:
+            return []
+        return [hands] if isinstance(hands, dict) else list(hands)
+
+    def _collect(self, hands):
+        """현재 프레임의 손 관측을 기록한다. 정적 템플릿은 첫 손을 사용한다."""
+        self.hand_counts.append(len(hands))
+        if not hands:
+            return
+        lm = hands[0]["landmarks"]
+        self.samples.append(normalize_landmarks(lm))
+        size, angle = self._hand_quality(lm)
+        self.sizes.append(size)
+        self.angles.append(angle)
+        label = hands[0].get("gesture")
+        if label and label != "None":
+            self.builtin_hits[label] = self.builtin_hits.get(label, 0) + 1
+
+    def tick(self, frame, hands, now=None):
         if not self.active:
             return None
         now = time.monotonic() if now is None else now
+        hands = self._as_hands(hands)
         elapsed = now - self.phase_at
         if self.phase == "COUNTDOWN":
             if elapsed < self.countdown_s:
@@ -210,17 +249,10 @@ class GestureRegistration:
             self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                                "phase": "RECORDING"})
         if self.phase == "RECORDING":
-            self._emit_frame(frame, now)
-            if hand:
-                lm = hand["landmarks"]
-                self.samples.append(normalize_landmarks(lm))
-                size, angle = self._hand_quality(lm)
-                self.sizes.append(size)
-                self.angles.append(angle)
-                label = hand.get("gesture")
-                if label and label != "None":
-                    self.builtin_hits[label] = self.builtin_hits.get(label, 0) + 1
-            if now - self.phase_at >= self.take_s:
+            # 정적은 카운트다운 직후 한 장만 캡처한다. 동적만 시간 구간을 수집한다.
+            self._emit_frame(frame, now, force=self.motion == self.STATIC)
+            self._collect(hands)
+            if self.motion == self.STATIC or now - self.phase_at >= self.take_s:
                 if self.take < self.takes:
                     self.take += 1
                     self.phase = "COUNTDOWN"
@@ -248,10 +280,15 @@ class GestureRegistration:
             return
         try:
             self._validate_and_upload()
-            self.link.send_event("reg_captured", {"tempId": temp_id})
+            hands = 2 if self.hand_counts and sum(n >= 2 for n in self.hand_counts) >= len(self.hand_counts) * 0.7 else 1
+            self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hands})
             print("[제스처 등록] 품질 검사 통과. 기능 지정 대기")
         except ValueError as exc:
-            self.link.send_event("reg_rejected", {"tempId": temp_id, "reason": str(exc)})
+            payload = {"tempId": temp_id, "reason": str(exc)}
+            if isinstance(exc, GestureRegistrationRejected) and exc.similar_to:
+                payload["similarTo"] = exc.similar_to
+                payload["similarity"] = exc.similarity
+            self.link.send_event("reg_rejected", payload)
             print(f"[제스처 등록] 거부: {exc}")
         finally:
             self.reset()
@@ -275,9 +312,20 @@ class GestureRegistration:
             raise ValueError("샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요")
         for label, count in self.builtin_hits.items():
             if count >= len(feats) * self.BUILTIN_OVERLAP:
-                raise ValueError(f"내장 제스처 '{label}'와 너무 유사합니다 ({count}/{len(feats)})")
+                raise GestureRegistrationRejected(
+                    f"내장 제스처 '{label}'와 너무 유사합니다 ({count}/{len(feats)})",
+                    similar_to=label,
+                    similarity=round(count / len(feats), 4),
+                )
         near, dist = self.custom_store.nearest_class(feats)
         if near and dist < 0.45:
-            raise ValueError(f"기존 제스처 '{near}'와 너무 유사합니다")
+            # 랜드마크 거리는 확률이 아니므로, 화면 표시용으로 단조 감소 점수로
+            # 변환한다. 0은 동일, 거리가 멀수록 0에 가까워진다.
+            similarity = round(float(np.exp(-dist)), 4)
+            raise GestureRegistrationRejected(
+                f"기존 제스처 '{near}'와 너무 유사합니다",
+                similar_to=near,
+                similarity=similarity,
+            )
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
