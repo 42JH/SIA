@@ -82,17 +82,14 @@ public class AgentWsRoutes {
                     d.path("jpegB64").asText());
             case "reg_rejected" -> registration.onRejected(d.path("tempId").asText(), d);
             case "reg_captured" -> registration.onCaptured(d.path("tempId").asText(), d);
-            // ---- 온보딩: 이름 불러보기 · 명령 문장 말하기
+            // ---- 온보딩: 이름 불러보기
             case "wakeword_sample" -> enrollment.onWakewordSample(d);
             case "wakeword_done" -> enrollment.onWakewordDone();
-            case "command_ready" -> enrollment.onCommandReady();
-            case "command_progress" -> enrollment.onCommandProgress(d);
-            case "command_rejected" -> enrollment.onCommandRejected(d);
-            case "command_done" -> enrollment.onCommandDone();
-            // ---- 보이스 등록 (5문장)
+            // ---- 보이스 등록 (5문장) — 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다
             case "voice_ready" -> voiceRegistration.onReady(d.path("tempId").asText());
             case "voice_progress" -> voiceRegistration.onProgress(d.path("tempId").asText(),
                     d.path("n").asInt());
+            case "voice_sentence_rejected" -> voiceRegistration.onSentenceRejected(d.path("tempId").asText(), d);
             case "voice_quality_warn" -> voiceRegistration.onQualityWarn(d.path("tempId").asText(), d);
             case "voice_captured" -> voiceRegistration.onCaptured(d.path("tempId").asText(), d);
             // ---- 시선 보정 (9점 두더지 · 재측정 3회는 BE 카운트)

@@ -17,9 +17,11 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 보이스(화자) 등록 오케스트레이터 — 동시 진행 1건 (와이어프레임 보이스 녹음 5문장 흐름, PROTOCOL.md §2.1).
+ * 보이스(화자) 등록 오케스트레이터 — 동시 진행 1건 (와이어프레임 "AI에게 명령하듯 말해보세요" 5문장 → 녹음 확인, PROTOCOL.md §2.1).
+ * 온보딩의 명령 문장 단계가 곧 이 등록이다 — 같은 5문장을 한 번 읽어 화자 임베딩을 만든다 (별도의 command_* 단계는 없다).
  * 낭독 문장 5개의 원문은 FE·AI 가 동일한 상수로 보유한다(불변, 하드코딩) — BE 는 순번(n)만 정해 양쪽에 보낸다.
- * AI 는 문장 단위로 수집하고(voice_collect), 같은 n 이 다시 오면 그 문장을 교체한다.
+ * AI 는 문장 단위로 수집하고(voice_collect), 같은 n 이 다시 오면 그 문장을 교체한다. 문장 하나가 미달이면
+ * voice_sentence_rejected 로 사유만 알리고 같은 n 을 계속 기다린다.
  * 임시본(npz·샘플 오디오)은 메모리에만 있다가 사용자의 "등록"(voice_commit)에서 프로필로 확정된다 —
  * 재시작하면 진행 중이던 등록은 사라지는 게 맞고, DB 에 청소할 고아도 남지 않는다.
  */
@@ -99,6 +101,28 @@ public class VoiceRegistrationOrchestrator {
             draft.currentN = n + 1;
             sendSentence(draft, n + 1);
         }
+    }
+
+    /**
+     * AI voice_sentence_rejected {tempId, n, reason, code?} — 문장 n 낭독 실패 사유 중계.
+     * 순번을 진행하지 않고 voice_collect 도 재발급하지 않는다 — AI 가 같은 n 을 계속 기다리므로 BE 가 끼어들면 순번이 어긋난다.
+     * reason 의 소유자는 AI 다 (FE 가 그대로 띄운다). code 는 선택 필드라 온 경우에만 싣는다 — FE 는 모르는 code 를 reason 으로 폴백한다.
+     * 화자 게이트 기각(voice_rejected) · 프로필 한도(voice_reg_denied) 와는 다른 이벤트다.
+     */
+    public void onSentenceRejected(String tempId, JsonNode d) {
+        if (match(tempId, "voice_sentence_rejected") == null) {
+            return;
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tempId", tempId);
+        body.put("n", d.path("n").asInt());
+        body.put("total", TOTAL_SENTENCES);
+        body.put("reason", d.path("reason").asText(""));
+        String code = d.path("code").asText(null);
+        if (code != null && !code.isBlank()) {
+            body.put("code", code);
+        }
+        feHub.send("voice_sentence_rejected", body);
     }
 
     /** FE voice_sentence_retry — "이 문장 다시". 같은 n 의 voice_collect 를 재발급한다 (AI 는 교체 수집). */

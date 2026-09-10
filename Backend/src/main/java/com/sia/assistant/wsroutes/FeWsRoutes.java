@@ -48,10 +48,9 @@ public class FeWsRoutes {
                     d.hasNonNull("motion") ? d.path("motion").asText() : null);
             case "reg_stop" -> registration.stop(d.path("tempId").asText());
             case "macro_assign" -> registration.assign(d);
-            // ---- 온보딩: 이름 불러보기 · 명령 문장 말하기
+            // ---- 온보딩: 이름 불러보기
             case "wakeword_enroll_start" -> enrollment.startWakeword();
-            case "command_enroll_start" -> enrollment.startCommand();
-            // ---- 보이스 등록 (5문장 → 녹음 확인 → 등록)
+            // ---- 보이스 등록 (5문장 → 녹음 확인 → 등록) — 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다
             case "voice_reg_start" -> voiceRegistration.start();
             case "voice_sentence_retry" -> voiceRegistration.retrySentence(d.path("tempId").asText());
             case "voice_reg_retry" -> voiceRegistration.retryAll(d.path("tempId").asText());

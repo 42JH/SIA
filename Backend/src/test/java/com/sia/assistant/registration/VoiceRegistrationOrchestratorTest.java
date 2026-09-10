@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -153,6 +154,47 @@ class VoiceRegistrationOrchestratorTest {
 
         orchestrator.acceptAnyway(tempId);
         verify(agentHub).send(eq("voice_finalize"), any());
+    }
+
+    @Test
+    @DisplayName("문장 단위 거절은 tempId·n·total·reason 과 code 를 실어 FE 로 가고, 순번은 진행하지 않는다")
+    void sentenceRejectedCarriesCodeAndDoesNotAdvance() {
+        String tempId = startAndGetTempId();
+        orchestrator.onReady(tempId); // 1번 문장 발급
+
+        orchestrator.onSentenceRejected(tempId, om.readTree(
+                "{\"n\":1,\"reason\":\"너무 짧게 들렸어요.\",\"code\":\"TOO_SHORT\"}"));
+
+        verify(feHub).send(eq("voice_sentence_rejected"), argThat(body ->
+                body instanceof Map<?, ?> m
+                        && tempId.equals(m.get("tempId"))
+                        && Integer.valueOf(1).equals(m.get("n"))
+                        && Integer.valueOf(5).equals(m.get("total"))
+                        && "너무 짧게 들렸어요.".equals(m.get("reason"))
+                        && "TOO_SHORT".equals(m.get("code"))));
+        verify(feHub, never()).send(eq("voice_sentence"), argThatMap("n", 2));
+        verify(agentHub, org.mockito.Mockito.times(1)).send(eq("voice_collect"), any()); // 재발급 없음
+    }
+
+    @Test
+    @DisplayName("code 가 없으면 키 자체를 넣지 않는다 — FE 는 reason 으로 폴백한다")
+    void sentenceRejectedOmitsCodeWhenAbsent() {
+        String tempId = startAndGetTempId();
+
+        orchestrator.onSentenceRejected(tempId, om.readTree("{\"n\":2,\"reason\":\"목소리 분석에 실패했어요.\"}"));
+
+        verify(feHub).send(eq("voice_sentence_rejected"), argThat(body ->
+                body instanceof Map<?, ?> m && !m.containsKey("code")));
+    }
+
+    @Test
+    @DisplayName("진행 중 등록과 다른 tempId 의 거절은 무시한다 — 다른 voice_* 수신과 같은 규칙")
+    void sentenceRejectedIgnoresUnknownTempId() {
+        startAndGetTempId();
+
+        orchestrator.onSentenceRejected("nope", om.readTree("{\"n\":1,\"reason\":\"x\"}"));
+
+        verify(feHub, never()).send(eq("voice_sentence_rejected"), any());
     }
 
     /** 페이로드 맵에서 키 하나만 보는 매처 — BaseHub.send(String, Object) 의 두 번째 인자용. */

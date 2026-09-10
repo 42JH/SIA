@@ -1,11 +1,8 @@
 package com.sia.assistant.relay;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -15,11 +12,12 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * command_rejected — 명령 문장 낭독 실패 사유 중계 (프로토콜 §8.7).
- * 거절은 상태를 진행시키지 않는다: 문장을 재발급하지 않아야 AI 가 기다리는 n 과 어긋나지 않는다.
+ * 이름 불러보기(호출어 샘플) 중계 — BE 는 세지 않고 그대로 넘긴다 (프로토콜 §8.7).
+ * 샘플 수의 원천은 AI 라서 BE 가 total 을 고쳐 쓰면 FE 진행바가 AI 와 어긋난다.
  */
 class EnrollmentRelayTest {
 
@@ -36,44 +34,31 @@ class EnrollmentRelayTest {
     }
 
     @Test
-    @DisplayName("command_rejected 는 n·total·reason 과 함께 code 를 그대로 실어 FE 로 간다")
-    void rejectedCarriesCodeWhenPresent() {
-        relay.onCommandRejected(om.readTree(
-                "{\"n\":2,\"reason\":\"너무 짧게 들렸어요.\",\"code\":\"TOO_SHORT\"}"));
+    @DisplayName("시작은 AI 에 wakeword_enroll_start 만 보낸다 — FE 로는 아무것도 가지 않는다")
+    void startGoesToAgentOnly() {
+        relay.startWakeword();
 
-        verify(feHub).send(eq("command_rejected"), argThat(body ->
-                body instanceof Map<?, ?> m
-                        && Integer.valueOf(2).equals(m.get("n"))
-                        && Integer.valueOf(5).equals(m.get("total"))
-                        && "너무 짧게 들렸어요.".equals(m.get("reason"))
-                        && "TOO_SHORT".equals(m.get("code"))));
+        verify(agentHub).send(eq("wakeword_enroll_start"), eq(Map.of()));
+        verifyNoInteractions(feHub);
     }
 
     @Test
-    @DisplayName("code 가 없으면 키 자체를 넣지 않는다 — FE 는 reason 으로 폴백한다")
-    void rejectedOmitsCodeWhenAbsent() {
-        relay.onCommandRejected(om.readTree("{\"n\":1,\"reason\":\"너무 짧게 들렸어요.\"}"));
+    @DisplayName("wakeword_sample 은 n·total 을 그대로 wakeword_progress 로 넘긴다")
+    void samplePassesPayloadThrough() {
+        JsonNode d = om.readTree("{\"n\":3,\"total\":5}");
+        relay.onWakewordSample(d);
 
-        verify(feHub).send(eq("command_rejected"), argThat(body ->
-                body instanceof Map<?, ?> m && !m.containsKey("code")));
-    }
-
-    @Test
-    @DisplayName("거절은 문장을 재발급하지 않는다 — AI 가 같은 n 을 계속 기다린다")
-    void rejectedDoesNotReissueSentence() {
-        relay.onCommandRejected(om.readTree("{\"n\":3,\"reason\":\"너무 짧게 들렸어요.\"}"));
-
-        verify(feHub, never()).send(eq("command_sentence"), any());
+        verify(feHub).send(eq("wakeword_progress"), argThat(body ->
+                body instanceof JsonNode j && j.path("n").asInt() == 3 && j.path("total").asInt() == 5));
         verifyNoInteractions(agentHub);
     }
 
     @Test
-    @DisplayName("command_progress 는 종전대로 다음 문장을 발급한다 — 거절 추가가 진행 경로를 바꾸지 않는다")
-    void progressStillAdvances() {
-        relay.onCommandProgress(om.readTree("{\"n\":3}"));
+    @DisplayName("wakeword_done 은 빈 본문으로 FE 에 간다")
+    void doneRelayed() {
+        relay.onWakewordDone();
 
-        verify(feHub).send(eq("command_progress"), eq(Map.of("n", 3, "total", 5)));
-        verify(feHub).send(eq("command_sentence"), eq(Map.of("n", 4, "total", 5)));
-        verify(agentHub).send(eq("command_collect"), eq(Map.of("n", 4)));
+        verify(feHub).send(eq("wakeword_done"), eq(Map.of()));
+        verifyNoInteractions(agentHub);
     }
 }
