@@ -61,7 +61,12 @@ class SpeakerVerifier:
 
     def centroid_of(self, audio_list):
         """여러 발화 → (평균 임베딩 L2 정규화, 샘플 간 최소 유사도). 최소 유사도는 일관성 지표 — 낮으면 녹음이 지저분한 것."""
-        embs = np.array([self.embed(a) for a in audio_list])
+        return self.centroid_of_embs([self.embed(a) for a in audio_list])
+
+    def centroid_of_embs(self, embs):
+        """이미 뽑아 둔 임베딩들 → (평균 임베딩 L2 정규화, 샘플 간 최소 유사도).
+        문장마다 미리 임베딩해 두는 등록(voice_bridge)이 마지막에 같은 오디오를 다시 뽑지 않으려고 쓴다."""
+        embs = np.asarray(embs)
         c = embs.mean(axis=0)
         c = c / (np.linalg.norm(c) + 1e-9)
         return c, float((embs @ c).min())
