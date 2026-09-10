@@ -612,7 +612,7 @@ def main():
             gesture = stable.update(raw_gesture, now)
             registration_active = registration_blocks_gesture_execution(registration)
             if registration_active:
-                registration.tick(frame, hand, now)
+                registration.tick(frame, hands, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
             # 전체화면 같은 실제 액션 매핑을 추가한다.
             two_hand_event = two_hand_motion.update(

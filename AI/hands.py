@@ -559,7 +559,10 @@ class PalmScrollDetector:
     한다. 공중에서 손을 원위치로 되돌릴 때 반대 방향으로 스크롤되는 것을 막는다.
     """
 
-    def __init__(self, arm_t=0.18, step_dist=0.020, still_t=0.30):
+    def __init__(self, arm_t=0.18, step_dist=0.020, still_t=0.30, enabled=False):
+        # 기본 제공 제스처는 MediaPipe 7종과 좌/우 스와이프만이다.
+        # 연속 스크롤은 향후 등록형 커스텀 동작으로만 활성화한다.
+        self.enabled = enabled
         self.arm_t = arm_t
         self.step_dist = step_dist
         self.still_t = still_t
@@ -580,6 +583,9 @@ class PalmScrollDetector:
             self._since = t - self.arm_t
 
     def update(self, anchor, t):
+        if not self.enabled:
+            self.reset()
+            return 0
         if anchor is None:
             self.reset()
             return 0
@@ -727,7 +733,9 @@ class PinchVolumeDetector:
     """
 
     def __init__(self, pinch_on=0.35, pinch_off=0.55, arm_t=0.18,
-                 step_dist=0.08, cooldown_s=0.16):
+                 step_dist=0.08, cooldown_s=0.16, enabled=False):
+        # 핀치 볼륨은 기본 제공 명령이 아니다. 커스텀 등록 경로에서만 켠다.
+        self.enabled = enabled
         self.pinch_on = pinch_on
         self.pinch_off = pinch_off
         self.arm_t = arm_t
@@ -746,6 +754,9 @@ class PinchVolumeDetector:
         self._baseline_y = None
 
     def update(self, lm_xy, t):
+        if not self.enabled:
+            self.reset()
+            return None
         if lm_xy is None:
             self.reset()
             return None
@@ -893,7 +904,10 @@ class TwoHandSpreadDetector:
     this prevents the return motion from becoming the opposite command.
     """
 
-    def __init__(self, still_s=0.25, still_speed=1.2, delta=1.25, max_t=1.0):
+    def __init__(self, still_s=0.25, still_speed=1.2, delta=1.25, max_t=1.0,
+                 enabled=False):
+        # 양손 벌림/모음도 등록형 커스텀 제스처로 분리한다.
+        self.enabled = enabled
         self.still_s = still_s
         self.still_speed = still_speed
         self.delta = delta
@@ -923,6 +937,9 @@ class TwoHandSpreadDetector:
         return math.hypot(palms[0][0] - palms[1][0], palms[0][1] - palms[1][1]) / scale
 
     def update(self, hands, t=None):
+        if not self.enabled:
+            self.reset()
+            return None
         t = time.monotonic() if t is None else t
         value = self._measure(hands)
         if value is None:
