@@ -21,6 +21,7 @@
 import argparse
 import collections
 import json
+import math
 import os
 import subprocess
 import sys
@@ -520,15 +521,21 @@ def main():
             hand_infer_ms = (time.perf_counter() - hand_start) * 1000
             pose_landmarks = pose.update(frame, now) if pose else None
             raw_gesture = hand["gesture"] if hand else None
+            # 통계 전송용 신뢰도 — 내장은 MediaPipe score, 커스텀은 kNN 거리를
+            # exp(-dist)로 변환(gesture_be.py의 기존 관례와 동일). 발동값은
+            # GestureStable로 안정화되지만 점수는 현재 프레임 기준이라 드물게
+            # 어긋날 수 있다(허용 가능한 근사치).
+            raw_score = hand["score"] if hand else None
             # 내장 분류(7종)가 못 알아본 손모양만 커스텀 분류기가 2차 판정
             if hand and active_custom.n:
                 # Registered templates passed collision checks during capture.
                 # A close kNN match therefore takes precedence over a weak
                 # built-in guess; otherwise Promise is never evaluated when
                 # MediaPipe assigns a borderline built-in label first.
-                custom_label, _ = active_custom.classify_with_distance(hand["landmarks"])
+                custom_label, dist = active_custom.classify_with_distance(hand["landmarks"])
                 if custom_label:
                     raw_gesture = custom_label
+                    raw_score = round(float(math.exp(-dist)), 3)
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
             gesture = stable.update(raw_gesture, now)
@@ -611,6 +618,7 @@ def main():
                                          sessionId=link.be_session_id,
                                          action=name,
                                          context=context,
+                                         accuracy=raw_score,
                                          payload={"source": "static", "occurredAt": int(time.time() * 1000)})
             if gesture_active and not registration_active:
                 pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
