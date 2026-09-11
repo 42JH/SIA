@@ -32,6 +32,7 @@ import cv2
 
 from dombridge import DomBridge
 from gesture_be import (
+    GesturePreview,
     GestureRegistration,
     GestureTemplateCache,
     registration_blocks_gesture_execution,
@@ -40,7 +41,7 @@ from gesture_be import (
 from body_pose import BodyPoseEngine
 from custom_motion import CustomGestureStore, static_execution_allowed
 from gaze import Calibrator, GazeBuffer, make_engine
-from hands import (GestureEngine, GestureStable, HoldToggle,
+from hands import (GestureEngine, GestureStable, HoldToggle, MotionHandTracker,
                    PalmScrollDetector, PinchVolumeDetector, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, TwoHandSpreadDetector)
 from main import Camera, GazeWorker, open_camera
@@ -280,6 +281,10 @@ def main():
     stable = GestureStable(min_frames=3, missing_grace_s=0.45)
     # 제스처 실행 게이트는 Open_Palm이 아니라 음성 호출로 열린 ACTIVE 세션이다.
     palm_motion = SwipeDetector(**SCREEN_SWIPE_CONFIG)
+    # 스와이프는 위치 이동을 누적 판단하므로, 양손이 잡힐 때 MediaPipe의 Left/Right
+    # 검출 순서가 프레임마다 바뀌면 다른 손으로 착각해 오발동할 수 있다 — handedness로
+    # 같은 손을 계속 추적한다.
+    palm_motion_tracker = MotionHandTracker()
     palm_scroll = PalmScrollDetector()
     pinch_volume = PinchVolumeDetector()
     two_hand_motion = TwoHandSpreadDetector()
@@ -290,6 +295,7 @@ def main():
     # 연결 전에는 위의 로컬 템플릿을 그대로 사용한다.
     remote_cache = GestureTemplateCache(HERE / ".gesture_cache", HERE / "be_custom_gestures.npz")
     registration = GestureRegistration(link, remote_cache, active_custom) if link else None
+    gesture_preview = GesturePreview(link) if link else None
     remote_refs = {}
     if custom.n:
         print(f"커스텀 제스처 로드: {custom.class_names()} (등록: python gesture_studio.py)")
@@ -448,7 +454,15 @@ def main():
                                 registration.custom_store = active_custom
                         except Exception as exc:
                             print(f"[BE] 삭제 제스처 동기화 실패: {exc}")
+                    elif event_type == "cam_preview_start" and gesture_preview:
+                        gesture_preview.start()
+                    elif event_type == "cam_preview_stop" and gesture_preview:
+                        gesture_preview.stop()
                     elif event_type == "reg_mode_start" and registration:
+                        # BE가 reg_start 전에 cam_preview_stop을 먼저 보내는 게 계약이라
+                        # 여기서 조율할 필요는 없지만, 순서가 어긋나도 안전하게 방어.
+                        if gesture_preview:
+                            gesture_preview.stop()
                         registration.start(data, now)
                     elif event_type == "reg_finish" and registration:
                         registration.finish()
@@ -514,6 +528,7 @@ def main():
             # 감지 후보만 보여주며 실제 액션은 별도 가드에서 차단한다.
             gesture_active = args.two_hand_preview or session_left > 0
             if gesture_active != was_gesture_active:
+                palm_motion_tracker.update([])
                 palm_motion.update(None, now)
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
@@ -565,6 +580,8 @@ def main():
             gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
                 registration.tick(frame, hands, now)
+            elif gesture_preview:
+                gesture_preview.tick(frame, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
             # 전체화면 같은 실제 액션 매핑을 추가한다.
             two_hand_event = two_hand_motion.update(
@@ -646,8 +663,11 @@ def main():
                                          payload={"source": "static", "occurredAt": int(time.time() * 1000)})
             if gesture_active and not registration_active:
                 pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
+                swipe_hand, swipe_hand_changed = palm_motion_tracker.update(hands)
+                if swipe_hand_changed:
+                    palm_motion.update(None, now)
                 motion_event = palm_motion.update(
-                    hand["anchor"] if hand and not pinch_volume._pinched else None, now)
+                    swipe_hand["anchor"] if swipe_hand and not pinch_volume._pinched else None, now)
                 scroll_steps = palm_scroll.update(
                     hand["anchor"] if hand and not pinch_volume._pinched else None, now)
                 if custom_motion_event:
@@ -667,6 +687,7 @@ def main():
                 else:
                     dynamic_event = None
             else:
+                palm_motion_tracker.update([])
                 palm_motion.update(None, now)
                 palm_scroll.reset()
                 pinch_volume.update(None, now)

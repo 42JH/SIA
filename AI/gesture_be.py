@@ -7,6 +7,8 @@
 import base64
 import io
 import json
+import queue
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -37,6 +39,72 @@ def registration_blocks_gesture_execution(registration):
     명령으로 해석되어 로컬 또는 BE에서 실행되면 안 된다.
     """
     return bool(registration is not None and registration.active)
+
+
+def encode_jpeg(frame, max_width=640, quality=75):
+    """WS 전송용으로 프레임을 축소·JPEG 인코딩한다. 실패하면 None."""
+    view = frame
+    if frame.shape[1] > max_width:
+        ratio = max_width / frame.shape[1]
+        view = cv2.resize(frame, (max_width, int(frame.shape[0] * ratio)))
+    ok, encoded = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(encoded).decode("ascii") if ok else None
+
+
+class GesturePreview:
+    """촬영 방식을 고르기 전, 카메라가 보고 있는 화면만 BE(cam_preview_*)로 흘려보낸다.
+
+    카메라를 새로 열지 않고 상시 인식 루프가 이미 들고 있는 프레임을 그대로
+    쓴다 — 그래서 인코딩·전송(느릴 수 있음)을 인식 루프와 같은 스레드에서
+    동기로 하면 안 된다. tick()은 최신 프레임을 큐에 얹기만 하고(가득 차면
+    오래된 걸 버림), 실제 JPEG 인코딩+전송은 별도 워커 스레드가 한다.
+    tempId·회차 개념이 없고, reg_mode_start/calib_start 전후 조율은 BE가
+    cam_preview_stop을 먼저 보내는 방식으로 책임진다 — AI는 켜고 끄기만 한다.
+    """
+
+    FRAME_INTERVAL_S = 1.0 / 12  # BE 계약 10~15fps 범위 내
+
+    def __init__(self, link):
+        self.link = link
+        self.active = False
+        self.last_queued_at = 0.0
+        self._seq = 0
+        self._queue = queue.Queue(maxsize=1)
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def start(self):
+        self.active = True
+        self._seq = 0
+        self.last_queued_at = 0.0
+        self.link.send_event("cam_preview_state", {"phase": "READY"})
+
+    def stop(self):
+        if self.active:
+            self.active = False
+            self.link.send_event("cam_preview_state", {"phase": "STOPPED"})
+
+    def tick(self, frame, now):
+        """메인 루프에서 매 프레임 호출 — 인코딩 없이 큐에 얹기만 한다."""
+        if not self.active or now - self.last_queued_at < self.FRAME_INTERVAL_S:
+            return
+        self.last_queued_at = now
+        try:
+            self._queue.get_nowait()  # 워커가 못 따라오면 오래된 프레임을 버린다
+        except queue.Empty:
+            pass
+        self._queue.put_nowait(frame.copy())
+
+    def _worker(self):
+        while True:
+            frame = self._queue.get()
+            jpeg_b64 = encode_jpeg(frame)
+            if jpeg_b64 is None:
+                continue
+            self._seq += 1
+            self.link.send_event("cam_preview_frame", {
+                "seq": self._seq, "jpegB64": jpeg_b64,
+            })
 
 
 class GestureTemplateCache:
@@ -211,17 +279,13 @@ class GestureRegistration:
         if not force and now - self.last_frame_at < self.FRAME_INTERVAL_S:
             return
         self.last_frame_at = now
-        view = frame
-        if frame.shape[1] > 640:
-            ratio = 640 / frame.shape[1]
-            view = cv2.resize(frame, (640, int(frame.shape[0] * ratio)))
-        ok, encoded = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        if not ok:
+        jpeg_b64 = encode_jpeg(frame)
+        if jpeg_b64 is None:
             return
         self.seq += 1
         self.link.send_event("reg_frame", {
             "tempId": self.temp_id, "take": self.take, "seq": self.seq,
-            "tsMs": int(now * 1000), "jpegB64": base64.b64encode(encoded).decode("ascii"),
+            "tsMs": int(now * 1000), "jpegB64": jpeg_b64,
         })
 
     @staticmethod
