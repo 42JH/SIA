@@ -115,7 +115,7 @@ class AgentLink:
     MCP 호출(call)은 brain 스레드에서만 일어난다(urllib 동기).
     """
 
-    def __init__(self):
+    def __init__(self, voice_sync=None):
         self.rt = read_runtime()
         self.mcp = None
         self.ws = None
@@ -127,6 +127,9 @@ class AgentLink:
         self._event_lock = threading.Lock()
         self.gesture_ready = False
         self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
+        self.voice_sync = voice_sync    # WS 연결 전에 주입해 부팅 직후 활성 참조도 놓치지 않는다.
+        if voice_sync is not None:
+            voice_sync.link = self
         self.wake = None                # WakeEnroll 또는 None (assistant가 주입) — 온보딩 이름 불러보기(206)
         self._send_lock = threading.Lock()
         self._stop = False
@@ -168,7 +171,18 @@ class AgentLink:
             msg = json.loads(raw)
         except ValueError:
             return
+        if not isinstance(msg, dict):
+            return
         t, d = msg.get("type"), msg.get("data") or {}
+        if not isinstance(d, dict):
+            return
+        if self.voice_sync is not None:
+            if t == "voice_changed" and isinstance(msg.get("data"), dict):
+                self.voice_sync.on_changed(msg["data"])
+            elif t in ("hello_ack", "recognition_start", "settings_changed"):
+                blobs = d.get("blobs")
+                if isinstance(blobs, dict) and "voice" in blobs:
+                    self.voice_sync.on_changed(blobs["voice"])
         if t == "session_state":
             if d.get("state") == "ACTIVE" and d.get("deadlineMs"):
                 remaining = d["deadlineMs"] / 1000.0 - time.time()
@@ -191,12 +205,11 @@ class AgentLink:
             elif t == "voice_collect":     v.on_collect(d.get("tempId"), d.get("n"))
             elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
             elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
-            elif t == "voice_changed":     v.on_changed(d)
         elif t == "wakeword_enroll_start" and self.wake:
             self.wake.on_start()
         # 온보딩 "명령 문장 말하기"(command_*) 단계는 폐기됐다(229) — 그 낭독 5문장이 곧 위 voice_* 등록이다
-        # NOTE(한계): hello_ack · recognition_start · settings_changed 에 실린 설정값과 활성 보이스(blobs.voice), 그리고
-        # wipe 는 아직 처리하지 않는다 — 제스처 템플릿만 assistant 가 동기화한다. 모르는 type 은 무시한다(프로토콜 §1.5).
+        # 마이크·제스처 설정은 메인 루프, 활성 보이스 참조는 위 동기화 워커로 넘긴다.
+        # NOTE(한계): wipe 수신은 아직 처리하지 않는다. 모르는 type은 무시한다(프로토콜 §1.5).
 
         # Calibration events are handled above. Gesture events are consumed by
         # assistant.py on its main camera loop, not the WebSocket worker thread.
@@ -243,6 +256,12 @@ class AgentLink:
             if e.code == 304:
                 return None, etag
             raise
+
+    def get_voice_npz(self):
+        """해시가 다른 파일만 호출측에서 요청한다 — 조건부 GET 없이 누락된 캐시도 복구한다."""
+        with self._agent_request("/api/agent/voices/active/npz",
+                                 headers={"Accept": "application/octet-stream"}) as response:
+            return response.read()
 
     def put_gesture_npz(self, temp_id, payload):
         with self._agent_request(f"/api/agent/gestures/{temp_id}/npz", method="PUT",
@@ -314,6 +333,8 @@ class AgentLink:
 
     def close(self):
         self._stop = True
+        if self.voice_sync is not None:
+            self.voice_sync.close()
         try:
             if self.ws:
                 self.ws.close()

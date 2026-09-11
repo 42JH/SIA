@@ -13,6 +13,7 @@ import io
 import numpy as np
 
 MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
+EMBED_DIM = 192
 
 
 class SpeakerVerifier:
@@ -23,19 +24,54 @@ class SpeakerVerifier:
         # 본인 발화는 보통 0.4~0.7, 타인/미디어는 0.0~0.25. 조용한 환경에서 올리고,
         # 본인이 자주 거부되면 내린다. 실사용 로그(아래 verify 반환값) 보고 조정.
         self.profile_path = str(profile_path)
-        self.threshold = threshold
+        self.default_threshold = threshold
+        self._profile = (None, threshold, None, None)  # centroid, threshold, 활성 ID, sha256
         self._clf = None
-        self.centroid = None
         self.reload()
 
+    @staticmethod
+    def read_profile(source, default_threshold=0.25):
+        """메모리에 적용하기 전에 npz 구조·차원·수치를 검증한다. 객체 역직렬화는 금지한다."""
+        with np.load(source, allow_pickle=False) as data:
+            centroid = data["centroid"]
+            threshold = data["threshold"] if "threshold" in data.files else np.asarray(default_threshold)
+            if (centroid.shape != (EMBED_DIM,) or centroid.dtype.kind not in "fi"
+                    or not np.isfinite(centroid).all() or not np.isclose(np.linalg.norm(centroid), 1, atol=1e-3)):
+                raise ValueError("보이스 centroid는 정규화된 192차원 유한 벡터여야 합니다")
+            if threshold.shape != () or threshold.dtype.kind not in "fi" or not -1 <= float(threshold) <= 1:
+                raise ValueError("보이스 threshold는 -1~1 범위의 유한 스칼라여야 합니다")
+        centroid.setflags(write=False)
+        return centroid, float(threshold)
+
+    def snapshot(self):
+        """한 발화가 판정 도중 프로필을 바꿔 읽지 않도록 불변 묶음을 반환한다."""
+        return self._profile
+
+    def apply_profile(self, centroid, threshold, profile_id=None, sha256=None):
+        self._profile = (centroid, threshold, profile_id, sha256)
+
+    @property
+    def centroid(self):
+        return self._profile[0]
+
+    @property
+    def threshold(self):
+        return self._profile[1]
+
+    @property
+    def profile_id(self):
+        return self._profile[2]
+
+    @property
+    def profile_sha256(self):
+        return self._profile[3]
+
     def reload(self):
-        """프로필 파일을 다시 읽는다 — 없거나 깨졌으면 미등록. BE 가 활성 보이스를 바꿨을 때(voice_changed) 재시작 없이 갱신용."""
+        """부팅·단독 실행용 로컬 프로필 읽기 — 없거나 깨졌으면 미등록으로 시작한다."""
         try:
-            d = np.load(self.profile_path)
-            self.centroid = d["centroid"]
-            self.threshold = float(d["threshold"]) if "threshold" in d.files else self.threshold
+            self.apply_profile(*self.read_profile(self.profile_path, self.default_threshold))
         except Exception:
-            self.centroid = None
+            self.apply_profile(None, self.default_threshold)
 
     @property
     def enrolled(self):
@@ -79,18 +115,20 @@ class SpeakerVerifier:
 
     def enroll(self, audio_list):
         """여러 발화 → centroid 를 프로필 파일로 저장(CLI 등록). 샘플 간 최소 유사도 반환."""
-        self.centroid, min_sim = self.centroid_of(audio_list)
+        centroid, min_sim = self.centroid_of(audio_list)
         with open(self.profile_path, "wb") as f:
-            f.write(self.npz_bytes(self.centroid))
+            f.write(self.npz_bytes(centroid))
+        self.apply_profile(centroid, self.threshold)
         return min_sim
 
-    def verify(self, audio_i16):
+    def verify(self, audio_i16, profile=None):
         """(통과여부, 유사도). 미등록이면 (True, 1.0) — 게이트 자체를 끔."""
-        if not self.enrolled:
+        centroid, threshold, _, _ = self.snapshot() if profile is None else profile
+        if centroid is None:
             return True, 1.0
         try:
-            sim = float(self.embed(audio_i16) @ self.centroid)
+            sim = float(self.embed(audio_i16) @ centroid)
         except Exception as e:
             print(f"[화자 인증 오류, 통과 처리] {e}")
             return True, 1.0
-        return sim >= self.threshold, sim
+        return sim >= threshold, sim

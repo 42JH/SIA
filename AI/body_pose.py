@@ -65,7 +65,11 @@ class BodyPoseEngine:
         timestamp_ms = max(int(now * 1000), self._last_ts + 1)
         self._last_ts = timestamp_ms
         start = time.perf_counter()
-        result = self.landmarker.detect_for_video(image, timestamp_ms)
+        try:
+            result = self.landmarker.detect_for_video(image, timestamp_ms)
+        except Exception as e:  # MediaPipe 간헐 실패 — 한 프레임만 버리고 앱은 계속(보조 신호라 무해)
+            print(f"[포즈 추론 오류, 프레임 건너뜀] {type(e).__name__}: {str(e)[:80]}")
+            return self.last_landmarks
         self.last_infer_ms = (time.perf_counter() - start) * 1000
 
         if result.pose_landmarks:
