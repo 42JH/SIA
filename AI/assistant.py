@@ -35,10 +35,12 @@ from gesture_be import (
     GestureRegistration,
     GestureTemplateCache,
     registration_blocks_gesture_execution,
+    sync_gesture_store,
 )
 from body_pose import BodyPoseEngine
+from custom_motion import CustomGestureStore, static_execution_allowed
 from gaze import Calibrator, GazeBuffer, make_engine
-from hands import (CustomGestures, GestureEngine, GestureStable, HoldToggle,
+from hands import (GestureEngine, GestureStable, HoldToggle,
                    PalmScrollDetector, PinchVolumeDetector, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, TwoHandSpreadDetector)
 from main import Camera, GazeWorker, open_camera
@@ -281,7 +283,7 @@ def main():
     palm_scroll = PalmScrollDetector()
     pinch_volume = PinchVolumeDetector()
     two_hand_motion = TwoHandSpreadDetector()
-    custom = CustomGestures(HERE / "custom_gestures.npz")
+    custom = CustomGestureStore(HERE / "custom_gestures.npz")
     active_custom = custom
     disabled_gestures = set()
     # BE가 연결되면 사용자별 커스텀 제스처 템플릿을 이 캐시에 동기화한다.
@@ -316,12 +318,17 @@ def main():
 
     gesture_toggles = {name: make_static_toggle(name) for name in static_names}
 
-    def ensure_static_gesture_names(names):
-        """BE에서 내려온 커스텀 정적 라벨도 hold/cooldown 대상에 편입한다."""
-        for name in names:
+    def ensure_static_gesture_names(store):
+        """BE에서 내려온 커스텀 정적 라벨(1손 kNN + 2손 NPZ v2)만 hold/cooldown 대상에
+        편입한다. 동적 커스텀(모션)은 완성 시 한 번 발동하는 즉발 이벤트라
+        static_names에 넣지 않는다 — dynamic_event 경로로 별도 처리한다.
+        """
+        dynamic = {str(n) for n, m in zip(store.data["sequence_names"], store.data["motions"])
+                   if m == "DYNAMIC"}
+        for name in store.class_names():
             if name in BUILTIN_STATIC_GESTURES and name not in AI_ENABLED_GESTURES:
                 continue
-            if name.startswith(DYNAMIC_PREFIXES):
+            if name.startswith(DYNAMIC_PREFIXES) or name in dynamic:
                 continue
             static_names.add(name)
             gesture_toggles.setdefault(name, make_static_toggle(name))
@@ -390,10 +397,9 @@ def main():
                         if "disabledGestures" in data:
                             disabled_gestures = set(data.get("disabledGestures") or [])
                         try:
-                            remote_cache.sync(link, list(remote_refs.values()))
-                            remote_custom = CustomGestures(HERE / "be_custom_gestures.npz")
+                            remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                             active_custom = remote_custom if remote_custom.n else custom
-                            ensure_static_gesture_names(active_custom.class_names())
+                            ensure_static_gesture_names(active_custom)
                             if registration:
                                 registration.custom_store = active_custom
                             print(f"[BE] 제스처 설정 동기화: {active_custom.class_names()}")
@@ -413,20 +419,18 @@ def main():
                         if ref:
                             ref["name"] = data.get("newName", ref.get("name"))
                             try:
-                                remote_cache.sync(link, list(remote_refs.values()))
-                                remote_custom = CustomGestures(HERE / "be_custom_gestures.npz")
+                                remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                                 active_custom = remote_custom if remote_custom.n else custom
-                                ensure_static_gesture_names(active_custom.class_names())
+                                ensure_static_gesture_names(active_custom)
                             except Exception as exc:
                                 print(f"[BE] 이름 변경 동기화 실패: {exc}")
                     elif event_type == "gesture_registered" and data.get("id") is not None:
                         remote_refs[str(data["id"])] = {"id": data["id"], "name": data.get("name"),
                                                         "sha256": data.get("sha256")}
                         try:
-                            remote_cache.sync(link, list(remote_refs.values()))
-                            remote_custom = CustomGestures(HERE / "be_custom_gestures.npz")
+                            remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                             active_custom = remote_custom if remote_custom.n else custom
-                            ensure_static_gesture_names(active_custom.class_names())
+                            ensure_static_gesture_names(active_custom)
                             if registration:
                                 registration.custom_store = active_custom
                         except Exception as exc:
@@ -435,10 +439,9 @@ def main():
                         name = data.get("name")
                         remote_refs = {gid: ref for gid, ref in remote_refs.items() if ref.get("name") != name}
                         try:
-                            remote_cache.sync(link, list(remote_refs.values()))
-                            remote_custom = CustomGestures(HERE / "be_custom_gestures.npz")
+                            remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                             active_custom = remote_custom if remote_custom.n else custom
-                            ensure_static_gesture_names(active_custom.class_names())
+                            ensure_static_gesture_names(active_custom)
                             if registration:
                                 registration.custom_store = active_custom
                         except Exception as exc:
@@ -538,8 +541,19 @@ def main():
                     raw_score = round(float(math.exp(-dist)), 3)
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
-            gesture = stable.update(raw_gesture, now)
             registration_active = registration_blocks_gesture_execution(registration)
+            # 양손 정적/동적 커스텀 — 시작 궤적이 일치하는 후보가 있으면(claimed)
+            # 완성 전까지 내장·1손 정적 제스처 실행을 보류한다(정지한 손모양만으로는
+            # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
+            if gesture_active and not registration_active:
+                custom_pose, custom_motion_event, custom_claimed = active_custom.update(
+                    hands, now, disabled_gestures
+                )
+            else:
+                active_custom.update([], now, disabled_gestures)
+                custom_pose = custom_motion_event = None
+                custom_claimed = False
+            gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
                 registration.tick(frame, hands, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
@@ -590,11 +604,12 @@ def main():
                     fire_entry(entry, two_hand_event, "양손 제스처")
             for name in static_names:
                 entry = mapping.get(name)
-                # 등록 중에는 false를 넣어 홀드 상태도 해제한다. 등록 완료 직후
-                # 직전 손모양이 명령으로 발동하는 것을 막는다.
-                fired = gesture_toggles[name].update(
-                    gesture_active and not registration_active and gesture == name, now
-                )
+                # 등록 중이거나 커스텀 동작 후보를 추적 중이면(claimed, 그리고 이
+                # 이름이 그 후보가 아니면) false를 넣어 홀드 상태도 해제한다.
+                # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
+                allowed = static_execution_allowed(gesture_active, registration_active,
+                                                    custom_claimed, custom_pose, name)
+                fired = gesture_toggles[name].update(allowed and gesture == name, now)
                 if fired and name not in disabled_gestures and not args.two_hand_preview:
                     be_target = be_gesture_target(
                         name, context, {ref.get("name") for ref in remote_refs.values()}
@@ -626,7 +641,11 @@ def main():
                     hand["anchor"] if hand and not pinch_volume._pinched else None, now)
                 scroll_steps = palm_scroll.update(
                     hand["anchor"] if hand and not pinch_volume._pinched else None, now)
-                if pinch_event:
+                if custom_motion_event:
+                    # 완성된 커스텀 동작이 최우선 — 같은 손 움직임이 우연히
+                    # 스와이프/스크롤로도 읽혀 이중 발동하는 것을 막는다.
+                    dynamic_event = custom_motion_event
+                elif pinch_event:
                     dynamic_event = pinch_event
                 elif motion_event == "Swipe_Right":
                     dynamic_event = "Screen_Next"
