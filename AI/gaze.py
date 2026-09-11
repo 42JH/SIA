@@ -307,12 +307,16 @@ class FaceEngine:
 
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
-        with self._infer_lock:  # ts 갱신 + MediaPipe 호출을 원자적으로 (스레드 직렬화)
-            if ts_ms is None:
-                ts_ms = int(time.monotonic() * 1000)
-            ts_ms = max(ts_ms, self._last_ts + 1)  # detect_for_video는 단조증가 필수
-            self._last_ts = ts_ms
-            result = self.landmarker.detect_for_video(img, ts_ms)
+        try:
+            with self._infer_lock:  # ts 갱신 + MediaPipe 호출을 원자적으로 (스레드 직렬화)
+                if ts_ms is None:
+                    ts_ms = int(time.monotonic() * 1000)
+                ts_ms = max(ts_ms, self._last_ts + 1)  # detect_for_video는 단조증가 필수
+                self._last_ts = ts_ms
+                result = self.landmarker.detect_for_video(img, ts_ms)
+        except Exception as e:  # MediaPipe 간헐 실패 — 한 프레임만 버리고 앱은 계속
+            print(f"[시선 추론 오류, 프레임 건너뜀] {type(e).__name__}: {str(e)[:80]}")
+            return None
         f = gaze_features(result)
         if f is None or self.deep is None:
             return f
