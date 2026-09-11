@@ -387,7 +387,17 @@ def main():
 
             if link:
                 for event_type, data in link.take_events():
-                    if event_type == "model_load":
+                    if event_type == "voice_reg_start" and link.voice:
+                        link.voice.on_start(data.get("tempId"), data.get("total"))
+                    elif event_type == "voice_collect" and link.voice:
+                        link.voice.on_collect(data.get("tempId"), data.get("n"))
+                    elif event_type == "voice_finalize" and link.voice:
+                        link.voice.on_finalize(data.get("tempId"))
+                    elif event_type == "voice_reg_cancel" and link.voice:
+                        link.voice.on_cancel(data.get("tempId"))
+                    elif event_type == "voice_registered" and link.voice:
+                        link.voice.on_registered(data.get("id"), data.get("active"))
+                    elif event_type == "model_load":
                         model_name = data.get("name", "")
                         model_path = Path(data.get("path", ""))
                         if model_path.is_file() or (HERE / "models" / model_path.name).is_file():

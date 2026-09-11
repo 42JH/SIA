@@ -688,6 +688,65 @@ def test_voice_bridge():
     vs.on_utter(loud(9))                                       # 1번과 다름 → 거절 1
     vs.on_utter(loud(6))                                       # 1번과도, 첫 시도와도 다름 → 거절 2
     assert [t for t, _ in link.sent].count("voice_sentence_rejected") == 2 and vs._suspect == set() and vs._n == 2
+    vs.on_cancel("t5")  # 이전 등록의 취소가 늦게 와도 현재 수집 상태를 유지한다.
+    assert vs.active and vs.tempId == "t6" and vs._n == 2
+    assert sorted(vs._samples) == [1] and sorted(vs._embs) == [1] and vs._rejects == 2
+
+    # 부분 마무리: 1~4문장만 있어도 npz 를 만든다. 2문장이면 둘 다 쓰고, 3개 이상이면 기존 이상치 판정을 유지한다.
+    for count in (1, 2, 3, 4):
+        temp_id = f"partial-{count}"
+        vs.on_start(temp_id, 5)
+        for n in range(1, count + 1):
+            vs.on_collect(temp_id, n)
+            sample = loud(9 if n == 1 else 7, 1.0 + 0.2 * n)
+            vs.on_utter(sample)
+            if vs._n:  # 2번을 한 번 더 읽으면 1번과만 다른 목소리로 판정하여 수집한다.
+                vs.on_utter(sample)
+            assert vs._n == 0
+        vs.on_collect(temp_id, count + 1)  # 다음 문장을 기다리던 중에도 현재 수집분으로 마무리한다.
+        link.sent.clear()
+        uploads.clear()
+        vs.on_finalize("old-temp")
+        assert not link.sent and not uploads and vs._n == count + 1
+        vs.on_finalize(temp_id)
+        assert [t for t, _ in link.sent] == ["PUT", "PUT", "voice_captured"]
+        assert [ctype for _, _, ctype in uploads] == ["audio/wav", "application/octet-stream"]
+        assert uploads[0][0].endswith(f"/api/agent/voices/{temp_id}/sample")
+        assert uploads[1][0].endswith(f"/api/agent/voices/{temp_id}/npz")
+        with wave.open(io.BytesIO(uploads[0][1]), "rb") as recorded:
+            assert np.array_equal(np.frombuffer(recorded.readframes(recorded.getnframes()), dtype="<i2"), sample)
+        expected = ([0.0, 1.0] if count == 1 else
+                    np.array([1.0, 1.0]) / np.sqrt(2) if count == 2 else [1.0, 0.0])
+        with np.load(io.BytesIO(uploads[1][1]), allow_pickle=False) as profile:
+            assert np.allclose(profile["centroid"], expected)
+        assert link.sent[-1][1]["durationSec"] == round(len(sample) / 16000, 1)
+        assert vs.active and vs._n == 0  # 등록 확정은 BE 의 voice_registered 를 기다린다.
+        vs.on_utter(loud(7))
+        assert len(uploads) == 2
+        # 같은 지시가 다시 와도 FE 가 기다리는 voice_review 용 captured 를 돌려준다.
+        vs.on_finalize(temp_id)
+        assert [t for t, _ in link.sent][-3:] == ["PUT", "PUT", "voice_captured"]
+        vs.on_registered(1, False)
+        link.sent.clear()
+        uploads.clear()
+        vs.on_finalize(temp_id)
+        assert not link.sent and not uploads
+
+    # 문장 0개: code 없는 사유를 보내고 등록을 유지한다. 이후 1번 낭독을 그대로 받을 수 있다.
+    vs.on_start("empty", 5)
+    link.sent.clear()
+    vs.on_finalize("empty")
+    assert link.sent == [("voice_sentence_rejected", {
+        "tempId": "empty", "n": 1,
+        "reason": "아직 문장을 하나도 받지 못했어요. 화면의 문장을 읽어주세요."})]
+    assert not uploads and vs.active and vs._n == 1
+    vs.on_utter(loud(7), vs._collect_t + 0.1)
+    assert sorted(vs._embs) == [1] and link.sent[-1][0] == "voice_captured"
+    vs.on_cancel("empty")
+    link.sent.clear()
+    uploads.clear()
+    vs.on_finalize("empty")
+    assert not link.sent and not uploads and not vs.active
 
 
 def test_wake_enroll():

@@ -23,8 +23,9 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩
   다시 읽을지 정한다. quality 는 앞 문장들과 유사도가 QUALITY_MIN_SIM 미만이거나 소음이 높으면 "낮음", 1번 문장은
   비교 대상이 없어 소음만 본다. 중간 문장에서는 npz 를 올리지 않는다 — 다섯 문장을 다 모으기 전에 npz 가 서버에
   있으면 그것만으로 프로필이 확정될 수 있다.
-- 다섯 문장이 다 모이면 마지막 문장의 wav → 전체 임베딩의 npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다.
-  재생 샘플은 1~5번 모두 해당 문장 하나이며, durationSec 도 그 녹음 길이다. 이때만 npz 가 올라가고
+- 다섯 문장이 다 모이거나 voice_finalize 를 받으면 마지막 수집 문장의 wav → 수집한 임베딩의 npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다.
+  voice_finalize 는 진행 중인 tempId 에만 적용한다. 문장이 없으면 사유만 보내고 1번 문장을 기다린다.
+  재생 샘플은 1~5번 모두 해당 문장 하나이며, durationSec 도 그 녹음 길이다. 마무리할 때만 npz 가 올라가고
   FE 의 "등록" 버튼이 열린다. voice_quality_warn 은 보내지 않는다 — 문장마다 결과를 줬으니 그 자리에서 고치는 쪽이 빠르다.
   NOTE(한계): FE 가 voice_review 를 5번째 문장 것으로만 보고 화면 번호를 5로 고정하면, 1번 문장 뒤에 "등록" 이 열린다.
   FE 가 자기 진행 번호를 쓰도록 고쳐야 한다 (BE 는 voice_review 에 n 을 싣지 않는다).
@@ -269,7 +270,7 @@ class VoiceSession:
         print(f"[BE→] {type_} {json.dumps(data, ensure_ascii=False)}")
         self.link._send({"type": type_, "data": data})
 
-    # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
+    # ── BE 이벤트 진입점 (assistant 메인 루프에서 on_utter 와 순서대로 처리) ──
     def on_start(self, tempId, total=None):
         log_rx("voice_reg_start", {"tempId": tempId, "total": total})
         self.tempId, self.active, self.started_at = tempId, True, time.monotonic()
@@ -303,8 +304,16 @@ class VoiceSession:
             print(f"[화자 등록] 문장 {self._n}/{self.total} 재수집 — 이전 샘플 {dropped}개 폐기")
         print(f"[화자 등록] 문장 {self._n}/{self.total}: \"{text}\"")
 
+    def on_finalize(self, tempId):
+        log_rx("voice_finalize", {"tempId": tempId})
+        if not self.active or tempId != self.tempId:
+            return
+        self._finish()
+
     def on_cancel(self, tempId):
         log_rx("voice_reg_cancel", {"tempId": tempId})
+        if not self.active or tempId != self.tempId:
+            return
         self.active, self._n, self._samples, self._embs, self._rejects = False, 0, {}, {}, 0
         self._last_reject, self._suspect = None, set()
         print("[화자 등록] 중단 — 이전 프로필 유지")
@@ -417,21 +426,28 @@ class VoiceSession:
     def _finish(self):
         from brain import wav_bytes
 
-        keys = list(range(1, self.total + 1))
+        keys = sorted(self._embs)
+        if not keys:
+            self._n = 1
+            self._collect_t = time.monotonic()
+            self._reject(1, None, "아직 문장을 하나도 받지 못했어요. 화면의 문장을 읽어주세요.", "수집된 문장 없음")
+            return
         # 혼자 튀는 문장 하나는 프로필 평균에서 뺀다 — 찌그러진 1번이 기준이 됐던 경우가 여기서 걸러진다.
         # 각 문장을 나머지 평균과 견줘, 하나만 VOICE_MIN_SIM 아래이고 나머지는 전부 QUALITY_MIN_SIM 이상일 때만 뺀다.
         # 둘 이상 튀면 어느 쪽이 본인인지 모르니 그대로 두고 voice_captured 의 quality 를 "낮음" 으로 보낸다
-        loo = {k: float(self._embs[k] @ self.speaker.centroid_of_embs([self._embs[j] for j in keys if j != k])[0]) for k in keys}
-        low = [k for k in keys if loo[k] < VOICE_MIN_SIM]
         use = keys
-        if len(low) == 1 and all(loo[k] >= QUALITY_MIN_SIM for k in keys if k != low[0]):
-            use = [k for k in keys if k != low[0]]
-            print(f"[화자 등록] 문장 {low[0]} 이 나머지와 안 닮음(유사도 {loo[low[0]]:.2f}) — 프로필 평균에서 빼고 {len(use)}문장으로 만든다")
+        if len(keys) >= 3:
+            loo = {k: float(self._embs[k] @ self.speaker.centroid_of_embs([self._embs[j] for j in keys if j != k])[0]) for k in keys}
+            low = [k for k in keys if loo[k] < VOICE_MIN_SIM]
+            if len(low) == 1 and all(loo[k] >= QUALITY_MIN_SIM for k in keys if k != low[0]):
+                use = [k for k in keys if k != low[0]]
+                print(f"[화자 등록] 문장 {low[0]} 이 나머지와 안 닮음(유사도 {loo[low[0]]:.2f}) — 프로필 평균에서 빼고 {len(use)}문장으로 만든다")
         centroid, min_sim = self.speaker.centroid_of_embs([self._embs[k] for k in use])
         wav = self._samples[keys[-1]]  # 마지막 문장도 해당 녹음만 재생한다.
         noise = noise_level(np.concatenate([self._samples[k] for k in keys]))  # 등록 소음은 모든 문장으로 판정한다.
         quality = "양호" if min_sim >= QUALITY_MIN_SIM else "낮음"
         print(f"[화자 등록] 샘플 일관성 {min_sim:.2f} → {quality}, 소음 {noise}")
+        self._n = 0  # finalize 가 수집 중에 와도 마무리 뒤 발화를 새 문장으로 받지 않는다.
         self._upload_and_capture(self.speaker.npz_bytes(centroid), wav_bytes(wav), round(len(wav) / SR, 1), quality, noise)
 
     def _upload_and_capture(self, npz, wav, dur, quality, noise):

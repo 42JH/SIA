@@ -212,25 +212,20 @@ class AgentLink:
             elif t == "calib_registered":  c.on_registered(d.get("id"), d.get("active"))
             elif t == "calib_changed":     c.on_changed(d)
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
-        elif self.voice and t and t.startswith("voice_"):
-            v = self.voice
-            if t == "voice_reg_start":     v.on_start(d.get("tempId"), d.get("total"))
-            elif t == "voice_collect":     v.on_collect(d.get("tempId"), d.get("n"))
-            elif t == "voice_reg_cancel":  v.on_cancel(d.get("tempId"))
-            elif t == "voice_registered":  v.on_registered(d.get("id"), d.get("active"))
         elif t == "wakeword_enroll_start" and self.wake:
             self.wake.on_start()
         # 온보딩 "명령 문장 말하기"(command_*) 단계는 폐기됐다(229) — 그 낭독 5문장이 곧 위 voice_* 등록이다
         # 마이크·제스처 설정은 메인 루프, 활성 보이스 참조는 위 동기화 워커로 넘긴다.
         # NOTE(한계): wipe 수신은 아직 처리하지 않는다. 모르는 type은 무시한다(프로토콜 §1.5).
 
-        # Calibration events are handled above. Gesture events are consumed by
+        # Calibration events are handled above. Gesture and voice registration events are consumed by
         # assistant.py on its main camera loop, not the WebSocket worker thread.
         if t == "recognition_start":
             self.gesture_ready = True
         if t in {"hello_ack", "recognition_start", "settings_changed", "gesture_toggled",
                  "gesture_registered", "gesture_renamed", "gesture_removed", "gesture_result",
-                 "reg_mode_start", "reg_finish", "model_load"}:
+                 "reg_mode_start", "reg_finish", "model_load",
+                 "voice_reg_start", "voice_collect", "voice_finalize", "voice_reg_cancel", "voice_registered"}:
             with self._event_lock:
                 self._events.append((t, d))
 

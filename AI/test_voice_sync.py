@@ -359,6 +359,25 @@ def test_download_request_has_no_conditional_header():
     link.close()
 
 
+def test_voice_control_events_use_main_loop_queue():
+    with patch("be_link.read_runtime", return_value=None):
+        link = AgentLink()
+    link.voice = Mock()
+    events = [
+        ("voice_reg_start", {"tempId": "new", "total": 5}),
+        ("voice_collect", {"tempId": "new", "n": 1}),
+        ("voice_finalize", {"tempId": "new"}),
+        ("voice_reg_cancel", {"tempId": "new"}),
+        ("voice_registered", {"id": 1, "active": True}),
+    ]
+    for event in events:
+        receive(link, *event)
+    assert not link.voice.method_calls  # WS 수신 중에는 수집 상태를 바꾸거나 업로드하지 않는다.
+    assert link.take_events() == events
+    assert link.take_events() == []
+    link.close()
+
+
 if __name__ == "__main__":
     import sys
     try:
