@@ -19,7 +19,7 @@ import tools.jackson.databind.ObjectMapper;
  * 기동 시 카탈로그 → tool 테이블 UPSERT — tool 행의 유일한 생성 경로다 (마이그레이션은 시드하지 않는다).
  * available 갱신, DELETE 금지 — tool_call FK 가 행 존속을 요구한다.
  * MCP 서버에 등록된 @McpTool 이 카탈로그에 없으면 코드가 어긋난 것이므로 기동을 세운다.
- * DefaultMappingBootstrap(@Order 5)이 이 동기화(@Order 0) 뒤에 기본 제스처를 넣는다 — gesture_step FK 전제.
+ * DefaultGestureBootstrap(@Order 5)이 이 동기화(@Order 0) 뒤에 기본 제공 제스처를 넣는다 (시드 순서: 도구 → 제스처).
  */
 @Component
 public class ToolCatalogSync {

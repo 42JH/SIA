@@ -18,8 +18,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 전체 삭제(DELETE /api/data).
- * FK 역순으로 지우고, 기본 제스처 매핑 11건(DefaultMappings)과 Windows 기본 앱(DefaultAppTargets)을
- * 되살린 뒤, 설정을 시드로 되돌린다.
+ * FK 역순으로 지우고, 기본 제공 제스처 9종(DefaultGestures)과 Windows 기본 앱(DefaultAppTargets)을
+ * 되살린 뒤, 설정을 시드로 되돌린다. 기본 제공 제스처는 모양만 돌아오고 기능은 다시 빈칸이 된다 —
+ * 사용자가 지정해 둔 기능도 기록과 함께 지워지는 게 전체 삭제의 뜻이다.
  * 에이전트에는 wipe(로컬 캐시 삭제), FE 에는 settings_sync 를 통지한다.
  */
 @Service
@@ -67,9 +68,9 @@ public class WipeService {
             jdbc.update("DELETE FROM blob");
             voiceProfileService.deleteAll();
             calibProfileService.deleteAll();
-            int seeded = DefaultMappings.seedInto(jdbc);
+            int seeded = DefaultGestures.seedInto(jdbc).inserted();
             int apps = DefaultAppTargets.seedInto(jdbc);
-            log.info("전체 삭제 완료 — 기본 매핑 {}건, Windows 기본 앱 {}건과 시드 설정으로 복원했습니다",
+            log.info("전체 삭제 완료 — 기본 제공 제스처 {}종, Windows 기본 앱 {}건과 시드 설정으로 복원했습니다",
                     seeded, apps);
         });
         gestureService.deleteAllVideos(); // 등록 영상 파일 — 트랜잭션 밖(파일 시스템)

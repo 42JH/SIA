@@ -44,17 +44,21 @@ class AssistantApplicationTests {
     }
 
     @Test
-    @DisplayName("기동이 도구 목록과 기본 매핑을 DB 에 넣는다 — 마이그레이션 시드 없이")
-    void bootSeedsToolsAndDefaultMappings() {
+    @DisplayName("기동이 도구 목록과 기본 제공 제스처를 DB 에 넣는다 — 마이그레이션 시드 없이")
+    void bootSeedsToolsAndBuiltinGestures() {
         // ToolCatalogSync(@Order 0) — ToolCatalog 30개가 tool 테이블에 올라간다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tool", Integer.class)).isEqualTo(30);
-        // DefaultMappingBootstrap(@Order 5) — 빈 gesture 테이블에 기본 매핑 11건 (실행 가능 9건)
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture", Integer.class)).isEqualTo(11);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture_step", Integer.class)).isEqualTo(9);
-        // canned HAND 9건은 전부 한손 정적, FACE 2건은 두 축이 없다 (V3 축 · DefaultMappings)
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE kind = 'HAND'"
-                + " AND hands = 1 AND motion = 'STATIC'", Integer.class)).isEqualTo(9);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE kind = 'FACE'"
-                + " AND hands IS NULL AND motion IS NULL", Integer.class)).isEqualTo(2);
+        // DefaultGestureBootstrap(@Order 5) — 기본 제공 제스처 9종. 행동은 사용자가 지정하므로 스텝은 0건이다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture", Integer.class)).isEqualTo(9);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture_step", Integer.class)).isZero();
+        // 전부 컨텍스트 없는 한손 HAND, 스와이프 2종만 동작(DYNAMIC)이다. FACE 시드는 없다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE custom = 0 AND kind = 'HAND'"
+                + " AND context IS NULL AND hands = 1 AND enabled = 1", Integer.class)).isEqualTo(9);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE motion = 'STATIC'",
+                Integer.class)).isEqualTo(7);
+        assertThat(jdbc.queryForList("SELECT name FROM gesture WHERE motion = 'DYNAMIC' ORDER BY name",
+                String.class)).containsExactly("Swipe_Left", "Swipe_Right");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture WHERE kind = 'FACE'",
+                Integer.class)).isZero();
     }
 }

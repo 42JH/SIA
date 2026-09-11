@@ -19,7 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * (calc.exe 는 Store 계산기를 띄우고 바로 끝나는 런처라 pid 가 곧 죽는다 — AppLaunchService 의
  * "pid 는 참고값" 주석 그대로, 창 조작은 pid 가 아니라 context.get 의 ref 로 한다).
  *
- * 규칙 — DefaultMappings 와 같은 결이지만 "테이블이 비어 있을 때만" 이 아니라 "없는 키만" 이다:
+ * 규칙 — DefaultGestures 와 같은 결로 "테이블이 비어 있을 때만" 이 아니라 "없는 키만" 이다:
  *  - app_key 가 이미 있으면 손대지 않는다 (사용자가 경로·표시 이름·enabled 를 고쳤을 수 있다).
  *  - 같은 실행 파일이 다른 키로 등록돼 있으면 넣지 않는다 (AppScanService.register 와 같은 중복 규칙).
  *  - 실행 파일이 실재하지 않으면 그 항목은 건너뛴다 — verified_at 이 null 인 행을 만들지 않는다.
