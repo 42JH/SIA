@@ -22,13 +22,15 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 
 | 표면 | 주소 | 인증 |
 |---|---|---|
-| REST | `http://127.0.0.1:8080` | 없음 |
+| REST | `http://127.0.0.1:8080/api/**` | 없음 |
+| WS | `ws://127.0.0.1:8080/ws/**` | 없음 |
 | MCP | `http://127.0.0.1:8080/mcp` | `Authorization: Bearer <token>` (또는 `X-MC-Token`) + `X-Caller: LLM\|GESTURE` |
 
 - BE 는 `127.0.0.1` 에만 바인딩한다.
 - CORS 는 `/api/**` 에만 적용된다. 허용 Origin 은 `http://localhost:*`, `http://127.0.0.1:*`, 허용 메서드는 `GET POST PUT PATCH DELETE OPTIONS` 다.
 - MCP 토큰의 기본값은 `sia-mcp-server` 이고 환경변수 `SIA_AGENT_TOKEN` 으로 대체된다. AI 는 `%APPDATA%/SIA/runtime.json` 의 `token` 을 읽는다.
 - 토큰이 없거나 틀리면 **401** `{"code":"UNAUTHORIZED","message":"MCP 토큰이 필요합니다"}`.
+- 토큰 없이 열려 있는 경로는 `/api/**` · `/ws/**` 와 스웨거(`/swagger-ui/**` · `/v3/api-docs*` · `/webjars/**`) 뿐이다. 그 밖의 경로는 존재하지 않더라도 404 가 아니라 401 이다.
 - `X-Caller` 가 없거나 알 수 없는 값이면 `LLM` 으로 처리한다.
 
 ### 0.2 본문 형식
