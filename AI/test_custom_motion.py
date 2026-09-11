@@ -63,20 +63,20 @@ class MotionTests(unittest.TestCase):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
         self.assertEqual(store.class_names(), ["custom"])
         events = self.feed(store, lambda t: [hand(0.3 + t * 0.2)])
-        self.assertEqual([d for _, d, _ in events if d], ["custom"])
+        self.assertEqual([d for _, d, _, _ in events if d], ["custom"])
         self.assertTrue(store.update([hand(0.5)], 1.1)[2])
         self.assertIsNone(store.update([hand(0.5)], 1.2)[1])
         store.update([], 1.3)
         store.update([], 1.7)
         self.assertFalse(store.latched)
         events = self.feed(store, lambda t: [hand(0.5 - t * 0.2)], offset=2)
-        self.assertFalse(any(d for _, d, _ in events))
+        self.assertFalse(any(d for _, d, _, _ in events))
         store.reset_motion()
-        self.assertTrue(any(d for _, d, _ in self.feed(store, lambda t: [hand(0.4 + t * 0.2)], duration=1.3)))
+        self.assertTrue(any(d for _, d, _, _ in self.feed(store, lambda t: [hand(0.4 + t * 0.2)], duration=1.3)))
 
     def test_motion_not_a_held_pose(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
-        self.assertFalse(any(d for _, d, _ in self.feed(store, lambda t: [hand()])))
+        self.assertFalse(any(d for _, d, _, _ in self.feed(store, lambda t: [hand()])))
         self.assertIsNone(store.classify_with_distance(hand()["landmarks"])[0])
 
     def test_two_hand_static_and_detector_reordering(self):
@@ -92,9 +92,9 @@ class MotionTests(unittest.TestCase):
         pair = lambda t: [hand(), hand(0.6 + t * 0.2, "Right")]
         store = self.register("DYNAMIC", pair)
         events = self.feed(store, lambda t: list(reversed(pair(t))))
-        self.assertTrue(any(d for _, d, _ in events))
+        self.assertTrue(any(d for _, d, _, _ in events))
         store.reset_motion()
-        self.assertFalse(any(d for _, d, _ in self.feed(store, lambda t: [hand()])))
+        self.assertFalse(any(d for _, d, _, _ in self.feed(store, lambda t: [hand()])))
 
     def test_legacy_cache_coexists_and_rename_delete(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
@@ -104,7 +104,7 @@ class MotionTests(unittest.TestCase):
         store = CustomGestureStore(self.cache.combined_path)
         self.assertEqual(store.class_names(), ["old", "renamed"])
         self.assertEqual(store.classify_with_distance(hand()["landmarks"])[0], "old")
-        self.assertTrue(any(d == "renamed" for _, d, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)])))
+        self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)])))
         self.cache._rebuild({"2": {"name": "old"}})
         self.assertEqual(CustomGestureStore(self.cache.combined_path).class_names(), ["old"])
 
@@ -178,7 +178,7 @@ class MotionTests(unittest.TestCase):
         hold = HoldToggle(hold_s=0.8, cooldown_s=2.2, grace_s=0.6)
         builtin, custom, pending = [], [], []
         for t in np.linspace(0, 2, 41):
-            pose, event, claimed = store.update([hand(0.3 + t * 0.1)], float(t))
+            pose, event, claimed, _dist = store.update([hand(0.3 + t * 0.1)], float(t))
             label = stable.update(pose or "None" if claimed else "Open_Palm", float(t))
             allowed = static_execution_allowed(True, False, claimed, pose, "Open_Palm")
             if hold.update(allowed and label == "Open_Palm", float(t)):
@@ -193,7 +193,7 @@ class MotionTests(unittest.TestCase):
 
     def test_stationary_builtin_remains_available(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
-        self.assertFalse(any(claimed for _, _, claimed in self.feed(store, lambda t: [hand()])))
+        self.assertFalse(any(claimed for _, _, claimed, _ in self.feed(store, lambda t: [hand()])))
 
     def test_abandoned_prefix_releases_execution(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
@@ -201,13 +201,13 @@ class MotionTests(unittest.TestCase):
         for t in np.linspace(0, 0.5, 11):
             store.update([hand(0.3 + t * 0.1)], float(t))
         results = [store.update([hand(0.35)], float(t)) for t in np.linspace(0.55, 4, 70)]
-        self.assertFalse(any(event for _, event, _ in results))
+        self.assertFalse(any(event for _, event, _, _ in results))
         self.assertFalse(results[-1][2])
 
     def test_disabled_template_never_reserves_execution(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
         for t in np.linspace(0, 1, 21):
-            self.assertEqual(store.update([hand(0.3 + t * 0.2)], float(t), {"custom"}), (None, None, False))
+            self.assertEqual(store.update([hand(0.3 + t * 0.2)], float(t), {"custom"}), (None, None, False, None))
         store.reset_motion()
         self.feed(store, lambda t: [hand(0.3 + t * 0.2)])
         self.assertTrue(store.latched)

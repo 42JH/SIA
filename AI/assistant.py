@@ -546,13 +546,20 @@ def main():
             # 완성 전까지 내장·1손 정적 제스처 실행을 보류한다(정지한 손모양만으로는
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
             if gesture_active and not registration_active:
-                custom_pose, custom_motion_event, custom_claimed = active_custom.update(
+                custom_pose, custom_motion_event, custom_claimed, custom_dist = active_custom.update(
                     hands, now, disabled_gestures
                 )
+                # 양손 정적/동적 커스텀도 1손 커스텀과 같은 exp(-거리) 관례로 신뢰도를
+                # 낸다 — 정적 매치는 raw_score를 덮어써 static_names 발동부에서 그대로
+                # 쓰고, 동적 완성은 custom_score를 dynamic_event 발동부에서 쓴다.
+                custom_score = round(float(math.exp(-custom_dist)), 3) if custom_dist is not None else None
+                if custom_pose and custom_score is not None:
+                    raw_score = custom_score
             else:
                 active_custom.update([], now, disabled_gestures)
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
+                custom_score = None
             gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
                 registration.tick(frame, hands, now)
@@ -689,6 +696,10 @@ def main():
                                      sessionId=link.be_session_id,
                                      action=dynamic_event,
                                      context=context,
+                                     # 내장 Swipe/Scroll/Pinch는 FSM 판정이라 신뢰도가
+                                     # 없다(None → 자동 생략). 커스텀 동작 완성이면
+                                     # custom_score(exp(-거리))가 실린다.
+                                     accuracy=custom_score,
                                      payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
                 elif entry and not args.be_gesture_only:
                     if link and link.gesture_ready:
