@@ -493,26 +493,24 @@ GET /api/gestures?dangling=true
 {
   "page": 0,
   "pageSize": 20,
-  "total": 12,
+  "total": 10,
   "items": [
     {
-      "id": 1,
+      "id": 2,
       "kind": "HAND",
       "hands": 1,
       "motion": "STATIC",
       "context": null,
       "name": "Open_Palm",
-      "label": "세션 연장",
-      "description": null,
+      "label": "손바닥 펴기",
+      "description": "손바닥을 활짝 편 모양입니다.",
       "repeatable": false,
       "enabled": true,
       "custom": false,
       "createdAt": null,
       "videoUrl": null,
-      "runnable": true,
-      "steps": [
-        { "tool": "session.extend", "args": {}, "delayMs": null, "available": true }
-      ]
+      "runnable": false,
+      "steps": []
     },
     {
       "id": 14,
@@ -548,12 +546,14 @@ GET /api/gestures?dangling=true
 | `custom` | `true` = 사용자 등록 제스처, `false` = 기본 제공 |
 | `createdAt` | 등록일. 기본 제공은 `null` |
 | `videoUrl` | 등록 촬영본 URL. 없으면 `null`. `motion` 이 `DYNAMIC` 이면 영상(webm), `STATIC` 이면 사진(jpg)이다 — FE 는 `motion` 으로 `<video>` / `<img>` 를 고른다 |
-| `runnable` | 모든 스텝의 도구가 이번 기동에 등록되어 있으면 `true`. 스텝이 없으면 `false` |
+| `runnable` | 모든 스텝의 도구가 이번 기동에 등록되어 있으면 `true`. 스텝이 없으면 `false` — 기능을 아직 지정하지 않은 기본 제공 제스처가 여기 해당한다 |
 | `steps[].available` | 그 스텝 도구의 가용 여부 |
 
 커스텀 제스처 신규 등록은 REST 가 아니라 WS `macro_assign` 경로다.
 
-`hands` · `motion` 은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없다. `motion` 은 등록 시작 시 FE 가 고른 등록 창(`reg_start {motion}`)이고, `hands` 는 AI 가 랜드마크를 보고 보고한 값(`reg_captured {hands}`)이다. 둘 다 재촬영(`reg_start {replaceGestureId}`)으로만 바뀐다. 기본 제공 제스처는 전부 한손 정적이고 `FACE` 2건은 두 값이 `null` 이다.
+기본 제공 제스처 9종(`custom: false`)은 모양만 제공되고 `steps` 가 비어 있다 — 실행할 기능은 사용자가 `PUT /api/gestures/{id}` 로 지정한다. 목록은 `?custom=false` 로 그 9종만, `?custom=true` 로 커스텀만 받을 수 있다 (와이어프레임의 두 섹션).
+
+`hands` · `motion` 은 촬영 결과 파생값이라 `PUT /api/gestures/{id}` 로 바꿀 수 없다. `motion` 은 등록 시작 시 FE 가 고른 등록 창(`reg_start {motion}`)이고, `hands` 는 AI 가 랜드마크를 보고 보고한 값(`reg_captured {hands}`)이다. 둘 다 재촬영(`reg_start {replaceGestureId}`)으로만 바뀐다. 기본 제공 제스처는 전부 한손(`hands: 1`)이고 좌우 스와이프 2종만 `DYNAMIC` 이다.
 
 ### 1.11 `GET /api/gestures/{id}` — 제스처 단건
 
@@ -581,9 +581,11 @@ GET /api/gestures?dangling=true
 **400 INVALID_REQUEST** `{ "code": "INVALID_REQUEST", "message": "enabled(true|false) 가 필요합니다" }`. 빈 본문 · 객체가 아닌 본문은 §0.4 의 공통 메시지다.
 **404 GESTURE_NOT_FOUND** `{ "code": "GESTURE_NOT_FOUND", "message": "해당 제스처가 없습니다: 999" }`
 
-### 1.14 `PUT /api/gestures/{id}` — 커스텀 제스처 수정
+### 1.14 `PUT /api/gestures/{id}` — 제스처 수정
 
 이름 · 라벨 · 설명 · 반복 · 기능(스텝)을 바꾼다. 보낸 필드만 바뀐다. 동작 재촬영은 WS `reg_start {replaceGestureId}` 경로이고, 형태(`hands` · `motion`)도 그때만 바뀐다.
+
+기본 제공 제스처는 `steps` 와 `repeatable` 만 받는다 — 기능이 빈칸으로 제공되므로 그 칸을 채우는 경로가 여기다. `name` · `label` · `description` 중 하나라도 함께 보내면 **400** 이고, `steps: []` 는 기능 해제다 (커스텀은 최소 한 단계가 필요해 **400**).
 
 ```json
 {
@@ -598,19 +600,23 @@ GET /api/gestures?dangling=true
 
 | 필드 | 규칙 |
 |---|---|
-| `name` | 같은 (kind, context) 안에서 중복 불가. 바뀌면 AI 에 `gesture_renamed {id, oldName, newName}`. 템플릿 npz 는 그대로다 |
-| `label` · `description` · `repeatable` | 선택 |
-| `steps` | 1~5개. 각 단계에 `tool` 필수, `GET /api/tools` 에 있는 이름만. C 도구(`window.close` · `files.delete`) 금지. `[]` 는 400 |
+| `name` | 커스텀만. 같은 (kind, context) 안에서 중복 불가. 바뀌면 AI 에 `gesture_renamed {id, oldName, newName}`. 템플릿 npz 는 그대로다 |
+| `label` · `description` | 커스텀만. 선택 |
+| `repeatable` | 선택. 기본 제공 제스처도 바꿀 수 있다 |
+| `steps` | 최대 5개. 각 단계에 `tool` 필수, `GET /api/tools` 에 있는 이름만. C 도구(`window.close` · `files.delete`) 금지. `[]` 는 기본 제공 제스처에서 기능 해제, 커스텀에서는 400 |
 
 **200** — 수정 직후 단건 (§1.11 형태).
 
 **400 INVALID_REQUEST**
 
 ```json
-{ "code": "INVALID_REQUEST", "message": "기본 제공 제스처는 켜기/끄기만 가능합니다" }
+{ "code": "INVALID_REQUEST", "message": "기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다" }
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "이미 같은 이름의 제스처가 있어요" }
+```
+```json
+{ "code": "INVALID_REQUEST", "message": "매크로에는 최소 한 단계가 필요합니다" }
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "매크로 단계는 최대 5개까지 쌓을 수 있습니다" }
@@ -1032,7 +1038,7 @@ Content-Disposition: attachment; filename="wakeword.npz"
 | `tool_call` · `session` · `usage_event` | 전부 삭제 |
 | `blob` (wakeword) | 전부 삭제 |
 | `voice_profile` · `calib_profile` | 전부 삭제 |
-| 커스텀 제스처 · 스텝 · 템플릿 npz · 등록 영상 파일 | 전부 삭제 후 기본 제스처 매핑 11건 복원 |
+| 커스텀 제스처 · 스텝 · 템플릿 npz · 등록 영상 파일 | 전부 삭제 후 기본 제공 제스처 9종 복원 (기능은 다시 빈칸) |
 | 등록 앱 | 전부 삭제 후 Windows 기본 앱 2건(`notepad` · `calc`) 복원 |
 | 설정 | 시드값으로 되돌린다. `version` 은 계속 증가한다 |
 | 활성 세션 | 종료. 활성 세션이 있었으면 FE · AI 에 `session_state {state: "PASSIVE", reason: "STOPPED"}` 가 나간다 |
@@ -2218,7 +2224,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `등록되지 않은 도구입니다: <tool>` | `GET /api/tools` 에 없는 이름 |
 | `사용자 동의가 필요한 도구는 제스처로 실행할 수 없습니다: <tool>` | `window.close` · `files.delete` |
 | `기본 제공 제스처와 같은 이름은 쓸 수 없어요: <name>` | 신규 등록의 이름이 기본 제공 제스처와 같다 |
-| `기본 제공 제스처는 켜기/끄기만 가능합니다` | 재촬영 대상이 기본 제공 제스처 |
+| `기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다` | 재촬영 대상이 기본 제공 제스처 — 모양은 BE 가 소유한다 |
 | `이미 같은 이름의 제스처가 있어요` | 재촬영 경로에서 바꾼 이름이 다른 제스처와 겹친다 |
 
 `voice_commit` 이 실패하면 `error {message, of: "voice_commit"}`:
@@ -2336,7 +2342,7 @@ BE 가 `gesture_exec` 의 이름으로 `gesture` · `gesture_step` 매핑을 조
 | `name` | string | O | 요청한 제스처 이름 |
 | `ok` | boolean | O | 모든 스텝이 `EXECUTED` 면 `true` |
 | `message` | string | O | BE 가 제스처의 `label` 로 만든 문장. 성공은 `'<label>' 동작을 실행했습니다`, 실패는 실패 사유. FE 가 그대로 표시한다 |
-| `steps` | object[] | O | BE 가 실제로 실행한 스텝. 매핑 순서대로이며 실패한 스텝 뒤는 없다. 미등록 · 꺼진 제스처, 그리고 세션 게이트에 막힌 매크로는 `[]` (프로토콜 §8.6 — 게이트는 매크로 단위라 첫 스텝도 실행되지 않는다) |
+| `steps` | object[] | O | BE 가 실제로 실행한 스텝. 매핑 순서대로이며 실패한 스텝 뒤는 없다. 미등록 · 꺼진 · 기능 미지정 제스처, 그리고 세션 게이트에 막힌 매크로는 `[]` (프로토콜 §8.6 — 게이트는 매크로 단위라 첫 스텝도 실행되지 않는다) |
 | `steps[].tool` | string | O | |
 | `steps[].outcome` | `EXECUTED` \| `BLOCKED` \| `FAILED` | O | |
 | `steps[].message` | string | | 사유가 있을 때만 |
@@ -2346,6 +2352,9 @@ BE 가 `gesture_exec` 의 이름으로 `gesture` · `gesture_step` 매핑을 조
 ```
 ```json
 { "type": "gesture_result", "data": { "name": "Thumb_Up", "ok": false, "message": "세션이 활성화되지 않았습니다", "steps": [] } }
+```
+```json
+{ "type": "gesture_result", "data": { "name": "Swipe_Left", "ok": false, "message": "아직 기능이 지정되지 않은 제스처예요. 제스처 목록에서 기능을 지정해 주세요", "steps": [] } }
 ```
 
 #### `notice` (AI → BE → FE, 페이로드 그대로 중계)

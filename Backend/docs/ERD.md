@@ -23,7 +23,7 @@ SIA 백엔드의 데이터 모델이다. 통신 계약은 [프로토콜.md](프�
 |---|---|
 | DBMS | SQLite (WAL 모드, `foreign_keys = ON`, `busy_timeout = 5000`) |
 | DB 파일 | `sia.db`. 환경변수 `SIA_DB_URL` 로 JDBC URL 을 대체할 수 있다 (기본 `jdbc:sqlite:sia.db`) |
-| 스키마 관리 | Flyway. `src/main/resources/db/migration/` 의 `V1__init_schema.sql` · `V2__calib_grade.sql` 을 순서대로 적용한 결과가 스키마의 정의다 |
+| 스키마 관리 | Flyway. `src/main/resources/db/migration/` 의 `V1__init_schema.sql` · `V2__calib_grade.sql` · `V3__gesture_shape.sql` 을 순서대로 적용한 결과가 스키마의 정의다 |
 | 접근 방식 | JdbcTemplate 직접 SQL. ORM 을 쓰지 않는다 |
 | 테이블 수 | 11 |
 
@@ -332,6 +332,8 @@ erDiagram
 
 매핑의 원천 테이블이다. 기본 제공 제스처는 `custom = 0`, 커스텀 제스처는 `custom = 1` 이며 템플릿 npz 를 같은 행에 갖는다 (제스처별 npz 1개).
 
+기본 제공 제스처는 모양만 정의하고 실행할 기능을 갖지 않는다 — `gesture_step` 이 없는 상태로 시작하고, 사용자가 `PUT /api/gestures/{id}` 로 단계를 채운다.
+
 | 컬럼 | 타입 | NULL | 기본값 | 설명 |
 |---|---|:-:|---|---|
 | `id` | INTEGER | N | 자동 | PK. AI 가 템플릿을 내려받는 키 (`GET /api/agent/gestures/{id}/npz`) |
@@ -340,9 +342,9 @@ erDiagram
 | `hands` | INTEGER | Y | — | `1`(한손) \| `2`(양손). 형태 축. `FACE` 는 NULL. CHECK 없음 — 검증은 서비스 계층 |
 | `motion` | TEXT | Y | — | `STATIC`(정적) \| `DYNAMIC`(동적). 형태 축. `FACE` 는 NULL. CHECK 없음 — 검증은 서비스 계층 |
 | `context` | TEXT | Y | — | 적용 컨텍스트. 현재 쓰이는 값은 `video` · `youtube` 이고 CHECK 로 강제하지 않는다. NULL = 컨텍스트 제약 없는 기본 매핑 |
-| `name` | TEXT | N | — | 제스처 이름. 기본 제공은 MediaPipe 이름, 커스텀은 사용자 지정 |
-| `label` | TEXT | Y | — | UI 표시용 이름 |
-| `description` | TEXT | Y | — | 설명 |
+| `name` | TEXT | N | — | 제스처 이름이자 AI 가 `gesture_exec` 로 보내는 키. 기본 제공은 고정값 9종(§5.2), 커스텀은 사용자 지정 |
+| `label` | TEXT | Y | — | UI 표시용 이름. 기본 제공은 모양 이름이며 BE 소유다 (기동 시드가 다시 맞춘다) |
+| `description` | TEXT | Y | — | 설명. 기본 제공은 모양 설명이며 BE 소유다 |
 | `repeatable` | INTEGER | N | `0` | `CHECK (0, 1)`. 반복 가능 여부. 반복 단위는 매크로 전체다 |
 | `enabled` | INTEGER | N | `1` | `CHECK (0, 1)`. 0 이면 AI 감지 제외 + BE 실행 차단 |
 | `created_at` | TEXT | Y | — | 등록일. 기본 제공은 NULL |
@@ -462,7 +464,8 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 | 프로필 종류별 최대 4개, 활성 최대 1개 | `voice_profile` · `calib_profile` |
 | 사용 중 프로필과 마지막 1개는 삭제 불가 | `voice_profile` · `calib_profile` |
 | 매크로 단계 최대 5개, C 도구 금지 | `gesture_step` |
-| 기본 제공 제스처(`custom = 0`)는 삭제 · 수정 불가 (켜기/끄기만 허용). 같은 이름으로 커스텀을 만들 수 없다 | `gesture` |
+| 기본 제공 제스처(`custom = 0`)는 켜기/끄기와 기능(`steps` · `repeatable`) 지정만 허용. 삭제 · 이름 · 라벨 · 설명 변경은 불가하고, 같은 이름으로 커스텀을 만들 수 없다 | `gesture` |
+| 기능 해제(빈 `steps`)는 기본 제공 제스처만 허용. 커스텀은 최소 한 단계가 있어야 한다 | `gesture_step` |
 | 커스텀 제스처는 `kind = 'HAND'` 고정 | `gesture` |
 | 커스텀 제스처는 템플릿 npz (1 ~ 5MB) 없이 저장할 수 없다 | `gesture` |
 | `tool` 행은 삭제하지 않고 `available` 로 표시 | `tool` |
@@ -507,7 +510,7 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다. V1 이 넣는
 | 순서 | 대상 | 조건 | 내용 |
 |---|---|---|---|
 | 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 30개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
-| 2 | `gesture` · `gesture_step` | `gesture` 가 비어 있을 때만 | 기본 제스처 매핑 11건 |
+| 2 | `gesture` | 없는 `name` 만 | 기본 제공 제스처 9종. 이미 있는 행의 `steps` · `enabled` · `repeatable` 은 그대로 두고, `label` · `description` · `hands` · `motion` 만 카탈로그 값으로 맞춘다 |
 | 3 | `app_target` | 없는 `app_key` 만 | Windows 기본 앱 `notepad` · `calc` 2건 (§2.7) |
 
 `tool` 30행:
@@ -545,27 +548,23 @@ V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다. V1 이 넣는
 | `session.extend` | 1 | 0 |
 | `session.cancel` | 1 | 0 |
 
-기본 제스처 매핑 11건 (`custom = 0`, `npz = NULL`, `enabled = 1`, `created_at = NULL`):
+기본 제공 제스처 9종 (`custom = 0`, `kind = 'HAND'`, `context = NULL`, `hands = 1`, `repeatable = 0`, `enabled = 1`, `npz = NULL`, `created_at = NULL`):
 
-| kind | hands | motion | context | name | label | repeatable | step 1 tool | step 1 args |
-|---|:-:|---|---|---|---|:-:|---|---|
-| HAND | 1 | STATIC | NULL | `Open_Palm` | 세션 연장 | 0 | `session.extend` | `{}` |
-| HAND | 1 | STATIC | NULL | `Thumb_Up` | 위로 스크롤 | 1 | `scroll.step` | `{"dir":"up"}` |
-| HAND | 1 | STATIC | NULL | `Thumb_Down` | 아래로 스크롤 | 1 | `scroll.step` | `{"dir":"down"}` |
-| HAND | 1 | STATIC | NULL | `Closed_Fist` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
-| HAND | 1 | STATIC | `video` | `Open_Palm` | 재생/일시정지 | 0 | `media.play_pause` | `{}` |
-| HAND | 1 | STATIC | `video` | `Victory` | 음소거 | 0 | `media.mute_toggle` | `{}` |
-| HAND | 1 | STATIC | `video` | `Thumb_Up` | 볼륨 올리기 | 1 | `volume.step` | `{"dir":"up"}` |
-| HAND | 1 | STATIC | `video` | `Thumb_Down` | 볼륨 내리기 | 1 | `volume.step` | `{"dir":"down"}` |
-| HAND | 1 | STATIC | `youtube` | `Pointing_Up` | 다음 영상 | 0 | `media.next` | `{}` |
-| FACE | — | — | NULL | `brow_raise` | 예 | 0 | (없음) | — |
-| FACE | — | — | NULL | `smile` | 아니오 | 0 | (없음) | — |
+| name | label | description | motion |
+|---|---|---|---|
+| `Closed_Fist` | 주먹 쥐기 | 주먹을 꽉 쥔 모양입니다. | STATIC |
+| `Open_Palm` | 손바닥 펴기 | 손바닥을 활짝 편 모양입니다. | STATIC |
+| `Pointing_Up` | 검지 올리기 | 검지손가락만 위로 치켜세운 모양입니다. | STATIC |
+| `Thumb_Down` | 엄지 내리기 | 엄지손가락을 아래로 내린 모양입니다. | STATIC |
+| `Thumb_Up` | 엄지 올리기 | 엄지손가락을 위로 올린 모양입니다. | STATIC |
+| `Victory` | 브이 | 검지와 중지를 편 브이 모양입니다. | STATIC |
+| `ILoveYou` | 사랑해 | 엄지, 검지, 새끼손가락을 편 사랑해 수어 제스처입니다. | STATIC |
+| `Swipe_Left` | 왼쪽 스와이프 | 손을 왼쪽으로 빠르게 쓸어 넘기는 동작입니다. | DYNAMIC |
+| `Swipe_Right` | 오른쪽 스와이프 | 손을 오른쪽으로 빠르게 쓸어 넘기는 동작입니다. | DYNAMIC |
 
-기본 제공 제스처는 MediaPipe 기본 제스처라 전부 한손 정적이다. FACE 2건은 손 개수·동작 구분이 없어 두 축이 NULL 이다.
+9종은 `gesture_step` 을 갖지 않는다 — 실행할 기능은 사용자가 지정한다. 기능이 없는 동안은 `runnable: false` 이므로 `GET /api/gestures?dangling=true` 에 나타나고, 그 이름으로 `gesture_exec` 가 오면 `gesture_result {ok: false}` 로 "아직 기능이 지정되지 않은 제스처" 를 돌려준다.
 
-FACE 2건은 단계가 없다. 확인 응답(예/아니오)은 AI 가 직접 처리하므로 BE 쪽 실행 대상이 없다. `GET /api/gestures?dangling=true` 에 `runnable: false` 로 나타난다.
-
-전체 삭제(`DELETE /api/data`) 후에도 같은 11건과 기본 앱 2건(`notepad` · `calc`)이 복원된다.
+전체 삭제(`DELETE /api/data`) 후에도 같은 9종과 기본 앱 2건(`notepad` · `calc`)이 복원된다 — 모양만 돌아오고 기능은 다시 빈칸이다.
 
 ---
 
