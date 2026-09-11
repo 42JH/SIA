@@ -1,7 +1,10 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fetchDevices } from '../../api/devices';
+import { fetchSettings, updateSettings } from '../../api/settings';
 import { fetchStatus } from '../../api/status';
 import DashboardGazeMeasurement from '../../components/dashboard/DashboardGazeMeasurement';
+import DeviceSelector from '../../components/dashboard/DeviceSelector';
 import { useGazeCalibrationStore } from '../../store/gazeCalibrationStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { sendGazeCalibration, subscribeGazeCalibration } from '../../ws/gazeCalibration';
@@ -15,7 +18,24 @@ export default function GazeCalibrationPage() {
   const connected = useSessionStore((state) => state.wsConnected);
   const change = flow.change;
   const reset = flow.reset;
+  const [settingsConfig, setSettingsConfig] = useState(null);
+  const [cameras, setCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [devicesLoading, setDevicesLoading] = useState(true);
   const ready = connected && flow.status?.agentConnected && !flow.failed;
+
+  useEffect(() => {
+    let disposed = false;
+    Promise.all([fetchSettings(), fetchDevices()]).then(([nextSettings, nextDevices]) => {
+      if (disposed) return;
+      setSettingsConfig(nextSettings);
+      setCameras(nextDevices.cameras);
+      const configured = nextDevices.cameras.find((item) => nextSettings.settings.cameraDeviceId ? item.id === nextSettings.settings.cameraDeviceId : item.name === nextSettings.settings.cameraDevice);
+      setSelectedCameraId((configured ?? nextDevices.cameras.find((item) => item.isDefault) ?? nextDevices.cameras[0])?.id ?? '');
+    }).catch((error) => { if (!disposed) change({ error: error.message }); })
+      .finally(() => { if (!disposed) setDevicesLoading(false); });
+    return () => { disposed = true; };
+  }, [change]);
 
   useEffect(() => {
     reset();
@@ -74,11 +94,27 @@ export default function GazeCalibrationPage() {
     }
   }
 
-  function start() {
-    send('calib_start', {}, {
-      step: 'position', precheck: null, point: null, result: null, poorCount: 0,
-      restartPending: false, savedCalib: null, delayed: false, failed: false,
-    });
+  async function start() {
+    const selectedCamera = cameras.find((item) => item.id === selectedCameraId);
+    if (!selectedCamera) { change({ error: '사용할 카메라를 선택해주세요.' }); return; }
+    change({ pending: true, error: '' });
+    try {
+      let latest = settingsConfig ?? await fetchSettings();
+      if (latest.settings.cameraDeviceId !== selectedCamera.id || latest.settings.cameraDevice !== selectedCamera.name) {
+        latest = await updateSettings({
+          settings: { ...latest.settings, cameraDeviceId: selectedCamera.id, cameraDevice: selectedCamera.name },
+          updatedAt: latest.updatedAt,
+        });
+        setSettingsConfig(latest);
+      }
+      // TODO(BE): 보정 시작 시 저장된 cameraDeviceId를 Python Runtime 카메라 입력에 적용하는 경로 확인 필요
+      send('calib_start', {}, {
+        step: 'position', precheck: null, point: null, result: null, poorCount: 0,
+        restartPending: false, savedCalib: null, delayed: false, failed: false,
+      });
+    } catch (error) {
+      change({ pending: false, error: error.message });
+    }
   }
 
   async function beginMeasurement() {
@@ -114,7 +150,7 @@ export default function GazeCalibrationPage() {
   let content;
 
   if (flow.step === 'start') {
-    content = <><h1>시선 설정</h1><div className={styles.center}><h2>시선 설정을 시작합니다</h2><div className={styles.icon}>◎</div></div>{footer(button('시작하기', start, !ready, true))}</>;
+    content = <><h1>시선 설정</h1><div className={styles.center}><h2>시선 설정을 시작합니다</h2><div className={styles.icon}>◎</div><DeviceSelector label="카메라" devices={cameras} value={selectedCameraId} onChange={setSelectedCameraId} disabled={devicesLoading || flow.pending} /></div>{footer(button('시작하기', start, !ready || devicesLoading || !selectedCameraId, true))}</>;
   } else if (flow.step === 'position') {
     const valid = flow.precheck?.face && flow.precheck.distance === 'ok' && flow.precheck.lighting === 'ok' && flow.point;
     content = <><h1>위치 확인</h1><div className={styles.center}><p>앉아야 할 자리에 앉아주세요</p><p>화면을 정면으로 바라보고 바른 자세로 앉아주세요</p><p>서버 확인값 — 얼굴: {flow.precheck ? (flow.precheck.face ? '인식됨' : '미인식') : '확인 중'} · 거리: {flow.precheck?.distance ?? '확인 중'} · 조명: {flow.precheck?.lighting ?? '확인 중'}</p>{valid && <p role="status">위치 확인이 완료되었습니다. 측정 안내로 이동합니다.</p>}</div>{flow.delayed && <p role="status">위치 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.</p>}{footer(<>{button('취소', cancelAndReturn)}{button('다음', () => change({ step: 'guide', pending: false, error: '' }), !ready || !valid, true)}</>)}</>;

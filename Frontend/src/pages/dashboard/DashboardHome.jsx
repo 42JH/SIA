@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchDashboardAccuracy, fetchDashboardApps, fetchDashboardLatency, fetchDashboardOverview, fetchDashboardUsage } from '../../api/dashboard';
 import { BarChart, HorizontalBars, LineChart } from './DashboardChart';
 import GesturePanel from './GesturePanel';
@@ -10,26 +11,39 @@ import styles from './DashboardHome.module.css';
 
 const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
 const details = { accuracy: ['인식 정확도', fetchDashboardAccuracy], latency: ['평균 응답 시간', fetchDashboardLatency], usage: ['제스처 / 보이스 사용량', fetchDashboardUsage], apps: ['자주 사용하는 프로그램', fetchDashboardApps] };
+const views = ['home', 'settings', 'voice', 'gestures', 'gaze', ...Object.keys(details)];
 const percent = (value) => value == null ? '데이터 없음' : `${Math.round(value * 100)}%`;
 const seconds = (value) => value == null ? '데이터 없음' : `${(value / 1000).toFixed(1)}초`;
 
 export default function DashboardHome() {
-  const [view, setView] = useState(() => ['settings', 'voice', 'gestures', 'gaze'].includes(new URLSearchParams(window.location.search).get('view')) ? new URLSearchParams(window.location.search).get('view') : 'home'); const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('day'); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const location = useLocation(); const navigate = useNavigate();
+  const requestedView = new URLSearchParams(location.search).get('view');
+  const view = views.includes(requestedView) ? requestedView : 'home';
+  const gestureRegistration = useGestureStore((state) => state.registration);
+  const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('day'); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   useEffect(() => { if (view === 'home') load(fetchDashboardOverview, setOverview); }, [view]);
   useEffect(() => { if (details[view]) load(() => details[view][1](period), setDetail); }, [view, period]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (e) { setError(e.message); } finally { setLoading(false); } }
   const open = (next) => {
     if (next !== 'gestures') useGestureStore.getState().closeRegistration();
     setMenu(false);
-    setView(next);
     setError('');
     if (details[next]) {
       setPeriod('day');
       setDetail(null);
     }
+    navigate(next === 'home' ? '/dashboard' : `/dashboard?view=${next}`);
   };
-  const title = view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : view === 'gestures' ? '제스처' : view === 'voice' ? '보이스' : view === 'gaze' ? '시선' : details[view]?.[0];
-  return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={() => view !== 'home' && open('home')} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{title}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
+  const registrationTitle = gestureRegistration?.stage === 'complete' || gestureRegistration?.stage === 'form' ? '제스처 등록' : gestureRegistration?.stage === 'review' ? '촬영 결과' : '제스처 촬영';
+  const title = view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : view === 'gestures' ? (gestureRegistration ? registrationTitle : '제스처') : view === 'voice' ? '보이스' : view === 'gaze' ? '시선' : details[view]?.[0];
+  const back = () => {
+    if (view === 'gestures' && gestureRegistration) {
+      useGestureStore.getState().closeRegistration();
+      return;
+    }
+    if (view !== 'home') navigate(-1);
+  };
+  return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={back} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{title}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}><button onClick={() => open('gestures')}>제스처<span>›</span></button><button onClick={() => open('voice')}>보이스<span>›</span></button><button onClick={() => open('gaze')}>시선<span>›</span></button><button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
     <section className={styles.content}>{loading && <p role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}{view === 'home' && <Overview data={overview} open={open} />}{details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} />}{view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel />}{view === 'gaze' && <GazePanel />}{view === 'settings' && <SettingsPanel />}</section></main>;
 }

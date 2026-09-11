@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchDevices } from '../../api/devices';
-import { fetchSettings } from '../../api/settings';
+import { fetchSettings, updateSettings } from '../../api/settings';
 import { activateProfile, deleteProfile, fetchProfiles, renameVoiceProfile, voiceSampleUrl } from '../../api/profiles';
 import { ENROLLMENT_SENTENCES } from '../onboarding/enrollmentConstants';
 import VoiceEnrollment from '../../components/onboarding/VoiceEnrollment';
+import DeviceSelector from '../../components/dashboard/DeviceSelector';
 import { useSessionStore } from '../../store/sessionStore';
 import { useVoiceStore } from '../../store/voiceStore';
 import { initializeVoiceEvents, sendVoice } from '../../ws/voices';
@@ -27,8 +28,13 @@ export default function VoicePanel() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [selected, setSelected] = useState([]);
   const [micLabel, setMicLabel] = useState(null);
+  const [micDevices, setMicDevices] = useState([]);
+  const [selectedMicId, setSelectedMicId] = useState('');
+  const [settingsConfig, setSettingsConfig] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [playingProfileId, setPlayingProfileId] = useState(null);
   const activeTempId = useRef(null);
+  const audioRef = useRef(null);
 
   const active = useMemo(() => profiles.find((item) => item.active), [profiles]);
   const stored = useMemo(() => profiles.filter((item) => !item.active), [profiles]);
@@ -41,6 +47,8 @@ export default function VoicePanel() {
     return () => clearTimeout(timer);
   }, [voice.stage, voice.change]);
   useEffect(() => () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
     if (activeTempId.current) {
       try { sendVoice('voice_reg_cancel', { tempId: activeTempId.current }); } catch { /* 페이지 이탈 시 임시 등록 정리 */ }
     }
@@ -57,6 +65,8 @@ export default function VoicePanel() {
     setBusy(true); setPageError('');
     try {
       const [settingsResult, devicesResult] = await Promise.all([fetchSettings(), fetchDevices()]);
+      setSettingsConfig(settingsResult);
+      setMicDevices(devicesResult.mics);
       const configuredId = settingsResult.settings.micDeviceId;
       const configuredName = settingsResult.settings.micDevice;
       const configured = devicesResult.mics.find((item) => configuredId ? item.id === configuredId : item.name === configuredName);
@@ -67,17 +77,37 @@ export default function VoicePanel() {
         return;
       }
       const chosen = configured ?? devicesResult.mics.find((item) => item.isDefault);
+      if (!chosen) {
+        setMicLabel(null);
+        setModal(null);
+        voice.change({ stage: 'micError', error: '' });
+        return;
+      }
+      setSelectedMicId(chosen.id);
       setMicLabel(chosen?.name ?? configuredName ?? null);
       setModal(null);
       voice.change({ stage: 'guide', error: '' });
     } catch (error) { setPageError(error.message); setModal(null); }
     finally { setBusy(false); }
   }
-  function startRecording() {
+  async function startRecording() {
+    const selectedMic = micDevices.find((item) => item.id === selectedMicId);
+    if (!selectedMic) { voice.change({ error: '사용할 마이크를 선택해주세요.' }); return; }
+    setBusy(true);
     try {
+      const latest = settingsConfig ?? await fetchSettings();
+      if (latest.settings.micDeviceId !== selectedMic.id || latest.settings.micDevice !== selectedMic.name) {
+        const saved = await updateSettings({
+          settings: { ...latest.settings, micDeviceId: selectedMic.id, micDevice: selectedMic.name },
+          updatedAt: latest.updatedAt,
+        });
+        setSettingsConfig(saved);
+      }
+      setMicLabel(selectedMic.name);
       sendVoice('voice_reg_start');
       voice.change({ stage: 'recording', sentence: null, completed: 0, tempId: null, warning: null, review: null, pending: true, error: '' });
     } catch (error) { voice.change({ pending: false, error: error.message }); }
+    finally { setBusy(false); }
   }
   function send(type, data, patch = {}) {
     try { sendVoice(type, data); voice.change({ pending: true, error: '', ...patch }); }
@@ -114,19 +144,35 @@ export default function VoicePanel() {
     finally { setBusy(false); }
   }
   function toggle(id) { setSelected((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]); }
+  function playProfile(profile) {
+    if (audioRef.current) return;
+    const url = voiceSampleUrl(profile.sampleUrl);
+    if (!url) return;
+    const audio = new Audio(url);
+    const finish = () => {
+      if (audioRef.current !== audio) return;
+      audioRef.current = null;
+      setPlayingProfileId(null);
+    };
+    audio.addEventListener('ended', finish, { once: true });
+    audio.addEventListener('error', finish, { once: true });
+    audioRef.current = audio;
+    setPlayingProfileId(profile.id);
+    audio.play().catch(finish);
+  }
 
-  if (voice.stage !== 'list') return <Enrollment voice={voice} micLabel={micLabel} connected={connected} onStart={startRecording} onRetryMic={prepareEnrollment} onSend={send} onSaved={async () => { activeTempId.current = null; await loadProfiles(); voice.resetEnrollment(); }} />;
+  if (voice.stage !== 'list') return <Enrollment voice={voice} micLabel={micLabel} micDevices={micDevices} selectedMicId={selectedMicId} setSelectedMicId={setSelectedMicId} connected={connected} busy={busy} onStart={startRecording} onRetryMic={prepareEnrollment} onSend={send} onSaved={async () => { activeTempId.current = null; await loadProfiles(); voice.resetEnrollment(); }} />;
 
   return <section className={styles.voicePage}>
     {loading && <p role="status">보이스를 불러오는 중입니다.</p>}
     {(pageError || voice.error) && <p className={styles.error} role="alert">{pageError || voice.error}</p>}
-    {active && <><VoiceCard profile={active} active /><h2>등록된 내 목소리</h2></>}
+    {active && <><VoiceCard profile={active} active onPlay={() => playProfile(active)} playingProfileId={playingProfileId} /><h2>등록된 내 목소리</h2></>}
     {!active && !loading && <div className={styles.empty}>등록된 보이스가 없습니다. 보이스를 추가해주세요.</div>}
     <div className={styles.listHeader}>
       {!active && <h2>등록된 내 목소리</h2>}
       {!deleteMode && <button className={styles.primary} onClick={() => setModal({ type: 'add' })} disabled={profiles.length >= 4 || busy}>+ 보이스 추가</button>}
     </div>
-    <div className={styles.voiceList}>{stored.map((profile) => <VoiceCard key={profile.id} profile={profile} deleteMode={deleteMode} checked={selected.includes(profile.id)} onToggle={() => toggle(profile.id)} onRename={() => setModal({ type: 'rename', profile, name: profile.name })} onActivate={() => activate(profile)} busy={busy} />)}</div>
+    <div className={styles.voiceList}>{stored.map((profile) => <VoiceCard key={profile.id} profile={profile} deleteMode={deleteMode} checked={selected.includes(profile.id)} onToggle={() => toggle(profile.id)} onRename={() => setModal({ type: 'rename', profile, name: profile.name })} onActivate={() => activate(profile)} onPlay={() => playProfile(profile)} playingProfileId={playingProfileId} busy={busy} />)}</div>
     <p className={styles.help}>목소리 인식이 잘 되지 않으면, 보이스를 추가 등록해보세요.</p>
     {deleteMode ? <div className={styles.deleteActions}><button onClick={() => { setDeleteMode(false); setSelected([]); }}>취소</button><button className={styles.primary} disabled={!selected.length || busy} onClick={() => setModal({ type: 'delete' })}>완전 삭제</button><span>{selected.length}개 선택됨</span></div>
       : <button className={styles.secondary} disabled={!stored.length} onClick={() => setDeleteMode(true)}>보이스 삭제</button>}
@@ -134,25 +180,21 @@ export default function VoicePanel() {
   </section>;
 }
 
-function VoiceCard({ profile, active, deleteMode, checked, onToggle, onRename, onActivate, busy }) {
-  function play() {
-    const url = voiceSampleUrl(profile.sampleUrl);
-    if (url) new Audio(url).play().catch(() => {});
-  }
+function VoiceCard({ profile, active, deleteMode, checked, onToggle, onRename, onActivate, onPlay, playingProfileId, busy }) {
   return <article className={`${styles.voiceCard} ${active ? styles.activeCard : ''}`}>
     {active && <small className={styles.activeCaption}>현재 사용 중인 보이스</small>}
     {deleteMode && <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`${profile.name} 선택`} />}
-    <button className={styles.play} onClick={play} disabled={!profile.sampleUrl} aria-label={`${profile.name} 재생`}>▶</button>
+    <button className={styles.play} onClick={onPlay} disabled={!profile.sampleUrl || playingProfileId !== null} aria-label={`${profile.name}${playingProfileId === profile.id ? ' 재생 중' : ' 재생'}`}>▶</button>
     <div className={styles.wave} aria-hidden="true">{Array.from({ length: 28 }, (_, index) => <i key={index} />)}</div>
     <div className={styles.voiceInfo}><strong>{profile.name}{!active && !deleteMode && <button className={styles.edit} onClick={onRename} aria-label={`${profile.name} 이름 변경`}>✎</button>}</strong><small>{formatDate(profile.createdAt)}</small></div>
     {active ? <span className={styles.activeBadge}>사용 중</span> : !deleteMode && <button className={styles.secondary} onClick={onActivate} disabled={busy}>사용으로 설정</button>}
   </article>;
 }
 
-function Enrollment({ voice, micLabel, connected, onStart, onRetryMic, onSend, onSaved }) {
+function Enrollment({ voice, micLabel, micDevices, selectedMicId, setSelectedMicId, connected, busy, onStart, onRetryMic, onSend, onSaved }) {
   const tempId = voice.tempId;
   if (voice.stage === 'micError') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>!</div><h2>마이크를 사용할 수 없어요</h2><p>{micLabel ? `${micLabel} 연결 상태를 확인해주세요.` : '마이크 연결 또는 권한 설정을 확인해주세요.'}<br />권한을 허용한 뒤 다시 시도할 수 있습니다.</p><div className={styles.actionRow}>{/* TODO(BE): Windows 마이크 설정을 여는 FE용 REST·WS 계약 필요 */}<button className={styles.secondary} disabled title="백엔드 연동이 필요합니다">시스템 설정 열기</button><button className={styles.primary} onClick={onRetryMic}>다시 확인</button></div></div>;
-  if (voice.stage === 'guide') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>♩</div><h2>조용한 곳에서 {voice.total}문장을 읽어주세요</h2><p>화면에 나오는 문장을 자연스럽게 읽으면 됩니다.<br />약 30초 정도 걸립니다.</p><div className={styles.device}>마이크 · {micLabel ?? '시스템 기본 마이크'}<span>정상</span></div><button className={styles.primary} onClick={onStart} disabled={!connected}>녹음 시작</button>{!connected && <p className={styles.error}>실시간 연결을 기다리고 있습니다.</p>}</div>;
+  if (voice.stage === 'guide') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>♩</div><h2>조용한 곳에서 {voice.total}문장을 읽어주세요</h2><p>화면에 나오는 문장을 자연스럽게 읽으면 됩니다.<br />약 30초 정도 걸립니다.</p><DeviceSelector label="마이크" devices={micDevices} value={selectedMicId} onChange={setSelectedMicId} disabled={busy} /><button className={styles.primary} onClick={onStart} disabled={!connected || busy || !selectedMicId}>녹음 시작</button>{!connected && <p className={styles.error}>실시간 연결을 기다리고 있습니다.</p>}</div>;
   if (voice.stage === 'warning') return <div className={`${styles.enrollment} ${styles.enrollmentFullScreen}`}><div className={styles.roundIcon}>!</div><h2>목소리가 잘 들리지 않았어요</h2><p>{voice.warning?.reason ?? '주변 소음이 크거나 마이크와 거리가 멀 수 있습니다.'}<br />조용한 곳에서 다시 읽어주세요.</p><div className={styles.actionRow}><button className={styles.secondary} onClick={() => onSend('voice_accept_anyway', { tempId })} disabled={!tempId || voice.pending}>그대로 진행</button><button className={styles.primary} onClick={() => onSend('voice_reg_retry', { tempId }, { stage: 'recording', completed: 0, sentence: null, warning: null })} disabled={!tempId || voice.pending}>다시 녹음</button></div></div>;
   if (voice.stage === 'processing') return <VoiceEnrollment mode="processing" fullScreen error={voice.error} />;
   if (voice.stage === 'review') {

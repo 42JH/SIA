@@ -28,9 +28,9 @@
 .error { color: var(--color-danger); }
 .backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: var(--spacing-lg); background: rgb(0 0 0 / 32%); }
 .detailModal { position: relative; width: min(720px, 100%); max-height: calc(100vh - 48px); overflow: auto; border-radius: 8px; background: var(--color-bg); box-shadow: 0 18px 50px rgb(0 0 0 / 18%); }
-.detailModal > header, .registration > header { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; min-height: 58px; padding: 0 var(--spacing-md); border-bottom: 1px solid var(--color-border); }
-.detailModal header h2, .registration header h2 { margin: 0; font-size: var(--font-size-md); }
-.detailModal header button, .registration header button { border: 0; background: transparent; font-size: 23px; cursor: pointer; }
+.detailModal > header { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; min-height: 58px; padding: 0 var(--spacing-md); border-bottom: 1px solid var(--color-border); }
+.detailModal header h2 { margin: 0; font-size: var(--font-size-md); }
+.detailModal header button { border: 0; background: transparent; font-size: 23px; cursor: pointer; }
 .detailBody { padding: 34px 64px 10px; text-align: center; }
 .detailBody h3 { margin: 20px 0 var(--spacing-sm); }
 .detailBody p { color: var(--color-muted); }
@@ -71,9 +71,8 @@
 .addStep { width: 100%; border-style: dashed; text-align: left; }
 .form small { display: block; margin-top: var(--spacing-sm); color: var(--color-muted); }
 .form .repeat { display: flex; align-items: center; grid-template-columns: auto 1fr; }
-.registration { position: relative; min-height: calc(100vh - var(--dashboard-header) - 48px); border: 1px solid var(--color-border); background: var(--color-bg); }
-.registration > header { grid-template-columns: 42px 1fr; }
-.registrationBody { display: flex; min-height: 610px; align-items: center; flex-direction: column; justify-content: center; padding: 36px; text-align: center; }
+.registration { position: fixed; z-index: 15; inset: var(--dashboard-header) 0 0; overflow: auto; background: var(--dashboard-bg); }
+.registrationBody { display: flex; min-height: 100%; align-items: center; flex-direction: column; justify-content: center; padding: 36px; text-align: center; }
 .registrationBody > small { margin-top: 12px; color: var(--color-muted); }
 .cameraBox, .liveFrame { position: relative; display: grid; width: min(500px, 100%); height: 300px; place-items: center; overflow: hidden; border: 1px dashed var(--color-border); color: var(--color-muted); }
 .cameraBox > img { width: 100%; height: 100%; object-fit: contain; background: var(--color-surface-muted); }
@@ -97,7 +96,7 @@
 .similarityGrid small { color: var(--color-muted); }
 .compareMedia { display: grid; width: 100%; height: 125px; place-items: center; overflow: hidden; border: 1px dashed var(--color-border); color: var(--color-muted); }
 .compareMedia img, .compareMedia video { width: 100%; height: 100%; object-fit: cover; }
-.captureTypeBackdrop { position: absolute; z-index: 5; inset: 59px 0 0; display: grid; place-items: center; padding: var(--spacing-lg); background: rgb(0 0 0 / 42%); }
+.captureTypeBackdrop { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; padding: var(--spacing-lg); background: rgb(0 0 0 / 42%); }
 .captureTypeDialog { width: min(620px, 100%); padding: 26px; border-radius: 10px; background: var(--color-bg); box-shadow: 0 18px 50px rgb(0 0 0 / 20%); }
 .captureTypeDialog > h3 { margin: 0 0 22px; }
 .captureTypeDialog > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--spacing-sm); }
