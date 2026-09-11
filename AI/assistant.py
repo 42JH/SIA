@@ -24,7 +24,6 @@ import os
 import subprocess
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import cv2
@@ -380,7 +379,6 @@ def main():
     remote_refs = {}
     if custom.n:
         print(f"커스텀 제스처 로드: {custom.class_names()} (등록: python gesture_studio.py)")
-    usage_events = []
     last_usage_flush = time.monotonic()
     bridge = DomBridge()
     bridge.start()  # BE 크롬 확장이 POST할 수신부 — 확장 없으면 스크린샷 폴백
@@ -694,10 +692,10 @@ def main():
                         if link and link.gesture_ready:
                             print(f"[GESTURE→LOCAL] no BE mapping: {name} ({context})")
                         fire_entry(entry, name, "제스처")
-                    usage_events.append({"eventUid": str(uuid.uuid4()), "kind": "GESTURE_TRIGGERED",
-                                         "payload": {"name": name, "context": context,
-                                                     "source": "static"},
-                                         "occurredAt": int(time.time() * 1000)})
+                    if link:
+                        link.queue_usage("GESTURE_TRIGGERED",
+                                         payload={"name": name, "context": context, "source": "static"},
+                                         occurredAt=int(time.time() * 1000))
             if gesture_active and not registration_active:
                 pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
                 motion_event = palm_motion.update(
@@ -741,10 +739,9 @@ def main():
                                                       "context": be_context})
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
-                    usage_events.append({"eventUid": str(uuid.uuid4()), "kind": "GESTURE_TRIGGERED",
-                                         "payload": {"name": dynamic_event, "context": context,
-                                                     "source": "dynamic"},
-                                         "occurredAt": int(time.time() * 1000)})
+                    link.queue_usage("GESTURE_TRIGGERED",
+                                     payload={"name": dynamic_event, "context": context, "source": "dynamic"},
+                                     occurredAt=int(time.time() * 1000))
                 elif entry and not args.be_gesture_only:
                     if link and link.gesture_ready:
                         print(f"[GESTURE→LOCAL] no BE mapping: {dynamic_event} ({context})")
@@ -759,18 +756,14 @@ def main():
                     print(f"[제스처 제어] 명령={dynamic_event} | "
                           f"키={entry.get('key', '-')} | 표시={entry.get('label', dynamic_event)}")
                     fire_entry(entry, dynamic_event, "제스처", wheel_steps=abs(scroll_steps) or 1)
-                    usage_events.append({"eventUid": str(uuid.uuid4()), "kind": "GESTURE_TRIGGERED",
-                                         "payload": {"name": dynamic_event, "context": context,
-                                                     "source": "dynamic"},
-                                         "occurredAt": int(time.time() * 1000)})
+                    if link:
+                        link.queue_usage("GESTURE_TRIGGERED",
+                                         payload={"name": dynamic_event, "context": context, "source": "dynamic"},
+                                         occurredAt=int(time.time() * 1000))
 
             # --- 상태 표시 (세션 남은 시간 포함) ---
-            if link and usage_events and now - last_usage_flush >= 5.0:
-                try:
-                    link.post_usage_events(usage_events)
-                    usage_events.clear()
-                except Exception as exc:
-                    print(f"[BE] 제스처 사용 통계 전송 실패: {exc}")
+            if link and now - last_usage_flush >= 5.0:
+                link.flush_usage()
                 last_usage_flush = now
 
             if brain.busy:

@@ -122,13 +122,13 @@ class SpeakerVerifier:
         return min_sim
 
     def verify(self, audio_i16, profile=None):
-        """(통과여부, 유사도). 미등록이면 (True, 1.0) — 게이트 자체를 끔."""
+        """(통과여부, 유사도). 미등록·대조 오류는 통과하되 측정하지 못한 유사도는 None."""
         centroid, threshold, _, _ = self.snapshot() if profile is None else profile
         if centroid is None:
-            return True, 1.0
+            return True, None
         try:
             sim = float(self.embed(audio_i16) @ centroid)
         except Exception as e:
             print(f"[화자 인증 오류, 통과 처리] {e}")
-            return True, 1.0
+            return True, None
         return sim >= threshold, sim

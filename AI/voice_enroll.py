@@ -72,7 +72,8 @@ def verify_live():
     while True:
         audio = record_one("(아무 말이나)")
         ok, sim = sv.verify(audio)
-        print(f"  유사도 {sim:.2f} → {'본인 (통과)' if ok else '타인/미디어 (차단)'} "
+        score = f"{sim:.2f}" if sim is not None else "측정 불가"
+        print(f"  유사도 {score} → {'본인 (통과)' if ok else '타인/미디어 (차단)'} "
               f"[임계 {sv.threshold}]")
 
 
