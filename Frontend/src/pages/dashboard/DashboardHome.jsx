@@ -4,6 +4,7 @@ import { BarChart, HorizontalBars, LineChart } from './DashboardChart';
 import GesturePanel from './GesturePanel';
 import SettingsPanel from './SettingsPanel';
 import VoicePanel from './VoicePanel';
+import GazePanel from './GazePanel';
 import { useGestureStore } from '../../store/gestureStore';
 import styles from './DashboardHome.module.css';
 
@@ -13,7 +14,7 @@ const percent = (value) => value == null ? '데이터 없음' : `${Math.round(va
 const seconds = (value) => value == null ? '데이터 없음' : `${(value / 1000).toFixed(1)}초`;
 
 export default function DashboardHome() {
-  const [view, setView] = useState(() => ['settings', 'voice'].includes(new URLSearchParams(window.location.search).get('view')) ? new URLSearchParams(window.location.search).get('view') : 'home'); const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('day'); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [view, setView] = useState(() => ['settings', 'voice', 'gestures', 'gaze'].includes(new URLSearchParams(window.location.search).get('view')) ? new URLSearchParams(window.location.search).get('view') : 'home'); const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('day'); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   useEffect(() => { if (view === 'home') load(fetchDashboardOverview, setOverview); }, [view]);
   useEffect(() => { if (details[view]) load(() => details[view][1](period), setDetail); }, [view, period]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (e) { setError(e.message); } finally { setLoading(false); } }
@@ -27,10 +28,10 @@ export default function DashboardHome() {
       setDetail(null);
     }
   };
-  const title = view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : view === 'gestures' ? '제스처' : view === 'voice' ? '보이스' : details[view]?.[0];
+  const title = view === 'home' ? 'SIA 대시보드' : view === 'settings' ? '설정' : view === 'gestures' ? '제스처' : view === 'voice' ? '보이스' : view === 'gaze' ? '시선' : details[view]?.[0];
   return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={() => view !== 'home' && open('home')} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{title}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
-    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}><button onClick={() => open('gestures')}>제스처<span>›</span></button><button onClick={() => open('voice')}>보이스<span>›</span></button><button onClick={() => setError('시선 관리 화면은 제공된 대시보드 와이어프레임 범위에 없습니다.')}>시선<span>›</span></button><button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
-    <section className={styles.content}>{loading && <p role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}{view === 'home' && <Overview data={overview} open={open} />}{details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} />}{view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel />}{view === 'settings' && <SettingsPanel />}</section></main>;
+    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}><button onClick={() => open('gestures')}>제스처<span>›</span></button><button onClick={() => open('voice')}>보이스<span>›</span></button><button onClick={() => open('gaze')}>시선<span>›</span></button><button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
+    <section className={styles.content}>{loading && <p role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}{view === 'home' && <Overview data={overview} open={open} />}{details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} />}{view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel />}{view === 'gaze' && <GazePanel />}{view === 'settings' && <SettingsPanel />}</section></main>;
 }
 
 function Overview({ data, open }) {

@@ -1,0 +1,41 @@
+.gazePage { display: grid; gap: var(--spacing-md); }
+.gazePage h2 { margin: var(--spacing-sm) 0 0; font-size: var(--font-size-md); }
+.caption, .help { margin: 0 0 var(--spacing-sm); color: var(--color-muted); font-size: var(--font-size-sm); }
+.listHeader { display: flex; align-items: center; justify-content: space-between; margin-top: var(--spacing-sm); }
+.profileList { display: grid; gap: var(--spacing-sm); }
+.profileCard { display: grid; grid-template-columns: var(--setup-control-height) 1fr auto; align-items: center; gap: var(--spacing-md); min-height: var(--gaze-card-height); padding: var(--spacing-md) var(--spacing-lg); border: 1px solid var(--dashboard-border); border-radius: var(--dashboard-radius); background: var(--color-bg); }
+.profileCard:has(> input) { grid-template-columns: var(--spacing-lg) var(--setup-control-height) 1fr; }
+.profileCard > input { width: var(--font-size-md); height: var(--font-size-md); accent-color: var(--color-accent); }
+.activeCard { border-width: 2px; }
+.profileInfo { display: grid; gap: var(--spacing-xs); }
+.profileInfo small { color: var(--color-muted); }
+.gazeMark { position: relative; display: grid; width: var(--gaze-card-icon-size); height: var(--gaze-card-icon-size); place-items: center; border: 2px solid var(--color-accent); border-radius: 50%; }
+.gazeMark::before, .gazeMark::after { position: absolute; width: var(--gaze-dot-size); height: var(--gaze-dot-size); border-radius: 50%; background: var(--color-accent); content: ''; }
+.gazeMark::before { transform: translateX(-8px); }
+.gazeMark::after { transform: translateX(8px); }
+.gazeMark i { width: var(--gaze-center-dot-size); height: var(--gaze-center-dot-size); border-radius: 50%; background: var(--color-accent); }
+.gazePreview { width: var(--gaze-preview-icon-size); height: var(--gaze-preview-icon-size); margin: 0 auto var(--spacing-md); }
+.gazePreview::before { transform: translateX(-14px); }
+.gazePreview::after { transform: translateX(14px); }
+.gazePreview i { width: 10px; height: 10px; }
+.activeBadge { padding: var(--spacing-sm) var(--spacing-md); border-radius: 999px; background: var(--color-accent); color: var(--color-bg); }
+.primary, .secondary, .deleteActions button, .modal button { min-width: var(--gaze-control-width); min-height: var(--setup-control-height); padding: 0 var(--spacing-md); border: 1px solid var(--color-accent); border-radius: var(--setup-radius); background: var(--color-bg); color: var(--color-text); cursor: pointer; }
+.primary { background: var(--color-accent); color: var(--color-bg); }
+.primary:disabled, .secondary:disabled { cursor: default; opacity: .45; }
+.gazePage > .secondary { width: var(--setup-voice-button-width); }
+.deleteActions { display: flex; align-items: center; gap: var(--spacing-sm); }
+.deleteActions span { color: var(--color-muted); font-size: var(--font-size-sm); }
+.empty { padding: var(--setup-card-padding); border: 1px dashed var(--color-border); border-radius: var(--dashboard-radius); color: var(--color-muted); text-align: center; }
+.error { color: var(--color-danger); }
+.backdrop { position: fixed; z-index: var(--setup-layer); inset: var(--dashboard-header) 0 0; display: grid; place-items: center; padding: var(--spacing-lg); background: var(--overlay-background); }
+.modal { width: min(var(--gaze-modal-width), 100%); padding: var(--setup-card-padding); border: 1px solid var(--dashboard-border); border-radius: var(--dashboard-radius); background: var(--color-bg); text-align: center; }
+.modal h2 { margin: var(--spacing-md) 0; }
+.modal p { color: var(--color-muted); line-height: 1.7; }
+.modalActions { display: flex; justify-content: center; gap: var(--spacing-md); margin-top: var(--spacing-lg); }
+.roundIcon { display: grid; width: var(--gaze-preview-icon-size); height: var(--gaze-preview-icon-size); place-items: center; margin: 0 auto var(--spacing-md); border: 2px solid var(--color-accent); border-radius: 50%; font-size: var(--setup-icon-font); }
+@media (max-width: 700px) {
+  .profileCard { grid-template-columns: var(--setup-control-height) 1fr; }
+  .profileCard > .secondary, .activeBadge { grid-column: 2; justify-self: start; }
+  .profileCard:has(> input) { grid-template-columns: var(--spacing-lg) var(--setup-control-height) 1fr; }
+  .modalActions { flex-wrap: wrap; }
+}
