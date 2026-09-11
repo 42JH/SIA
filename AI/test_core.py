@@ -517,8 +517,11 @@ def test_mouse_subpixel_accumulator():
 def test_voice_bridge():
     """화자 등록 이벤트 흐름(65) — ready → 문장 5개 collect/progress → 샘플·npz 업로드 → captured.
     문장은 받는 자리에서 바로 임베딩하고, 짧거나 앞 문장과 안 닮으면 voice_sentence_rejected 뒤 같은 문장을 다시 기다린다.
-    문장을 받을 때마다 voice_progress 에 그 문장의 판독 결과(durationSec·quality·noise)를 싣고, 5문장 뒤엔 경고 없이 바로 올린다.
+    문장을 받을 때마다 해당 문장 녹음을 올리고 voice_captured 로 판독 결과를 보낸다. 5번째에도 녹음은 한 문장만 올린다.
     같은 문장을 다시 수집하라는 지시가 오면 그 문장부터 뒤 샘플을 버린다."""
+    import io
+    import wave
+
     from speaker import SpeakerVerifier
     from voice_bridge import SENTENCES, VoiceSession
 
@@ -547,7 +550,11 @@ def test_voice_bridge():
     link = FakeLink()
     spk = FakeSpeaker("_no_such_profile.npz")
     vs = VoiceSession(link, spk, "_selftest_speaker.npz")
-    vs._put = lambda url, body, ctype: link.sent.append(("PUT", ctype))
+    uploads = []
+    def put(url, body, ctype):
+        uploads.append((url, body, ctype))
+        link.sent.append(("PUT", ctype))
+    vs._put = put
     assert len(SENTENCES) >= 5                                 # BE 가 total(현재 5)을 정한다 — 상수는 그 이상이면 된다
     # 길이·소음 거절 — 임베딩 전에 거른다. 소음은 예산(2)이 다하면 받되 품질 낮음
     vs.on_start("t0", 5)
@@ -571,18 +578,27 @@ def test_voice_bridge():
     assert "voice_progress" not in [t for t, _ in link.sent]
     assert link.sent[-1][0] == "voice_sentence_rejected" and link.sent[-1][1]["tempId"] == "t1"
     assert link.sent[-1][1]["code"] == "TOO_SHORT" and spk.embeds == 0   # 짧으면 임베딩까지 가지도 않는다
-    for n in (1, 2, 3, 4, 5):
+    uploads.clear()
+    samples = [loud(7, 1.0 + 0.2 * n) for n in range(1, 6)]
+    for n, sample in enumerate(samples, 1):
         vs.on_collect("t1", n)
-        vs.on_utter(loud(7))
+        vs.on_utter(sample)
         assert spk.embeds == n                                 # 문장을 받을 때마다 하나씩 — 마지막에 5개를 몰아 뽑지 않는다
     types = [t for t, _ in link.sent]
     assert types.count("voice_progress") == 5 and types[-3:] == ["PUT", "PUT", "voice_captured"]
-    # 문장마다 판독 결과가 온다 — 1~4번은 그 문장 녹음만(npz 없이), 5번째만 이어붙인 wav 와 npz 를 함께 올린다
+    # 1~5번 모두 해당 문장 녹음만 올리고, 마지막에만 전체 임베딩의 npz 를 함께 올린다.
     assert [c for t, c in link.sent if t == "PUT"] == ["audio/wav"] * 4 + ["audio/wav", "application/octet-stream"]
     caps = [d for t, d in link.sent if t == "voice_captured"]
     assert len(caps) == 5 and all(c["tempId"] == "t1" and c["quality"] == "양호" for c in caps)
-    assert [c["durationSec"] for c in caps[:4]] == [2.6] * 4   # 앞 네 건은 그 문장 하나 길이
-    assert caps[-1]["durationSec"] > 5 and caps[-1]["noise"] in ("낮음", "높음")   # 마지막은 5문장 전체
+    assert [c["durationSec"] for c in caps] == [round(len(a) / 16000, 1) for a in samples]
+    wav_uploads = [(url, body) for url, body, ctype in uploads if ctype == "audio/wav"]
+    assert len(wav_uploads) == 5
+    for (url, body), sample in zip(wav_uploads, samples):
+        assert url.endswith("/api/agent/voices/t1/sample")
+        with wave.open(io.BytesIO(body), "rb") as recorded:
+            assert recorded.getnchannels() == 1 and recorded.getsampwidth() == 2
+            assert recorded.getframerate() == 16000
+            assert np.array_equal(np.frombuffer(recorded.readframes(recorded.getnframes()), dtype="<i2"), sample)
     # 3번 문장만 다른 목소리 → 그 문장만 무른다. 거절 예산(2회)이 떨어지면 받아 주고, 5문장 일관성 0.24 < 0.5 로 최종 경고
     link.sent.clear()
     vs.on_start("t2", 5)
@@ -605,6 +621,8 @@ def test_voice_bridge():
         vs.on_utter(loud(marker))
     assert "voice_quality_warn" not in [t for t, _ in link.sent]   # 5문장 뒤 경고는 없다 — 문장마다 결과를 이미 줬다
     assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "낮음"   # 하나만 뺄 수 없으니 전체 판정은 낮음
+    with np.load(io.BytesIO(uploads[-1][1]), allow_pickle=False) as profile:
+        assert np.allclose(profile["centroid"], np.array([1.0, 2.0]) / np.sqrt(5))  # 마지막 문장만으로 프로필을 만들지 않는다.
     vs.on_cancel("t2")
     assert not vs.active
     # FE "다시 녹음" — 3번까지 읽은 뒤 1번부터 다시. 옛 2·3번이 남아 있으면 1번 하나로 등록이 끝나 버린다
