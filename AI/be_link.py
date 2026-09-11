@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from collections import deque
 from pathlib import Path
 
@@ -122,9 +123,12 @@ class AgentLink:
         self.connected = False          # WS 열림 (MCP 는 lazy)
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
         self.be_session_id = None
+        self._session_condition = threading.Condition()
         self.calib = None               # CalibSession 또는 None (assistant가 주입)
         self._events = deque(maxlen=256)
         self._event_lock = threading.Lock()
+        self._usage = []
+        self._usage_lock = threading.Lock()
         self.gesture_ready = False
         self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
         self.voice_sync = voice_sync    # WS 연결 전에 주입해 부팅 직후 활성 참조도 놓치지 않는다.
@@ -184,13 +188,15 @@ class AgentLink:
                 if isinstance(blobs, dict) and "voice" in blobs:
                     self.voice_sync.on_changed(blobs["voice"])
         if t == "session_state":
-            if d.get("state") == "ACTIVE" and d.get("deadlineMs"):
-                remaining = d["deadlineMs"] / 1000.0 - time.time()
-                self.session_until_mono = time.monotonic() + max(0.0, remaining)
-                self.be_session_id = d.get("sessionId")
-            else:  # PASSIVE — 만료·종료
-                self.session_until_mono = 0.0
-                self.be_session_id = None
+            with self._session_condition:
+                if d.get("state") == "ACTIVE" and d.get("deadlineMs"):
+                    remaining = d["deadlineMs"] / 1000.0 - time.time()
+                    self.session_until_mono = time.monotonic() + max(0.0, remaining)
+                    self.be_session_id = d.get("sessionId")
+                else:  # PASSIVE — 만료·종료
+                    self.session_until_mono = 0.0
+                    self.be_session_id = None
+                self._session_condition.notify_all()
         elif self.calib and t and t.startswith("calib_"):
             c = self.calib
             if t == "calib_start":         c.on_start(d.get("tempId"))
@@ -276,6 +282,25 @@ class AgentLink:
                                  headers={"Content-Type": "application/json"}) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def queue_usage(self, kind, **fields):
+        event = {key: value for key, value in fields.items() if value is not None}
+        event.update(eventUid=str(uuid.uuid4()), kind=kind)
+        with self._usage_lock:
+            self._usage.append(event)
+
+    def flush_usage(self):
+        with self._usage_lock:
+            batch, self._usage = self._usage, []
+        if not batch:
+            return
+        try:
+            result = self.post_usage_events(batch)
+            print(f"[BE] 사용 통계 전송 count={len(batch)} "
+                  f"accepted={result.get('accepted')} duplicates={result.get('duplicates')} "
+                  f"rejected={result.get('rejected')}")
+        except Exception as exc:
+            print(f"[BE] 사용 통계 전송 실패 count={len(batch)} — 배치 폐기(재시도 없음): {exc}")
+
     def _send(self, obj):
         ws = self.ws
         if not ws:
@@ -292,7 +317,7 @@ class AgentLink:
     def wake_detected(self):
         """호출어 감지 → BE. FE 'listening' 중계 + 활성 세션 없으면 개시(openOnWakeword).
         활성 세션 중 재수신은 BE 가 무시하므로 LLM 뒤 폴백 발신과 겹쳐도 무해."""
-        self._send({"type": "wakeword_detected", "data": {}})
+        return self._send({"type": "wakeword_detected", "data": {}})
 
     def voice_rejected(self):
         """화자 게이트 거부 → BE. BE 가 FE 에 voice_rejected{message} 로 중계(문구는 BE 소유).
@@ -306,9 +331,13 @@ class AgentLink:
         if opening:
             # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
             # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
-            self.wake_detected()
+            if self.wake_detected():
+                with self._session_condition:
+                    self._session_condition.wait_for(
+                        lambda: self.be_session_id is not None, timeout=1.0)
         else:
             self.call("session.extend")
+        return self.be_session_id
 
     def end(self):
         if self.be_session_id:

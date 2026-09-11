@@ -530,7 +530,7 @@ class Brain(threading.Thread):
         self._audio_since = 0.0
         self.busy = 0
         self.session_until = 0.0
-        self._pending = None  # (확인 질문, 종류, 만료 시각)
+        self._pending = None  # (확인 질문, 종류, 만료 시각, 대상, 원래 명령의 완료 통계, 질문 시각)
         self._client = None
         self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
@@ -589,7 +589,7 @@ class Brain(threading.Thread):
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
         if self.enabled:
             with self._audio_lock:
-                t_utter = t_utter or time.monotonic()
+                t_utter = time.monotonic() if t_utter is None else t_utter
                 if t_utter < self._audio_since:
                     return
                 self.queue.append((audio_i16, full_img, crop_img,
@@ -666,9 +666,9 @@ class Brain(threading.Thread):
                         if combined is not None:
                             accum_n = accum.n_joined
                             ok, accum_sim = self.speaker.verify(combined, profile)
+                            if ok:
+                                sim = accum_sim  # 재판정에서 측정 실패로 통과했다면 정확도도 생략한다.
                     if ok:
-                        if accum_sim is not None:
-                            sim = accum_sim  # 통과시킨 값은 이어붙여 낸 유사도
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                     else:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
@@ -686,6 +686,7 @@ class Brain(threading.Thread):
                             fresh = generation == self._audio_generation
                         if fresh and be and sp >= SPEAKER_JUDGE_SPEECH_S:
                             be.voice_rejected()
+                            be.queue_usage("voice-rejected", sessionId=be.be_session_id)
                         continue
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
@@ -719,7 +720,16 @@ class Brain(threading.Thread):
                     stale = generation != self._audio_generation
                 # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
                 if not stale:
-                    self._execute(result, crop_img, t_utter, hwnd, full_img)
+                    be = self._be()
+                    completed = self._execute(result, crop_img, t_utter, hwnd, full_img,
+                                              profile, sim, tier, generation)
+                    finished = time.monotonic()
+                    with self._audio_lock:
+                        fresh = generation == self._audio_generation
+                    if completed and be and fresh:
+                        started, fields = completed
+                        latency_ms = int((finished - started) * 1000)
+                        be.queue_usage("command", **fields, latencyMs=latency_ms)
             except Exception as e:
                 self._say(f"오류: {e}")
                 print(f"[brain 오류] {e}")
@@ -815,8 +825,10 @@ class Brain(threading.Thread):
             print(f"[AI→BE] notice {json.dumps(data, ensure_ascii=False)}")
 
     # --- 액션 실행 ---
-    def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None):
-        t_utter = t_utter or time.monotonic()
+    def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None,
+                 profile=None, sim=None, tier=2, generation=None):
+        """실제 완료 시 (원래 발화 시작 시각, 통계 필드), 미실행·확인 대기는 None."""
+        t_utter = time.monotonic() if t_utter is None else t_utter
         if not result.get("audio_is_speech", True):
             return  # 잡음/기계음 — 조용히 무시
         if not result.get("is_command"):
@@ -836,18 +848,30 @@ class Brain(threading.Thread):
             return
         action = result.get("action", "none")
         say = result.get("say") or ""
-        if action == "end_session":  # 세션 갱신보다 먼저 — '그만'이 세션을 연장하면 안 됨
-            be = self._be()
+        be = self._be()
+        session_id = be.be_session_id if be else None
+        if action != "end_session":  # '그만'은 세션을 연장하지 않는다.
+            if be:
+                session_id = be.renew(opening=t_utter >= self._session_until())
+            self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
+        with self._audio_lock:
+            if generation is not None and generation != self._audio_generation:
+                return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
+            if be and self.act:
+                enrolled = profile is not None and profile[0] is not None
+                be.queue_usage("voice", sessionId=session_id,
+                               profileId=profile[2] if enrolled else None,
+                               accuracy=round(sim, 3) if enrolled and sim is not None else None,
+                               action=result.get("action"))
+        completed = (t_utter, {"sessionId": session_id, "action": action,
+                               "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
+        if action == "end_session":
             if be:
                 be.end()
             self.session_until = 0.0
             self._pending = None
             self._say(say or "대기 모드로 전환합니다")
-            return
-        be = self._be()
-        if be:  # 유효 명령 판정 후에만 — 미활성이면 개시(session_open), 활성이면 연장(session.extend)
-            be.renew(opening=t_utter >= self._session_until())
-        self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
+            return completed if self.act else None
         if not self.act:
             self.overlay.toast(f"[시늉만] {action}: {say}")
             return
@@ -855,52 +879,68 @@ class Brain(threading.Thread):
         if action == "confirm_yes":
             if self._pending and t_utter < self._pending[2]:
                 kind, target = self._pending[1], self._pending[3]
+                started, fields = self._pending[4]
+                # 질문 표시부터 승인 발화 시작까지의 사람 대기만 뺀다.
+                completed = (started + max(0.0, t_utter - self._pending[5]), fields)
                 self._pending = None
                 if kind == "window_close":
                     close_window(target)  # 확인 요청 당시의 그 창만 닫힌다 (포커스 무관)
                     self._say("창을 닫았습니다")
+                    return completed
                 elif kind == "delete_file":
                     # BE 연결 시 files.delete(휴지통 이동)로 이관 — 확인은 AI 가 이미 받았고
                     # BE 는 재확인 없이 실행(§1). 실패·미연결이면 로컬 send2trash 폴백.
-                    if not self._try_be("files.delete", {"paths": list(target)},
-                                        f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
-                        import send2trash
+                    if self._try_be("files.delete", {"paths": list(target)},
+                                    f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
+                        return completed
+                    import send2trash
 
-                        ok = 0
-                        for p in target:
-                            try:
-                                send2trash.send2trash(p)  # 완전삭제 아님 — 휴지통 (복구 가능)
-                                ok += 1
-                            except Exception as e:
-                                print(f"[삭제 실패] {p}: {e}")
-                        self._say(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                    ok = 0
+                    for p in target:
+                        try:
+                            send2trash.send2trash(p)  # 완전삭제 아님 — 휴지통 (복구 가능)
+                            ok += 1
+                        except Exception as e:
+                            print(f"[삭제 실패] {p}: {e}")
+                    self._say(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                    if ok == len(target):
+                        return completed
             else:
                 self._say("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
             self._pending = None
             self._say("취소했습니다")
+            return completed
         elif action == "open_app":
             key = str(result.get("app", "")).lower()
             app = APPS.get(key)
             if not app:
                 self._say(f"지원하지 않는 앱: {result.get('app')}")
+                return
             # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
             elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
                 subprocess.Popen(["cmd", "/c", "start", "", app])
                 self._say(say or f"{app} 실행")
+            return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
             # BE 가 막았거나(세션 전) 미접속이면 ok False/None → 기존 로컬 경로로 폴백(open_app 과 같은 패턴).
             if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
-                webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(q))
+                opened = webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(q))
+                if not opened:
+                    self._say("검색을 열지 못했습니다")
+                    return
                 self._say(say or f"'{q}' 검색")
+            if q:
+                return completed
         elif action == "find_file":
             q = (result.get("query") or "").strip()
             if q:  # Windows 검색 인덱스 사용 — cmd dir /s보다 수십 배 빠름
                 os.startfile(f"search-ms:query={urllib.parse.quote(q)}"
                              f"&crumb=location:{urllib.parse.quote(str(Path.home()))}")
                 self._say(say or f"'{q}' 파일 검색")
+                return completed
         elif action == "window":
             # 대상 = 발화 순간의 포커스 창(hwnd). 실행 시점 포커스를 쓰면 API 지연
             # 몇 초 사이에 다른 창(우리 HUD, 방금 연 탐색기)이 당한다.
@@ -909,15 +949,19 @@ class Brain(threading.Thread):
                 self._say("대상 창을 찾지 못했습니다")
             elif op == "close":  # 파괴적 동작 — 즉시 실행하지 않고 재확인
                 q = f'창 "{window_title_of(hwnd)[:24]}"을(를) 닫을까요?'
-                self._pending = (q, "window_close", time.monotonic() + CONFIRM_TIMEOUT_S, hwnd)
+                asked_at = time.monotonic()
+                self._pending = (q, "window_close", asked_at + CONFIRM_TIMEOUT_S,
+                                 hwnd, completed, asked_at)
                 self._say(q + ' — "응, 닫아" / "취소"로 답하세요', "confirm", CONFIRM_TIMEOUT_S,
                           timeoutSec=int(CONFIRM_TIMEOUT_S))
             elif op in ("maximize", "minimize"):
                 show_window(hwnd, op)
                 self._say(say or ("창 최대화" if op == "maximize" else "창 최소화"))
+                return completed
             elif op in ("scroll_down", "scroll_up"):
                 focus_window(hwnd)  # 키 스크롤은 포커스가 필요 — 말하던 그 창으로 되돌린 뒤
                 press_keys("pagedown" if op == "scroll_down" else "pageup")
+                return completed
         elif action == "delete_file":
             # 대상 결정: ① 말했거나 응시한 파일명(query) → 폴더에서 해석,
             # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
@@ -927,11 +971,14 @@ class Brain(threading.Thread):
             else:
                 names = ", ".join(Path(p).name for p in sel)[:60]
                 q = f"{len(sel)}개 파일 삭제(휴지통): {names} — 삭제할까요?"
-                self._pending = (q, "delete_file", time.monotonic() + CONFIRM_TIMEOUT_S, sel)
+                asked_at = time.monotonic()
+                self._pending = (q, "delete_file", asked_at + CONFIRM_TIMEOUT_S,
+                                 sel, completed, asked_at)
                 self._say(q + ' — "응, 삭제" / "취소"', "confirm", CONFIRM_TIMEOUT_S,
                           timeoutSec=int(CONFIRM_TIMEOUT_S))
         elif action == "media":
-            self._media(result.get("media_key"), say, hwnd)
+            if self._media(result.get("media_key"), say, hwnd):
+                return completed
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
             SAVE_DIR.mkdir(parents=True, exist_ok=True)
             ts = time.strftime("%H%M%S")
@@ -942,11 +989,11 @@ class Brain(threading.Thread):
                 # 이미지 크롭은 화면 캡처 MCP 도구가 없어 항상 로컬로 남는다.
                 if self._try_be("files.save", {"name": name, "content": text},
                                 f"글로 저장했습니다 → {name}"):
-                    return
+                    return completed
                 path = SAVE_DIR / name
                 path.write_text(text + "\n", encoding="utf-8")
                 self._say(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
-                return
+                return completed
             box = bbox_to_box(full_img.size, result.get("bbox")) if full_img is not None else None
             if box:
                 img = full_img.crop(box)
@@ -964,10 +1011,13 @@ class Brain(threading.Thread):
             path = SAVE_DIR / f"저장_{ts}.png"
             img.save(path)
             self._say(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
+            return completed
         elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
             self._say(say or "명령을 이해하지 못했습니다.", "unknown_command", transcript=result.get("transcript"))
         elif say:  # answer — 짧으면 토스트, 길면 플로팅 패널
             self._say(say)
+            if action == "answer":
+                return completed
         else:
             self.overlay.toast("…")
 
@@ -976,18 +1026,21 @@ class Brain(threading.Thread):
         # forward/back(유튜브 10초 이동)은 카탈로그에 없어 아래 로컬 경로로 남는다.
         tool = MEDIA_MCP.get(key)
         if tool and self._try_be(tool[0], tool[1], say):
-            return
+            return True
         # 판별 기준도 '발화 순간의 창' — 말한 뒤 알트탭해도 의도한 창이 제어된다
         if hwnd and is_youtube(window_title_of(hwnd)):
             spec = YOUTUBE_KEYS.get(key)
             if spec:
                 focus_window(hwnd)  # 유튜브 단축키는 그 탭에 포커스가 있어야 먹는다
                 press_keys(spec)
+            else:
+                return False
         else:
             spec = GLOBAL_MEDIA_KEYS.get(key)
             if spec is None:
                 self._say("10초 이동은 유튜브 창에서만 됩니다")
-                return
+                return False
             press_keys(spec)  # OS 전역 미디어 키 — 포커스 무관
         if say:
             self._say(say)
+        return True
