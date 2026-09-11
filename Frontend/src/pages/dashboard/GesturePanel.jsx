@@ -589,7 +589,6 @@ export function GestureRegistration({ onClose, onSaved }) {
 
   if (!registration) return null;
   return <div className={styles.registration}>
-    <header><button onClick={close}>‹</button><h2>{registration.stage === 'complete' ? '제스처 등록' : registration.stage === 'review' ? '촬영 결과' : '제스처 촬영'}</h2></header>
     <div className={styles.registrationBody}>
       {/* TODO(BE): 카메라 사용 불가 시 시스템 카메라 설정을 여는 API가 명세에 없음 */}
       {registration.stage === 'intro' && <><div className={styles.cameraBox}>{registration.previewFrame ? <img src={registration.previewFrame} alt="AI 카메라 미리보기" /> : <span>{registration.previewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}<b className={styles.cameraState}>{registration.previewReady ? '● 카메라 준비 완료' : '카메라 연결 중'}</b></div><p>카메라 화면을 확인한 뒤 촬영 버튼을 눌러주세요.</p><button className={styles.primary} disabled={!registration.previewReady} onClick={() => setCaptureTypeOpen(true)}>촬영하기</button><small>촬영 방식을 선택한 뒤 3회 촬영합니다.</small>{captureTypeOpen && <CaptureTypeDialog onClose={() => setCaptureTypeOpen(false)} onSelect={start} />}</>}
