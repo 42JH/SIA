@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 const emptyRegistration = {
   stage: 'intro',
+  captureType: null,
+  previewFrame: null,
+  previewReady: false,
   tempId: null,
   phase: null,
   take: 0,
