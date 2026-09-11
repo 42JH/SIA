@@ -34,10 +34,17 @@
 .detailBody { padding: 34px 64px 10px; text-align: center; }
 .detailBody h3 { margin: 20px 0 var(--spacing-sm); }
 .detailBody p { color: var(--color-muted); }
+.gestureDescription { margin: 0 0 var(--spacing-sm); }
 .meta { font-size: var(--font-size-sm); }
 .detailToggle { position: relative; display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding: var(--spacing-md); border: 1px solid var(--color-border); border-radius: 6px; text-align: left; }
 .detailToggle .switch { position: relative; inset: auto; }
-.stepSummary { display: grid; gap: var(--spacing-sm); padding: var(--spacing-md) var(--spacing-lg); text-align: left; }
+.macroSummary { margin-top: 24px; text-align: left; }
+.macroSummary h4 { margin: 0 0 var(--spacing-xs); }
+.macroSummary > p { margin: 0; font-size: var(--font-size-sm); }
+.stepSummary { display: grid; gap: var(--spacing-md); margin: 0; padding: var(--spacing-md) 0 var(--spacing-md) 24px; text-align: left; }
+.stepSummary li { padding-left: var(--spacing-xs); }
+.stepSummary strong, .stepSummary span { display: block; }
+.stepSummary span { margin-top: 4px; color: var(--color-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .actions { display: flex; justify-content: center; gap: var(--spacing-sm); padding: 24px; }
 .actions button { min-width: 100px; }
 .actions .primary { background: var(--color-accent); color: var(--color-bg); }

@@ -34,8 +34,6 @@ export default function GazeMeasurement({ point, ready, connected, onCancel }) {
     if (!Number.isInteger(point.n) || point.n < 1 || point.n > 9) { fail('시선 측정 지점 번호가 올바르지 않습니다. 연결 상태를 확인해주세요.'); return; }
     const frame = requestAnimationFrame(() => {
       const rect = target.current.getBoundingClientRect();
-      // TODO(BE): 다중 모니터의 물리 좌표 원점·배율 제공 계약이 없어 주 모니터 전체화면만 지원
-      if (window.screenX !== 0 || window.screenY !== 0) { fail('주 모니터 전체화면에서 보정을 진행해주세요.'); return; }
       try {
         sendOnboarding('calib_point_shown', { n: point.n, x: Math.round((rect.x + rect.width / 2) * window.devicePixelRatio), y: Math.round((rect.y + rect.height / 2) * window.devicePixelRatio) });
         sentPoint.current = point.n;
