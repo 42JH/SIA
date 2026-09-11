@@ -60,11 +60,18 @@ class CallerHeaderFilterTest {
     }
 
     @Test
-    @DisplayName("/mcp 밖의 요청에는 필터가 손대지 않는다")
-    void nonMcpPathIsNotFiltered() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/status");
-        request.addHeader("X-Caller", "GESTURE");
+    @DisplayName("경로를 가리지 않는다 — 인코딩 표기(/%6dcp)에서도 X-Caller 가 살아 있다")
+    void pathIsNotJudged() throws Exception {
+        // 예전엔 getRequestURI().startsWith("/mcp") 로 범위를 좁혔는데, 그 값은 디코딩 전이라
+        // /%6dcp 로 오면 헤더가 조용히 무시돼 GESTURE 호출이 LLM 으로 기록됐다.
+        MockHttpServletRequest encoded = new MockHttpServletRequest("POST", "/%6dcp");
+        encoded.addHeader("X-Caller", "GESTURE");
+        assertThat(callerSeenInChain(encoded)).isEqualTo(Caller.GESTURE);
 
-        assertThat(callerSeenInChain(request)).isEqualTo(Caller.LLM);
+        // MCP 밖에서 설정돼도 무해하다 — 이 ThreadLocal 은 도구 실행부만 읽고 finally 가 지운다
+        MockHttpServletRequest other = new MockHttpServletRequest("GET", "/api/status");
+        other.addHeader("X-Caller", "GESTURE");
+        assertThat(callerSeenInChain(other)).isEqualTo(Caller.GESTURE);
+        assertThat(CallerContext.get()).isEqualTo(Caller.LLM);
     }
 }

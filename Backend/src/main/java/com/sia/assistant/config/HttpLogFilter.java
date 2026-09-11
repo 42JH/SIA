@@ -47,8 +47,8 @@ public class HttpLogFilter extends OncePerRequestFilter {
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return false;
         }
-        String uri = request.getRequestURI();
-        return uri.startsWith("/api") || uri.startsWith("/mcp");
+        String path = RequestPaths.of(request);
+        return path.startsWith("/api") || path.startsWith("/mcp");
     }
 
     static String describe(HttpServletRequest request, HttpServletResponse response, long ms) {
@@ -58,7 +58,7 @@ public class HttpLogFilter extends OncePerRequestFilter {
         if (query != null && !query.isEmpty()) {
             sb.append('?').append(query);
         }
-        if (request.getRequestURI().startsWith("/mcp")) {
+        if (RequestPaths.of(request).startsWith("/mcp")) {
             String caller = request.getHeader("X-Caller");
             sb.append(" caller=").append(caller == null ? "LLM" : caller);
         }
