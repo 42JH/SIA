@@ -2,15 +2,21 @@ package com.sia.assistant.logging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import tools.jackson.databind.ObjectMapper;
@@ -24,6 +30,9 @@ class UsageEventBatchWriterTest {
     private JdbcTemplate jdbc;
     private UsageEventBatchWriter writer;
 
+    private final Logger logger = (Logger) LoggerFactory.getLogger(UsageEventBatchWriter.class);
+    private final ListAppender<ILoggingEvent> captured = new ListAppender<>();
+
     @BeforeEach
     void setUp(@TempDir Path dir) {
         DriverManagerDataSource ds = new DriverManagerDataSource(
@@ -31,6 +40,13 @@ class UsageEventBatchWriterTest {
         Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
         jdbc = new JdbcTemplate(ds);
         writer = new UsageEventBatchWriter(jdbc, new ObjectMapper());
+        captured.start();
+        logger.addAppender(captured);
+    }
+
+    @AfterEach
+    void tearDown() {
+        logger.detachAppender(captured);
     }
 
     @Test
@@ -95,6 +111,55 @@ class UsageEventBatchWriterTest {
         UsageEventBatchWriter.Result again = writer.write(batch);
         assertThat(again.accepted()).isZero();
         assertThat(again.duplicates()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("대시보드가 모르는 kind 는 그대로 저장하되 경고를 남긴다")
+    void warnsOnUnknownKind() {
+        writer.write(List.of(event("e1", "GESTURE_TRIGGERED", Map.of())));
+
+        // 저장 규칙은 안 바뀐다 — 모르는 kind 도 그대로 받는다
+        assertThat(one("SELECT COUNT(*) FROM usage_event WHERE kind = 'GESTURE_TRIGGERED'"))
+                .isEqualTo(1);
+        assertThat(warnings())
+                .anyMatch(m -> m.contains("모르는 kind") && m.contains("GESTURE_TRIGGERED"));
+    }
+
+    @Test
+    @DisplayName("아는 kind 라도 대시보드가 읽는 컬럼이 전건 비면 경고한다")
+    void warnsWhenEveryEventLacksTheMetric() {
+        writer.write(List.of(
+                event("e1", "command", Map.of("action", "summarize")),
+                event("e2", "command", Map.of("action", "open_app"))));
+
+        assertThat(warnings()).anyMatch(m -> m.contains("kind=command")
+                && m.contains("latencyMs") && m.contains("complexity"));
+    }
+
+    @Test
+    @DisplayName("일부만 비는 건 경고하지 않는다 — 동적 제스처는 신뢰도가 없는 게 정상이다")
+    void staysQuietWhenSomeEventsCarryTheMetric() {
+        writer.write(List.of(
+                event("e1", "gesture", Map.of("accuracy", 0.88)), // 정적 — MediaPipe 점수 있음
+                event("e2", "gesture", Map.of())));               // 동적 — FSM 판정이라 없음
+
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 사유는 한 번만 남긴다 — 5초 배치가 계속 와도 로그가 묻히지 않게")
+    void warnsOncePerReason() {
+        writer.write(List.of(event("e1", "GESTURE_TRIGGERED", Map.of())));
+        writer.write(List.of(event("e2", "GESTURE_TRIGGERED", Map.of())));
+
+        assertThat(warnings()).hasSize(1);
+    }
+
+    private List<String> warnings() {
+        return captured.list.stream()
+                .filter(e -> e.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
     }
 
     private static Map<String, Object> event(String uid, String kind, Map<String, Object> extra) {
