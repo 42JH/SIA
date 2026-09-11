@@ -384,6 +384,34 @@ class CustomGestures:
         return best_name, best_d
 
 
+class MotionHandTracker:
+    """검출 순서가 아니라 손 정체성(handedness)으로 한 손을 계속 추적한다.
+
+    MediaPipe는 프레임마다 Left/Right 검출 순서가 바뀔 수 있어, 손 목록의
+    첫 번째를 그대로 스와이프에 먹이면 위치가 안 변해도 순서만 바뀐 것을
+    이동으로 오인할 수 있다. 이 클래스는 현재 추적 중인 라벨을 목록 순서와
+    무관하게 찾아 반환하고, 그 라벨을 잃거나(손 소실) 새 라벨로 바뀌면
+    ``changed=True``를 돌려줘 호출자가 스와이프 상태를 리셋하게 한다.
+    """
+
+    def __init__(self):
+        self._label = None
+
+    def update(self, hands):
+        hands = hands or []
+        if self._label is not None:
+            match = next((h for h in hands if h.get("handedness") == self._label), None)
+            if match is not None:
+                return match, False
+        if not hands:
+            changed = self._label is not None
+            self._label = None
+            return None, changed
+        chosen = hands[0]
+        self._label = chosen.get("handedness")
+        return chosen, True
+
+
 class SwipeDetector:
     """빠른 손 쓸기 감지 → Swipe_Left/Right/Up/Down | None.
 
@@ -424,6 +452,8 @@ class SwipeDetector:
         self._cooldown_until = 0.0
         self._direction_lock = None
         self._resume_after_cooldown = False
+        self._lock_still_since = None
+        self._last_point = None  # (t, x, y) 직전 프레임 — 클리어와 무관하게 유지
 
     def prime(self, anchor, t):
         """이미 손바닥 홀드로 확인된 위치에서 즉시 스와이프를 받을 준비를 한다."""
@@ -447,10 +477,14 @@ class SwipeDetector:
             self._cooldown_until = 0.0
             self._direction_lock = None
             self._resume_after_cooldown = False
+            self._lock_still_since = None
+            self._last_point = None
             return None
         if self._await_hand_loss:
             return None
         x, y = float(anchor[0]), float(anchor[1])
+        prev_point = self._last_point
+        self._last_point = (t, x, y)
         self._hist.append((t, x, y))
         while self._hist and t - self._hist[0][0] > self.max_t:
             self._hist.popleft()
@@ -462,20 +496,39 @@ class SwipeDetector:
             self._hist.clear()
             self._resume_after_cooldown = True
             return None
+        # 직전 프레임 대비 순간 이동량 — speed(약 0.08초 전 표본과 비교)와 달리
+        # 주기적인 작은 흔들림에 상쇄돼 0으로 보이는 일이 없어, "진짜로 멈췄는가"
+        # 판단에 더 안전하다.
+        step_speed = (math.hypot(x - prev_point[1], y - prev_point[2]) / max(t - prev_point[0], 1e-3)
+                      if prev_point is not None else speed)
         if self._resume_after_cooldown:
             self._resume_after_cooldown = False
-            self._armed = True
+            # 쿨다운이 끝난 시점에도 발동 때와 같은 방향으로 계속 빠르게
+            # 움직이는 중이면 하나의 연속 동작이 이어지는 것이다 — 무장하지
+            # 않고 멈춤(또는 방향 전환)을 기다린다. 이미 느려졌거나 반대로
+            # 되돌아가는 중이라면(복귀 동작) 바로 재무장해, 복귀 뒤 같은 방향
+            # 빠른 반복이나 반대 방향 재개를 즉시 받을 수 있게 한다.
+            expected_sign = 1 if self._direction_lock == "Swipe_Right" else -1
+            moving_same_way = prev_point is not None and (x - prev_point[1]) * expected_sign > 0
+            same_motion_continuing = moving_same_way and step_speed >= self.still_speed
             self._hist.clear()
             self._hist.append((t, x, y))
+            if not same_motion_continuing:
+                self._armed = True
             return None
         if self._direction_lock is not None:
-            if speed < self.still_speed:
-                if self._still_since is None:
-                    self._still_since = t
-                elif t - self._still_since >= self.rearm_hold_s:
+            # 방향 잠금 해제는 직전 한 프레임 사이의 실제 이동량으로만 판단한다.
+            # speed는 ~0.08초 전 표본과 비교하므로, 그 간격과 주기가 맞아
+            # 떨어지는 작은 좌우 흔들림은 변위가 우연히 상쇄돼 0으로 보일 수
+            # 있다 — 그러면 흔들림을 정지로 오인해 잠금을 풀고, 복귀 동작이
+            # 새 반대 방향 명령으로 잘못 발동한다.
+            if step_speed < self.still_speed * 0.5:
+                if self._lock_still_since is None:
+                    self._lock_still_since = t
+                elif t - self._lock_still_since >= self.rearm_hold_s:
                     self._direction_lock = None
             else:
-                self._still_since = None
+                self._lock_still_since = None
         # 수평 스와이프 후 시작 위치로 복귀하는 구간. 복귀 경로는 어떤 방향이든
         # 명령으로 해석하지 않는다. 시작 위치에 닿으면 즉시 같은 방향 반복을 허용한다.
         if self._return_home is not None:
@@ -1007,6 +1060,12 @@ class GestureEngine:
             )
         )
         self._last_ts = 0
+        self._closed = False
+
+    def close(self):
+        if not self._closed:
+            self.recognizer.close()
+            self._closed = True
 
     def hand(self, frame_bgr, ts_ms=None):
         hands = self.hands(frame_bgr, ts_ms)
@@ -1016,6 +1075,11 @@ class GestureEngine:
         """Return up to two detected hands from a single MediaPipe inference."""
         import cv2
 
+        if self._closed:
+            raise RuntimeError("GestureEngine이 이미 닫혔습니다")
+        if (frame_bgr is None or frame_bgr.ndim != 3 or frame_bgr.shape[2] != 3
+                or 0 in frame_bgr.shape or frame_bgr.dtype != np.uint8):
+            raise ValueError("잘못된 프레임입니다 (BGR uint8, HxWx3 배열이어야 합니다)")
         if ts_ms is None:
             ts_ms = int(time.monotonic() * 1000)
         ts_ms = max(ts_ms, self._last_ts + 1)

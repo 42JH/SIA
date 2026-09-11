@@ -15,6 +15,10 @@ import cv2
 import numpy as np
 
 from hands import CustomGestures, normalize_landmarks
+from custom_motion import (
+    CustomGestureStore, FRAMES, PREFIX_MIN_MOTION, distance, encode_sequence,
+    ordered_landmarks, read_templates, template_bytes as encode_template_bytes,
+)
 
 
 class GestureRegistrationRejected(ValueError):
@@ -57,11 +61,8 @@ class GestureTemplateCache:
 
     @staticmethod
     def _read_template(payload, fallback_name):
-        with np.load(io.BytesIO(payload), allow_pickle=False) as data:
-            x = np.asarray(data["X"], dtype=np.float32)
-            if x.ndim != 2 or x.shape[1] != 42 or len(x) == 0:
-                raise ValueError("제스처 템플릿은 (N, 42) 랜드마크여야 합니다")
-        return x, np.array([fallback_name] * len(x))
+        """레거시(X/names)와 NPZ v2(sequences 등)를 모두 이 이름으로 라벨링해 읽는다."""
+        return read_templates(payload, name=fallback_name)
 
     def sync(self, link, refs):
         """refs=[{id,name,sha256}]를 로컬 캐시와 비교해 달라진 파일만 받는다."""
@@ -91,21 +92,34 @@ class GestureTemplateCache:
         return changed
 
     def _rebuild(self, refs):
-        xs, names = [], []
+        parts = []
         for gid, ref in refs.items():
             path = self.cache_dir / f"g{gid}.npz"
             if not path.exists():
                 continue
             try:
-                x, n = self._read_template(path.read_bytes(), str(ref.get("name", gid)))
-                xs.append(x)
-                names.append(n)
+                parts.append(self._read_template(path.read_bytes(), str(ref.get("name", gid))))
             except Exception as exc:
                 print(f"[제스처] 템플릿 g{gid} 무시: {exc}")
-        if xs:
-            np.savez_compressed(self.combined_path, X=np.concatenate(xs), names=np.concatenate(names))
+        if parts:
+            combined = {key: np.concatenate([p[key] for p in parts]) for key in parts[0]}
+            self.combined_path.write_bytes(encode_template_bytes(combined))
         else:
             self.combined_path.unlink(missing_ok=True)
+
+
+def sync_gesture_store(link, cache, refs, start_recognition=True):
+    """BE 참조 목록에 캐시를 맞추고 최신 CustomGestureStore를 반환한다.
+
+    동기화·저장소 구성이 끝나기 전까지 link.gesture_ready를 내려 두어, 실행
+    파이프라인이 절반만 갱신된 저장소로 인식을 시작하지 않게 막는다.
+    """
+    link.gesture_ready = False
+    cache.sync(link, refs)
+    store = CustomGestureStore(cache.combined_path)
+    if start_recognition:
+        link.gesture_ready = True
+    return store
 
 
 class GestureRegistration:
@@ -122,6 +136,7 @@ class GestureRegistration:
     MAX_SIZE_CV = 0.20
     MAX_ANGLE_STD_DEG = 20.0
     MAX_SPREAD = 0.25
+    COLLISION_DIST = 0.45
 
     def __init__(self, link, template_cache, custom_store):
         self.link = link
@@ -146,6 +161,7 @@ class GestureRegistration:
         self.angles = []
         self.builtin_hits = {}
         self.hand_counts = []
+        self.take_frames = {}
 
     @property
     def active(self):
@@ -220,9 +236,10 @@ class GestureRegistration:
             return []
         return [hands] if isinstance(hands, dict) else list(hands)
 
-    def _collect(self, hands):
-        """현재 프레임의 손 관측을 기록한다. 정적 템플릿은 첫 손을 사용한다."""
+    def _collect(self, hands, now):
+        """현재 프레임의 손 관측을 기록한다. 품질검사는 첫 손을 사용한다."""
         self.hand_counts.append(len(hands))
+        self.take_frames.setdefault(self.take, []).append((now, hands))
         if not hands:
             return
         lm = hands[0]["landmarks"]
@@ -251,7 +268,7 @@ class GestureRegistration:
         if self.phase == "RECORDING":
             # 정적은 카운트다운 직후 한 장만 캡처한다. 동적만 시간 구간을 수집한다.
             self._emit_frame(frame, now, force=self.motion == self.STATIC)
-            self._collect(hands)
+            self._collect(hands, now)
             if self.motion == self.STATIC or now - self.phase_at >= self.take_s:
                 if self.take < self.takes:
                     self.take += 1
@@ -264,6 +281,11 @@ class GestureRegistration:
                     self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                                        "phase": "DONE"})
         return {"phase": self.phase, "take": self.take, "remaining": 0.0}
+
+    def finish_for(self, temp_id):
+        """temp_id가 현재 진행 중인 등록과 같을 때만 종료한다 (경합 방지)."""
+        if temp_id and temp_id == self.temp_id:
+            self.finish()
 
     def finish(self):
         if not self.active:
@@ -279,11 +301,12 @@ class GestureRegistration:
             self.reset()
             return
         try:
-            self._validate_and_upload()
-            hands = 2 if self.hand_counts and sum(n >= 2 for n in self.hand_counts) >= len(self.hand_counts) * 0.7 else 1
-            self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hands})
+            hand_count = (2 if self.hand_counts and sum(n >= 2 for n in self.hand_counts)
+                          >= len(self.hand_counts) * 0.7 else 1)
+            self._validate_and_upload(hand_count)
+            self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hand_count})
             print("[제스처 등록] 품질 검사 통과. 기능 지정 대기")
-        except ValueError as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             payload = {"tempId": temp_id, "reason": str(exc)}
             if isinstance(exc, GestureRegistrationRejected) and exc.similar_to:
                 payload["similarTo"] = exc.similar_to
@@ -293,9 +316,9 @@ class GestureRegistration:
         finally:
             self.reset()
 
-    def _validate_and_upload(self):
-        if len(self.samples) < 30:
-            raise ValueError("손 랜드마크가 충분히 수집되지 않았습니다")
+    def _validate_and_upload(self, hand_count):
+        if not self.samples:
+            raise ValueError("손이 감지되지 않았습니다. 카메라에 손을 보여주세요")
         sizes = np.asarray(self.sizes)
         angles = np.asarray(self.angles)
         if sizes.min() < self.MIN_PALM_SIZE:
@@ -306,6 +329,16 @@ class GestureRegistration:
         delta = np.arctan2(np.sin(angles - mean), np.cos(angles - mean))
         if np.degrees(delta.std()) > self.MAX_ANGLE_STD_DEG:
             raise ValueError("등록 중 손 방향 변화가 큽니다")
+        # 정적 한 손만 기존 42차원 kNN 경로를 쓴다. 양손이거나 동적이면 NPZ v2
+        # 시퀀스 경로로 간다 — 두 경로는 저장 형식과 충돌검사 대상이 다르다.
+        if hand_count == 1 and self.motion == self.STATIC:
+            self._upload_static()
+        else:
+            self._upload_motion(hand_count)
+
+    def _upload_static(self):
+        if len(self.samples) < 30:
+            raise ValueError("손 랜드마크가 충분히 수집되지 않았습니다")
         feats = np.asarray(self.samples, dtype=np.float32)
         spread = float(np.linalg.norm(feats - feats.mean(axis=0), axis=1).mean())
         if spread > self.MAX_SPREAD:
@@ -318,7 +351,7 @@ class GestureRegistration:
                     similarity=round(count / len(feats), 4),
                 )
         near, dist = self.custom_store.nearest_class(feats)
-        if near and dist < 0.45:
+        if near and dist < self.COLLISION_DIST:
             # 랜드마크 거리는 확률이 아니므로, 화면 표시용으로 단조 감소 점수로
             # 변환한다. 0은 동일, 거리가 멀수록 0에 가까워진다.
             similarity = round(float(np.exp(-dist)), 4)
@@ -329,3 +362,37 @@ class GestureRegistration:
             )
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
+
+    def _upload_motion(self, hand_count):
+        """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다."""
+        sequences = []
+        for take in range(1, self.takes + 1):
+            frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
+            frames = [(t, pts) for t, pts in frames if pts is not None]
+            if len(frames) < 2:
+                raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+            seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
+            if self.motion == self.DYNAMIC:
+                movement = distance(seq, np.repeat(seq[:1], FRAMES, axis=0), hand_count)
+                if movement < PREFIX_MIN_MOTION:
+                    raise ValueError(f"{take}회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요")
+            sequences.append(seq)
+        dist, near = min(
+            (self.custom_store.nearest_sequence(seq, self.motion, hand_count) for seq in sequences),
+            key=lambda item: item[0],
+        )
+        if near and dist < self.COLLISION_DIST:
+            similarity = round(float(np.exp(-dist)), 4)
+            raise GestureRegistrationRejected(
+                f"기존 제스처 '{near}'와 너무 유사합니다",
+                similar_to=near,
+                similarity=similarity,
+            )
+        data = dict(
+            X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
+            sequences=np.stack(sequences), sequence_names=np.array(["__pending__"] * len(sequences)),
+            motions=np.array([self.motion] * len(sequences)),
+            hand_counts=np.array([hand_count] * len(sequences), dtype=np.int32),
+            durations=np.array([self.take_s] * len(sequences), dtype=np.float32),
+        )
+        self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))

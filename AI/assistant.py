@@ -596,9 +596,12 @@ def main():
                     )
                     if link and link.gesture_ready and be_target:
                         be_name, be_context = be_target
-                        print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
-                        link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                          "context": be_context})
+                        if args.no_actions:
+                            overlay.toast(f"[시늉만] 제스처→BE: {name}")
+                        else:
+                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
+                            link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
+                                                              "context": be_context})
                         hud_feedback = name
                         hud_feedback_until = now + 0.9
                     elif entry and not args.be_gesture_only:
@@ -647,9 +650,12 @@ def main():
                 )
                 if link and link.gesture_ready and be_target:
                     be_name, be_context = be_target
-                    print(f"[GESTURE→BE] detected={dynamic_event} | name={be_name} | context={be_context or 'default'}")
-                    link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                      "context": be_context})
+                    if args.no_actions:
+                        overlay.toast(f"[시늉만] 제스처→BE: {dynamic_event}")
+                    else:
+                        print(f"[GESTURE→BE] detected={dynamic_event} | name={be_name} | context={be_context or 'default'}")
+                        link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
+                                                          "context": be_context})
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
                     usage_events.append({"eventUid": str(uuid.uuid4()), "kind": "GESTURE_TRIGGERED",
