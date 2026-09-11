@@ -211,7 +211,7 @@ class GazeWorker(threading.Thread):
             frame = cv2.flip(f, 1)
             feats = self.face.features(frame)
             now = time.monotonic()
-            if feats is None:
+            if feats is None or self.calib is None:  # 보정 전(핫스왑 대기)엔 예측만 건너뛴다
                 self.last_px = None
                 continue
             px = self.calib.predict(feats)

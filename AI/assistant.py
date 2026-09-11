@@ -211,7 +211,7 @@ def main():
         print("특징 차원 변경(딥 모델 on/off) → 시선 없이 진행 (calibrate.py 재실행 권장)")
         calib = None
     if calib is None:
-        print("시선 비활성 - '이거' 같은 지시어 해석이 약해집니다. 권장: python calibrate.py")
+        print("시선 비활성 - '이거' 같은 지시어 해석이 약해집니다. 앱에서 시선 보정을 마치면 재시작 없이 켜집니다.")
 
     from overlay import Overlay
 
@@ -337,10 +337,12 @@ def main():
     camera = Camera(cap)
     camera.start()
     buffer = GazeBuffer()
-    worker = None
-    if calib is not None:
-        worker = GazeWorker(face, calib, buffer, camera)
-        worker.start()
+    # calib 이 없어도 스레드는 띄운다 — 보정 전엔 predict 만 건너뛰고, 활성 보정이 오면(calib_changed)
+    # CalibSession.on_reload 가 worker.calib 을 갈아끼워 재시작 없이 시선이 켜진다(-245).
+    worker = GazeWorker(face, calib, buffer, camera)
+    worker.start()
+    if link and link.calib:
+        link.calib.on_reload = lambda c: setattr(worker, "calib", c)
 
     pending_capture = None  # 발화 시작 순간의 (full, crop) — 종료 시 오디오와 페어링
     # DOM에서 플레이어 볼륨을 읽지는 못하므로, 이 값은 AI가 보낸 볼륨 키 입력을

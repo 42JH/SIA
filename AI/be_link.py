@@ -187,6 +187,9 @@ class AgentLink:
                 blobs = d.get("blobs")
                 if isinstance(blobs, dict) and "voice" in blobs:
                     self.voice_sync.on_changed(blobs["voice"])
+        if self.calib is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
+            blobs = d.get("blobs")  # 시작·재접속·설정변경 시 활성 보정 참조를 로컬과 맞춘다(-161)
+            self.calib.on_blob_ref(blobs.get("calib") if isinstance(blobs, dict) else None)
         if t == "session_state":
             with self._session_condition:
                 if d.get("state") == "ACTIVE" and d.get("deadlineMs"):

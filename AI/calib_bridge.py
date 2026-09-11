@@ -17,8 +17,11 @@ calib_result를 보낸다. calibrate.py의 수집·학습을 이벤트 구동으
 
 미연결·미확정:
 - gaze_cursor(실시간 커서)·samples[](원시 구름)는 계약에 없어 미발신(필요 시 BE에 추가 요청).
-- 활성 npz 리로드 시 런타임 GazeWorker 핫스왑은 상위(assistant)에서 (여기선 파일만 교체).
+- 활성 npz 리로드(calib_changed)는 검증 후 파일 교체 + on_reload 콜백으로 GazeWorker 핫스왑(-245). assistant 가 콜백을 꽂는다. 시작·재접속 시엔 hello_ack 의 blobs.calib sha 비교로 같은 경로를 탄다(-161).
 """
+import hashlib
+import io
+import os
 import random
 import time
 import urllib.request
@@ -51,7 +54,7 @@ def grade_of(avg_error_px):
 
 
 class CalibSession:
-    def __init__(self, screen_wh, face_engine, link, calib_path):
+    def __init__(self, screen_wh, face_engine, link, calib_path, on_reload=None):
         self.sw, self.sh = int(screen_wh[0]), int(screen_wh[1])
         self.face = face_engine          # make_engine(...) — features(frame)→(12,) or None
         self.link = link                 # AgentLink (WS 발신·rt) 또는 스텁
@@ -65,6 +68,7 @@ class CalibSession:
         self._order = []                 # 이번 세션의 점 방문 순서(1~9 랜덤 순열)
         self._done = 0                   # 지금까지 마친 점 수 — 순서와 무관하게 9면 마감
         self._precheck = None            # (face, distance, lighting) 마지막 전송 상태 — 변할 때만 재전송
+        self.on_reload = on_reload       # 활성 보정 교체 시 호출: on_reload(Calibrator) — 런타임 핫스왑(-245)
 
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출) ──
     def _begin(self, tempId):
@@ -105,16 +109,65 @@ class CalibSession:
         print(f"[calib] 프로필 확정 id={prof_id} active={is_active}")
 
     def on_changed(self, data):
-        """활성 보정이 바뀜 → 활성 npz를 내려받아 파일 교체(런타임 핫스왑은 상위 담당)."""
+        """활성 보정이 바뀜 → 활성 npz를 내려받아 검증한 뒤 파일 교체 + 런타임 핫스왑(on_reload).
+
+        검증(해상도·특징 차원)은 assistant 부팅 때와 같은 기준 — 통과 못 하면 파일도 안 덮고
+        기존 보정을 그대로 쓴다(호환 안 되는 프로필이 멀쩡한 calib.npz 를 망치지 않게)."""
         try:
-            url = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/calibs/active/npz"
-            with urllib.request.urlopen(url, timeout=15) as r:
-                data_bytes = r.read()
+            raw = self._fetch_active()
+            calib, why = self._load_validated(raw)
+            if calib is None:
+                print(f"[calib] 활성 보정 id={data.get('id')} 무시 — {why}")
+                return
             with open(self.calib_path, "wb") as f:
-                f.write(data_bytes)
-            print(f"[calib] 활성 보정 리로드 id={data.get('id')} → {self.calib_path}")
+                f.write(raw)
+            if self.on_reload:
+                self.on_reload(calib)  # GazeWorker.calib 교체 — 재시작 없이 다음 프레임부터 새 보정(-245)
+            print(f"[calib] 활성 보정 리로드 id={data.get('id')} → {self.calib_path}"
+                  + (" (런타임 핫스왑)" if self.on_reload else ""))
         except Exception as e:
             print(f"[calib] 활성 npz 리로드 실패: {e}")
+
+    def _fetch_active(self):
+        url = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/calibs/active/npz"
+        req = urllib.request.Request(url)
+        req.add_header("X-Screen", f"{self.sw}x{self.sh}")  # BE 가 학습 해상도와 대조해 불일치면 409 — 내려받기 전 1차 차단
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.read()
+
+    def on_blob_ref(self, ref):
+        """hello_ack·recognition_start·settings_changed 의 blobs.calib {id, sha256, screenW, screenH}|None.
+
+        시작·재접속 시 BE 활성 보정과 로컬 calib.npz 를 sha256 으로 맞춘다(-161). 다르면 on_changed 와
+        같은 경로(내려받기→검증→파일 교체→핫스왑). BE 에 활성 보정이 없으면 로컬을 캐시로 유지한다
+        (-161 DoD "실패 시 로컬 캐시 부팅") — 지우지 않는다. assistant 는 ClickRecal 을 안 써 로컬
+        calib.npz 는 _finalize/on_changed 로만 바뀌므로 sha 비교가 안전하다."""
+        if not isinstance(ref, dict) or not ref.get("sha256"):
+            if os.path.exists(self.calib_path):
+                print("[calib] BE 활성 보정 없음 — 로컬 calib.npz 유지(캐시)")
+            return
+        sw, sh = ref.get("screenW"), ref.get("screenH")
+        if sw is not None and sh is not None and (int(sw), int(sh)) != (self.sw, self.sh):
+            print(f"[calib] BE 활성 보정 id={ref.get('id')} 무시 — 해상도 불일치 {(int(sw), int(sh))} ≠ {(self.sw, self.sh)}")
+            return
+        want = str(ref["sha256"]).lower()
+        have = None
+        if os.path.exists(self.calib_path):
+            with open(self.calib_path, "rb") as f:
+                have = hashlib.sha256(f.read()).hexdigest()
+        if have == want:
+            return  # 이미 같은 보정 — 부팅 때 로드한 그대로
+        self.on_changed({"id": ref.get("id")})
+
+    def _load_validated(self, raw):
+        """npz 바이트 → Calibrator. 화면 해상도·특징 차원이 지금 엔진과 다르면 (None, 사유)."""
+        c = Calibrator.load(io.BytesIO(raw))
+        if tuple(int(v) for v in c.screen) != (self.sw, self.sh):
+            return None, f"해상도 불일치 {tuple(int(v) for v in c.screen)} ≠ {(self.sw, self.sh)}"
+        d = self.face.dim
+        if c.W.shape[0] != 1 + d + d * (d + 1) // 2:
+            return None, "특징 차원 불일치(딥 모델 on/off 가 보정 때와 다름)"
+        return c, ""
 
     def on_cancel(self, tempId):
         self.active = False
@@ -273,8 +326,31 @@ def _selftest():
     assert d["grade"] in ("excellent", "good", "poor")
     assert len(d["points"]) == 9 and all(set(p) == {"n", "dx", "dy"} for p in d["points"])
     assert d["tempId"] == "t1" and isinstance(d["pass"], bool)
+    # 활성 보정 핫스왑(-245): 내려받은 npz 를 검증해 통과하면 on_reload 로 런타임 교체, 아니면 파일도 안 덮는다.
+    good = open("_selftest_calib.npz", "rb").read()  # 위 _finalize 가 저장한 것 — (sw,sh), dim 2
+    swapped = []
+    cs.on_reload = swapped.append
+    cs._fetch_active = lambda: good
+    cs.on_changed({"id": 1})
+    assert len(swapped) == 1 and tuple(swapped[0].screen) == (sw, sh), "호환 npz 는 핫스왑돼야"
+    o = Calibrator.load("_selftest_calib.npz"); o.screen = (1280, 720); o.save("_selftest_other.npz")
+    cs._fetch_active = lambda: open("_selftest_other.npz", "rb").read()
+    cs.on_changed({"id": 2})
+    assert len(swapped) == 1, "해상도 다른 npz 는 스왑되면 안 됨"
+    assert open("_selftest_calib.npz", "rb").read() == good, "거부된 npz 가 기존 calib.npz 를 덮으면 안 됨"
+    # 시작/재접속 동기화(-161): blobs.calib sha 가 로컬과 같으면 안 받고, 다르면 받아 핫스왑, 해상도 다르면 무시, None 이면 로컬 유지.
+    fetches = []
+    cs._fetch_active = lambda: (fetches.append(1), good)[1]
+    sha_good = hashlib.sha256(good).hexdigest()
+    cs.on_blob_ref({"id": 1, "sha256": sha_good, "screenW": sw, "screenH": sh})
+    assert not fetches and len(swapped) == 1, "로컬과 같은 sha 면 내려받지 않아야"
+    cs.on_blob_ref({"id": 2, "sha256": "0" * 64, "screenW": sw, "screenH": sh})
+    assert len(fetches) == 1 and len(swapped) == 2, "sha 다르면 내려받아 핫스왑해야"
+    cs.on_blob_ref({"id": 3, "sha256": "1" * 64, "screenW": 1280, "screenH": 720})
+    cs.on_blob_ref(None)
+    assert len(fetches) == 1 and len(swapped) == 2, "해상도 불일치·활성 없음은 내려받기·스왑 없이 로컬 유지"
     import os
-    for f in ("_selftest_calib.npz",):
+    for f in ("_selftest_calib.npz", "_selftest_other.npz"):
         if os.path.exists(f): os.remove(f)
     # 랜덤성: on_start 를 여러 번 하면 순서가 매번 같지 않다(순차 회귀 방지 확인)
     orders = set()
