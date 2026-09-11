@@ -607,7 +607,7 @@ def main():
                             print(f"[GESTURE→LOCAL] no BE mapping: {name} ({context})")
                         fire_entry(entry, name, "제스처")
                     if link:
-                        link.queue_usage("GESTURE_TRIGGERED",
+                        link.queue_usage("gesture",
                                          payload={"name": name, "context": context, "source": "static"},
                                          occurredAt=int(time.time() * 1000))
             if gesture_active and not registration_active:
@@ -656,7 +656,7 @@ def main():
                                                           "context": be_context})
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
-                    link.queue_usage("GESTURE_TRIGGERED",
+                    link.queue_usage("gesture",
                                      payload={"name": dynamic_event, "context": context, "source": "dynamic"},
                                      occurredAt=int(time.time() * 1000))
                 elif entry and not args.be_gesture_only:
@@ -674,7 +674,7 @@ def main():
                           f"키={entry.get('key', '-')} | 표시={entry.get('label', dynamic_event)}")
                     fire_entry(entry, dynamic_event, "제스처", wheel_steps=abs(scroll_steps) or 1)
                     if link:
-                        link.queue_usage("GESTURE_TRIGGERED",
+                        link.queue_usage("gesture",
                                          payload={"name": dynamic_event, "context": context, "source": "dynamic"},
                                          occurredAt=int(time.time() * 1000))
 
