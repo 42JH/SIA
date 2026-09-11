@@ -1,0 +1,24 @@
+.page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--spacing-lg); background: var(--setup-background); }
+.card { width: min(100%, var(--setup-voice-card-width)); min-height: var(--setup-voice-card-height); display: flex; flex-direction: column; gap: var(--spacing-md); padding: var(--setup-card-padding); border: var(--setup-border); background: var(--color-bg); }
+.card h1 { margin: 0; font-size: var(--setup-title-size); }
+.card h2 { margin: var(--spacing-md) 0; font-size: var(--setup-heading-size); }
+.card p { color: var(--setup-muted); line-height: 1.7; }
+.card button { min-width: var(--gaze-control-width); min-height: var(--setup-control-height); padding: var(--spacing-sm) var(--spacing-lg); border: var(--setup-border); border-radius: var(--setup-radius); background: var(--color-bg); color: var(--color-text); font: inherit; cursor: pointer; }
+.card button:disabled { cursor: not-allowed; opacity: .45; }
+.card .primary { background: var(--color-accent); color: var(--color-bg); }
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--spacing-sm); text-align: center; }
+.icon { display: grid; width: var(--setup-icon-size); height: var(--setup-icon-size); margin: var(--spacing-lg); place-items: center; border: var(--setup-border); border-radius: 50%; font-size: var(--setup-icon-font); }
+.footer { display: flex; justify-content: flex-end; gap: var(--spacing-sm); margin-top: auto; padding-top: var(--spacing-lg); }
+.actions { display: flex; justify-content: center; gap: var(--spacing-sm); flex-wrap: wrap; }
+.preview { width: min(100%, var(--setup-card-width)); padding: var(--spacing-lg); border: var(--setup-border); background: var(--setup-panel); line-height: 1.8; text-align: left; }
+.plot { width: 100%; border: var(--setup-border); background: var(--setup-panel); }
+.plot svg { width: 100%; height: var(--setup-plot-height); }
+.plot circle { fill: none; stroke: var(--setup-muted); stroke-width: 1; }
+.plot .target { fill: var(--color-text); }
+.error { color: var(--color-danger); }
+.connection { color: var(--setup-muted); font-size: var(--font-size-sm); }
+.backdrop { position: fixed; z-index: var(--setup-modal-layer); inset: 0; display: grid; place-items: center; padding: var(--spacing-lg); background: var(--overlay-background); }
+.modal { width: min(var(--setup-dialog-width), 100%); padding: var(--spacing-lg); border: var(--setup-border); border-radius: var(--setup-radius); background: var(--color-bg); text-align: center; }
+.modal button { min-width: var(--gaze-control-width); min-height: var(--setup-control-height); padding: var(--spacing-sm) var(--spacing-lg); border: var(--setup-border); border-radius: var(--setup-radius); background: var(--color-bg); color: var(--color-text); font: inherit; cursor: pointer; }
+.modal .primary { background: var(--color-accent); color: var(--color-bg); }
+.modalIcon { display: grid; width: var(--setup-control-height); height: var(--setup-control-height); margin: 0 auto; place-items: center; border: var(--setup-border); border-radius: 50%; }

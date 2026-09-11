@@ -7,7 +7,7 @@ import BootToast from "./components/popup/BootToast";
 
 export default function App() {
   const pathname = useSyncExternalStore(router.subscribe, () => router.state.location.pathname);
-  const isOnboarding = pathname === '/' || pathname === '/onboarding';
+  const isOnboarding = pathname === '/' || pathname === '/onboarding' || pathname === '/dashboard/gaze/setup';
   // WS 연결은 앱 전체에서 한 번만 시작한다 (agents.md 1장 - 중복 연결 생성 금지)
   useEffect(() => {
     startFeSocket();

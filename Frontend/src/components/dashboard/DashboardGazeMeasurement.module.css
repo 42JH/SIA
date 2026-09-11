@@ -1,0 +1,10 @@
+.measure { position: fixed; inset: 0; background: var(--setup-background); z-index: var(--setup-layer); }
+.grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+.cell { display: flex; align-items: center; justify-content: center; }
+.guide { position: absolute; top: var(--spacing-md); width: 100%; text-align: center; z-index: 1; }
+.mole { position: relative; border: var(--setup-border); background: var(--color-bg); width: var(--setup-mole); height: var(--setup-mole); border-radius: 50%; display: grid; place-items: center; }
+.nose { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.mole small { position: absolute; top: 100%; padding-top: var(--spacing-xs); }
+.hole { color: var(--setup-muted); border-bottom: var(--setup-border); padding: var(--spacing-sm); }
+.controls { position: absolute; bottom: var(--spacing-md); right: var(--spacing-md); z-index: 1; text-align: right; }
+.controls button { padding: var(--spacing-sm) var(--spacing-md); background: var(--color-bg); border: var(--setup-border); }
