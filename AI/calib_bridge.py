@@ -35,6 +35,11 @@ MIN_TOTAL_SAMPLES = 30  # calibrate.py와 동일 하한
 # 컷은 AI 소유 — spec 변경 없이 여기만 고치면 된다.
 GRADE_EXCELLENT_PX = 160
 GRADE_GOOD_PX = 250
+# 위치 프리체크 임계 — 하드웨어(카메라 화각·노출)마다 달라 통합 재실측으로 튜닝(grade 컷과 동일 성격).
+DIST_FAR_NORM = 0.07     # 홍채간 정규화 거리 이 미만 = 얼굴이 작음 = 너무 멂
+DIST_NEAR_NORM = 0.13    # 이 초과 = 얼굴이 큼 = 너무 가까움
+LIGHT_DARK = 60.0        # 프레임 밝기(회색조 평균 0~255) 이 미만 = 너무 어두움
+LIGHT_BRIGHT = 200.0     # 이 초과 = 너무 밝음(과노출)
 
 
 def grade_of(avg_error_px):
@@ -59,7 +64,7 @@ class CalibSession:
         self._pts = {}                   # n -> {"x","y","feats":[...]}
         self._order = []                 # 이번 세션의 점 방문 순서(1~9 랜덤 순열)
         self._done = 0                   # 지금까지 마친 점 수 — 순서와 무관하게 9면 마감
-        self._face_ok = None             # precheck 상태 변화 감지용
+        self._precheck = None            # (face, distance, lighting) 마지막 전송 상태 — 변할 때만 재전송
 
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출) ──
     def _begin(self, tempId):
@@ -73,9 +78,9 @@ class CalibSession:
         self._n = 0
         self._order = random.sample(range(1, TOTAL + 1), TOTAL)
         self._done = 0
-        # 새 보정마다 precheck 를 재전송해야 한다 — None 으로 리셋 안 하면 이전 보정에서 얼굴이
-        # 이미 True 라 "상태 변화"가 없어 calib_precheck 가 안 나가고, FE 위치확인이 "확인 중"에서 멈춘다.
-        self._face_ok = None
+        # 새 보정마다 precheck 를 재전송해야 한다 — None 으로 리셋 안 하면 이전 보정의 마지막 상태와
+        # 같아 "변화 없음"으로 calib_precheck 가 안 나가고, FE 위치확인이 "확인 중"에서 멈춘다.
+        self._precheck = None
         self._request_point(self._order[0])
 
     def on_start(self, tempId):
@@ -121,7 +126,7 @@ class CalibSession:
         if not self.active:
             return
         f = self.face.features(frame_bgr)  # (12,) or None
-        self._maybe_precheck(f is not None)
+        self._maybe_precheck(frame_bgr, f is not None)
         if self._n == 0:                   # 점 사이 대기(collect_start 기다림)
             return
         now = time.monotonic()
@@ -146,13 +151,38 @@ class CalibSession:
         else:
             self._finalize()
 
-    def _maybe_precheck(self, face_ok):
-        if face_ok == self._face_ok:
+    def _maybe_precheck(self, frame_bgr, face_ok):
+        distance = self._distance_status() if face_ok else "-"  # 얼굴 없으면 거리 산출 불가
+        lighting = self._lighting_status(frame_bgr)
+        state = (face_ok, distance, lighting)
+        if state == self._precheck:
             return
-        self._face_ok = face_ok
-        # distance·lighting 은 스텁 — 얼굴 유무만 실계산(추후 눈 거리/휘도로 확장)
+        self._precheck = state
         self.link._send({"type": "calib_precheck", "data": {
-            "face": bool(face_ok), "distance": "ok", "lighting": "ok"}})
+            "face": bool(face_ok), "distance": distance, "lighting": lighting}})
+
+    def _distance_status(self):
+        """홍채간 정규화 거리로 카메라 거리 판정. 얼굴 클수록(가까울수록) 값이 크다."""
+        ipd = getattr(self.face, "last_ipd_norm", None)
+        if not ipd:
+            return "-"
+        if ipd < DIST_FAR_NORM:
+            return "너무 멀어요"
+        if ipd > DIST_NEAR_NORM:
+            return "너무 가까워요"
+        return "ok"
+
+    def _lighting_status(self, frame_bgr):
+        """프레임 회색조 평균 밝기로 조명 판정."""
+        if getattr(frame_bgr, "ndim", 0) < 3:  # 셀프테스트의 특징벡터 등 비-이미지 방어
+            return "-"
+        import cv2
+        v = float(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).mean())
+        if v < LIGHT_DARK:
+            return "너무 어두워요"
+        if v > LIGHT_BRIGHT:
+            return "너무 밝아요"
+        return "ok"
 
     def _finalize(self):
         self.active = False
