@@ -1022,4 +1022,10 @@ class GestureEngine:
         self._last_ts = ts_ms
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
-        return parse_hands(self.recognizer.recognize_for_video(img, ts_ms))
+        try:
+            return parse_hands(self.recognizer.recognize_for_video(img, ts_ms))
+        except Exception as e:
+            # MediaPipe 제스처 그래프가 간헐적으로 "Packet isn't the sole owner" 등으로 죽는다.
+            # 한 프레임 실패가 앱 전체(캘리브·음성 포함)를 내리면 안 되니 그 프레임만 버린다.
+            print(f"[제스처 추론 오류, 프레임 건너뜀] {type(e).__name__}: {str(e)[:80]}")
+            return []
