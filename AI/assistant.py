@@ -6,7 +6,8 @@
   [상시] 마이크 대기 → 발화 감지 순간, 그때 응시하던 화면 영역을 캡처
   발화가 끝나면 오디오+전체화면+응시크롭을 Gemini 한 콜로 → 명령 판단·해석·실행
   호출어("시아야")로 명령이 한 번 통하면 90초 활성 세션 — 그동안은 호출어 없이 명령
-  손 제스처 = 커맨드 단축키 (gestures.json, 컨텍스트 의존: 유튜브 활성 시 미디어 제어)
+  손 제스처 = 커맨드 단축키 (정적/커스텀은 BE 매핑, 동적은 dynamic_gesture_fallbacks.json;
+  컨텍스트 의존: 유튜브 활성 시 미디어 제어)
   파괴적 동작(창 닫기)은 되물은 뒤 "응/취소" 음성으로 확정
 
 마우스는 평소처럼 직접 쓰면 된다. 이 프로그램은 커서를 절대 움직이지 않는다.
@@ -68,70 +69,10 @@ EBOOK_TITLE_TOKENS = ("ebook", "e-book", "epub", "kindle", "calibre", "리디", 
                       "교보", "yes24", "알라딘")
 WEBEX_TITLE_TOKENS = ("webex",)
 
-# 컨텍스트별 제스처 매핑 (기획서 4번: 같은 제스처도 상황 따라 다른 기능).
-# 항목은 "run"(앱 실행) 또는 "key"(활성 창에 키 입력, 'shift+n' 형식 지원) 중 하나.
-# Swipe_Left/Swipe_Right는 동적 제스처(손 쓸기) — 홀드 없이 즉시 발동.
-# Compatibility-only data for old standalone installations. assistant.py no
-# longer calls it; BE owns all static/custom mappings.
-LEGACY_LOCAL_GESTURES = {
-    "default": {
-        "Victory": {"key": "esc", "label": "알림/팝업 닫기"},
-        "Thumb_Up": {"key": "win+up", "label": "창 최대화"},
-        "Thumb_Down": {"key": "win+down", "label": "창 최소화"},
-        "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
-        "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
-    },
-    "youtube": {
-        "Closed_Fist": {"key": "k", "label": "재생/일시정지"},
-        "Open_Palm": {"key": "k", "label": "재생/일시정지"},
-        "Thumb_Up": {"key": "up", "label": "볼륨 증가"},
-        "Thumb_Down": {"key": "down", "label": "볼륨 감소"},
-        "Pointing_Up": {"key": "shift+n", "label": "다음 영상"},
-        "Screen_Next": {"key": "l", "label": "10초 앞으로"},
-        "Screen_Prev": {"key": "j", "label": "10초 뒤로"},
-        "Volume_Up": {"key": "up", "label": "볼륨 5% 증가"},
-        "Volume_Down": {"key": "down", "label": "볼륨 5% 감소"},
-        "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
-        "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
-    },
-    "powerpoint": {
-        "Screen_Next": {"key": "right", "label": "다음 슬라이드"},
-        "Screen_Prev": {"key": "left", "label": "이전 슬라이드"},
-        "Scroll_Up": {"key": "up", "label": "위로 이동"},
-        "Scroll_Down": {"key": "down", "label": "아래로 이동"},
-        "Victory": {"key": "f5", "label": "슬라이드쇼 시작"},
-        "ILoveYou": {"key": "esc", "label": "슬라이드쇼 종료"},
-        "Closed_Fist": {"key": "b", "label": "화면 검게/복귀"},
-    },
-    "ebook": {
-        "Screen_Next": {"key": "pagedown", "label": "다음 페이지"},
-        "Screen_Prev": {"key": "pageup", "label": "이전 페이지"},
-        "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
-        "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
-        "Volume_Up": {"key": ["ctrl", "+"], "label": "확대"},
-        "Volume_Down": {"key": ["ctrl", "-"], "label": "축소"},
-    },
-    "browser": {
-        "Screen_Next": {"key": "alt+right", "label": "앞으로"},
-        "Screen_Prev": {"key": "alt+left", "label": "뒤로"},
-        "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
-        "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
-        "Victory": {"key": "ctrl+tab", "label": "다음 탭"},
-        "ILoveYou": {"key": "ctrl+shift+tab", "label": "이전 탭"},
-    },
-    "webex": {
-        "Closed_Fist": {"key": "ctrl+alt+m", "label": "마이크 음소거/해제"},
-        "Victory": {"key": "ctrl+alt+v", "label": "카메라 켜기/끄기"},
-        "ILoveYou": {"key": "alt+shift+d", "label": "화면 공유"},
-        "Thumb_Up": {"key": "ctrl+shift+l", "label": "통화 수락"},
-        "Thumb_Down": {"key": "ctrl+shift+x", "label": "통화 거절"},
-    },
-}
-
 # BE 기본 제스처 테이블과의 계약. ``youtube``는 AI 내부 컨텍스트이고,
 # BE는 영상 공통 기능을 ``video`` 컨텍스트로 등록해 두었다. 여기 없는
 # 이벤트(Screen_Next/Prev 등)는 의미가 다른 BE 도구로 억지 변환하지 않고
-# gestures.json의 로컬 fallback으로 실행한다.
+# dynamic_gesture_fallbacks.json의 로컬 fallback으로 실행한다.
 # 실행 매핑의 기준은 Backend/DefaultMappings.java와 BE DB다. 아래 집합은
 # 단축키/도구를 정의하지 않고, AI 컨텍스트를 BE 컨텍스트로 번역하기만 한다.
 # Full gesture mode. Static/custom gestures with a BE mapping are delegated to
@@ -185,45 +126,15 @@ def is_webex(title):
     return any(token in t for token in WEBEX_TITLE_TOKENS)
 
 
-def _load_legacy_gestures():
-    path = HERE / "gestures.json"
-    if not path.exists():
-        path.write_text(json.dumps(LEGACY_LOCAL_GESTURES, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if "default" not in data:  # 구형(컨텍스트 없는 평면) 포맷 → 마이그레이션
-        data = {"default": data, "youtube": LEGACY_LOCAL_GESTURES["youtube"]}
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return data
-
-
-def _dynamic_entries(data):
-    """레거시 gestures.json에서 동적 fallback 항목만 안전하게 추출한다."""
-    return {
-        context: {name: entry for name, entry in entries.items()
-                  if name.startswith(DYNAMIC_PREFIXES)}
-        for context, entries in data.items()
-        if isinstance(entries, dict)
-    }
-
-
 def load_dynamic_fallbacks():
-    """BE에 없는 동적 제스처의 로컬 fallback만 불러온다.
+    """BE에 없는 동적 제스처의 로컬 fallback만 불러온다 (dynamic_gesture_fallbacks.json).
 
-    최초 실행 시 기존 gestures.json에서 동적 항목만 별도 파일로 복사한다.
-    기존 파일은 보존하며 정적/커스텀 제스처 매핑은 더 이상 읽지 않는다.
+    정적/커스텀 제스처 매핑은 BE가 소유하므로 여기서는 읽지 않는다.
     """
     if DYNAMIC_FALLBACK_PATH.exists():
         data = json.loads(DYNAMIC_FALLBACK_PATH.read_text(encoding="utf-8"))
     else:
-        legacy_path = HERE / "gestures.json"
-        legacy = json.loads(legacy_path.read_text(encoding="utf-8")) if legacy_path.exists() else {}
-        data = _dynamic_entries(legacy)
-        DYNAMIC_FALLBACK_PATH.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print("[GESTURE] gestures.json에서 동적 fallback만 분리했습니다: "
-              "dynamic_gesture_fallbacks.json")
+        data = {}
     data.setdefault("default", {})
     return data
 
@@ -683,9 +594,12 @@ def main():
                     )
                     if link and link.gesture_ready and be_target:
                         be_name, be_context = be_target
-                        print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
-                        link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                          "context": be_context})
+                        if args.no_actions:
+                            overlay.toast(f"[시늉만] 제스처→BE: {name}")
+                        else:
+                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
+                            link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
+                                                              "context": be_context})
                         hud_feedback = name
                         hud_feedback_until = now + 0.9
                     elif entry and not args.be_gesture_only:
@@ -734,9 +648,12 @@ def main():
                 )
                 if link and link.gesture_ready and be_target:
                     be_name, be_context = be_target
-                    print(f"[GESTURE→BE] detected={dynamic_event} | name={be_name} | context={be_context or 'default'}")
-                    link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                      "context": be_context})
+                    if args.no_actions:
+                        overlay.toast(f"[시늉만] 제스처→BE: {dynamic_event}")
+                    else:
+                        print(f"[GESTURE→BE] detected={dynamic_event} | name={be_name} | context={be_context or 'default'}")
+                        link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
+                                                          "context": be_context})
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
                     link.queue_usage("GESTURE_TRIGGERED",
