@@ -73,13 +73,15 @@ def parse_hand(result):
         return None
     lm = result.hand_landmarks[0]
     size = _dist(lm[0], lm[9]) + 1e-6
-    gesture = "None"
+    gesture, score = "None", None
     if result.gestures and result.gestures[0]:
         gesture = result.gestures[0][0].category_name
+        score = round(float(result.gestures[0][0].score), 3)
     return {
         "anchor": (lm[9].x, lm[9].y),
         "pinch_ratio": _dist(lm[4], lm[8]) / size,
         "gesture": gesture,
+        "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
         "landmarks": [(p.x, p.y) for p in lm],  # HUD 디버그 표시용
     }
 
@@ -91,9 +93,10 @@ def parse_hands(result):
     hands = []
     for idx, lm in enumerate(result.hand_landmarks):
         size = _dist(lm[0], lm[9]) + 1e-6
-        gesture = "None"
+        gesture, score = "None", None
         if result.gestures and len(result.gestures) > idx and result.gestures[idx]:
             gesture = result.gestures[idx][0].category_name
+            score = round(float(result.gestures[idx][0].score), 3)
         handedness = "Unknown"
         if (getattr(result, "handedness", None) and len(result.handedness) > idx
                 and result.handedness[idx]):
@@ -102,6 +105,7 @@ def parse_hands(result):
             "anchor": (lm[9].x, lm[9].y),
             "pinch_ratio": _dist(lm[4], lm[8]) / size,
             "gesture": gesture,
+            "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
             "handedness": handedness,
             "landmarks": [(p.x, p.y) for p in lm],
         })
