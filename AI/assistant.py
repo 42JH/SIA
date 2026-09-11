@@ -608,8 +608,10 @@ def main():
                         fire_entry(entry, name, "제스처")
                     if link:
                         link.queue_usage("gesture",
-                                         payload={"name": name, "context": context, "source": "static"},
-                                         occurredAt=int(time.time() * 1000))
+                                         sessionId=link.be_session_id,
+                                         action=name,
+                                         context=context,
+                                         payload={"source": "static", "occurredAt": int(time.time() * 1000)})
             if gesture_active and not registration_active:
                 pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
                 motion_event = palm_motion.update(
@@ -657,8 +659,10 @@ def main():
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
                     link.queue_usage("gesture",
-                                     payload={"name": dynamic_event, "context": context, "source": "dynamic"},
-                                     occurredAt=int(time.time() * 1000))
+                                     sessionId=link.be_session_id,
+                                     action=dynamic_event,
+                                     context=context,
+                                     payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
                 elif entry and not args.be_gesture_only:
                     if link and link.gesture_ready:
                         print(f"[GESTURE→LOCAL] no BE mapping: {dynamic_event} ({context})")
@@ -675,8 +679,10 @@ def main():
                     fire_entry(entry, dynamic_event, "제스처", wheel_steps=abs(scroll_steps) or 1)
                     if link:
                         link.queue_usage("gesture",
-                                         payload={"name": dynamic_event, "context": context, "source": "dynamic"},
-                                         occurredAt=int(time.time() * 1000))
+                                         sessionId=link.be_session_id,
+                                         action=dynamic_event,
+                                         context=context,
+                                         payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
 
             # --- 상태 표시 (세션 남은 시간 포함) ---
             if link and now - last_usage_flush >= 5.0:
