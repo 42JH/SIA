@@ -4,13 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
+/**
+ * 이 필터의 계약은 "토큰이 맞으면 ROLE_MCP 인증을 심는다" 하나다.
+ * 막는 일(401)은 SecurityConfig 의 authorizeHttpRequests 몫이고, 그쪽은 SecurityBoundaryTest 가 본다.
+ */
 class SharedTokenFilterTest {
 
     private SharedTokenFilter filter;
@@ -22,69 +29,56 @@ class SharedTokenFilterTest {
         filter = new SharedTokenFilter(tokens);
     }
 
-    private MockHttpServletRequest mcpRequest() {
-        return new MockHttpServletRequest("POST", "/mcp/messages");
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
-    @Test
-    @DisplayName("토큰 없는 /mcp 요청은 401 JSON 으로 끊긴다")
-    void missingTokenIsRejected() throws Exception {
-        MockHttpServletResponse response = new MockHttpServletResponse();
+    private Authentication authAfter(MockHttpServletRequest request) throws Exception {
         MockFilterChain chain = new MockFilterChain();
-
-        filter.doFilter(mcpRequest(), response, chain);
-
-        assertThat(chain.getRequest()).isNull();
-        assertThat(response.getStatus()).isEqualTo(401);
-        assertThat(response.getContentAsString()).contains("UNAUTHORIZED");
+        filter.doFilter(request, new MockHttpServletResponse(), chain);
+        assertThat(chain.getRequest()).as("이 필터는 요청을 끊지 않는다").isNotNull();
+        return SecurityContextHolder.getContext().getAuthentication();
     }
 
     @Test
-    @DisplayName("Authorization: Bearer 토큰이 맞으면 통과한다")
-    void bearerTokenPasses() throws Exception {
-        MockHttpServletRequest request = mcpRequest();
+    @DisplayName("Authorization: Bearer 토큰이 맞으면 ROLE_MCP 인증이 심긴다")
+    void bearerTokenAuthenticates() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
         request.addHeader("Authorization", "Bearer secret-token");
-        MockFilterChain chain = new MockFilterChain();
 
-        filter.doFilter(request, new MockHttpServletResponse(), chain);
+        Authentication auth = authAfter(request);
 
-        assertThat(chain.getRequest()).isNotNull();
+        assertThat(auth).isNotNull();
+        assertThat(auth.isAuthenticated()).isTrue();
+        assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_MCP");
     }
 
     @Test
-    @DisplayName("X-MC-Token 헤더로도 통과할 수 있다")
-    void directHeaderPasses() throws Exception {
-        MockHttpServletRequest request = mcpRequest();
+    @DisplayName("X-MC-Token 헤더로도 인증된다")
+    void directHeaderAuthenticates() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
         request.addHeader("X-MC-Token", "secret-token");
-        MockFilterChain chain = new MockFilterChain();
 
-        filter.doFilter(request, new MockHttpServletResponse(), chain);
-
-        assertThat(chain.getRequest()).isNotNull();
+        assertThat(authAfter(request)).isNotNull();
     }
 
     @Test
-    @DisplayName("틀린 토큰은 401 이다")
-    void wrongTokenIsRejected() throws Exception {
-        MockHttpServletRequest request = mcpRequest();
-        request.addHeader("Authorization", "Bearer wrong-token");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain chain = new MockFilterChain();
+    @DisplayName("토큰이 없거나 틀리면 인증을 심지 않고 그대로 흘려보낸다 — 막는 건 인가의 몫이다")
+    void missingOrWrongTokenLeavesAnonymous() throws Exception {
+        assertThat(authAfter(new MockHttpServletRequest("POST", "/mcp"))).isNull();
 
-        filter.doFilter(request, response, chain);
-
-        assertThat(chain.getRequest()).isNull();
-        assertThat(response.getStatus()).isEqualTo(401);
+        MockHttpServletRequest wrong = new MockHttpServletRequest("POST", "/mcp");
+        wrong.addHeader("Authorization", "Bearer wrong-token");
+        assertThat(authAfter(wrong)).isNull();
     }
 
     @Test
-    @DisplayName("/mcp 밖의 경로는 토큰 없이도 필터를 지나간다")
-    void nonMcpPathSkipsCheck() throws Exception {
-        MockFilterChain chain = new MockFilterChain();
+    @DisplayName("경로를 보지 않는다 — 인코딩 표기(/%6dcp)든 /api 든 토큰만 본다")
+    void pathIsNotJudged() throws Exception {
+        MockHttpServletRequest encoded = new MockHttpServletRequest("POST", "/%6dcp");
+        encoded.addHeader("Authorization", "Bearer secret-token");
 
-        filter.doFilter(new MockHttpServletRequest("GET", "/api/status"),
-                new MockHttpServletResponse(), chain);
-
-        assertThat(chain.getRequest()).isNotNull();
+        assertThat(authAfter(encoded)).isNotNull();
     }
 }
