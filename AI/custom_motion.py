@@ -145,10 +145,13 @@ class CustomGestureStore:
         self.missing_since = None
 
     def update(self, hands, now, disabled=()):
-        """Return (held two-hand pose, completed motion, suppress other commands).
+        """Return (held two-hand pose, completed motion, suppress other commands, distance).
 
         Motion fires once, then requires hands to leave for 0.3 s before rearming.
         Missing/ambiguous hands and long camera gaps cannot bridge a trajectory.
+        distance is the winning template's landmark distance whenever a static
+        hold or a completed motion is returned, otherwise None — callers use it
+        to derive a confidence score (e.g. exp(-distance)) for stats.
         """
         if self.latched_name in disabled:
             self.reset_motion()
@@ -159,10 +162,10 @@ class CustomGestureStore:
                 self.missing_since = now
             if now - self.missing_since >= 0.3:
                 self.latched = False
-            return None, None, self.latched
+            return None, None, self.latched, None
         self.missing_since = None
         if self.latched:
-            return None, None, True
+            return None, None, True, None
         identity = tuple(sorted(h.get("handedness", "Unknown") for h in hands))
         if self.history and (now - self.history[-1][0] > 0.25 or now <= self.history[-1][0]
                              or identity != self.history[-1][2]):
@@ -214,7 +217,7 @@ class CustomGestureStore:
             self.latched = True
             self.latched_name = best_dynamic[1]
             self.history.clear()
-            return None, best_dynamic[1], True
+            return None, best_dynamic[1], True, best_dynamic[0]
         if pending_motion:
-            return None, None, True
-        return best_static[1], None, bool(best_static[1])
+            return None, None, True, None
+        return best_static[1], None, bool(best_static[1]), (best_static[0] if best_static[1] else None)

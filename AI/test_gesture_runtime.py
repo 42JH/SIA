@@ -140,7 +140,7 @@ class GestureRuntimeTests(unittest.TestCase):
                                    args=SimpleNamespace(no_actions=no_actions, be_gesture_only=be_only),
                                    be_target=('Victory', 'youtube'), name='Victory',
                                    dynamic_event='Screen_Next', context='youtube', now=10,
-                                   usage_events=[], uuid=Mock(),
+                                   usage_events=[], uuid=Mock(), custom_score=None,
                                    time=SimpleNamespace(time=lambda: 10), print=Mock())
                         exec(code, env)
                         if no_actions:
