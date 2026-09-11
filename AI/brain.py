@@ -605,6 +605,16 @@ class Brain(threading.Thread):
             # 진행 중인 추론은 이전 누적기를 쓴다 — 그 조각이 새 입력에 섞이지 않게 교체한다.
             self._accum = SpeakerAccum()
 
+    def _active_voice_sample_is_current(self, profile_ref, generation):
+        """대기 중 프로필·마이크가 바뀐 발화는 /active에 보내지 않는다."""
+        sync = self.link.voice_sync if self.link is not None else None
+        if sync is not None and not sync.is_active_profile(profile_ref):
+            return False
+        with self._audio_lock:
+            current = self.speaker.snapshot() if self.speaker is not None else None
+            return (generation == self._audio_generation and current is not None
+                    and current[0] is not None and current[2:] == profile_ref)
+
     def run(self):
         while True:
             if not self.queue:
@@ -670,6 +680,12 @@ class Brain(threading.Thread):
                                 sim = accum_sim  # 재판정에서 측정 실패로 통과했다면 정확도도 생략한다.
                     if ok:
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
+                        be = self._be()
+                        with self._audio_lock:
+                            fresh = generation == self._audio_generation
+                        if fresh and be and be.rt and sim is not None:
+                            be.queue_active_voice_sample(wav_bytes(audio), profile[2:], generation,
+                                                         self._active_voice_sample_is_current)
                     else:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
                               + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))

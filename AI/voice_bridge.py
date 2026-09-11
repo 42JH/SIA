@@ -23,7 +23,8 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩
   다시 읽을지 정한다. quality 는 앞 문장들과 유사도가 QUALITY_MIN_SIM 미만이거나 소음이 높으면 "낮음", 1번 문장은
   비교 대상이 없어 소음만 본다. 중간 문장에서는 npz 를 올리지 않는다 — 다섯 문장을 다 모으기 전에 npz 가 서버에
   있으면 그것만으로 프로필이 확정될 수 있다.
-- 다섯 문장이 다 모이면 이어붙인 wav → npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다. 이때만 npz 가 올라가고
+- 다섯 문장이 다 모이면 마지막 문장의 wav → 전체 임베딩의 npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다.
+  재생 샘플은 1~5번 모두 해당 문장 하나이며, durationSec 도 그 녹음 길이다. 이때만 npz 가 올라가고
   FE 의 "등록" 버튼이 열린다. voice_quality_warn 은 보내지 않는다 — 문장마다 결과를 줬으니 그 자리에서 고치는 쪽이 빠르다.
   NOTE(한계): FE 가 voice_review 를 5번째 문장 것으로만 보고 화면 번호를 5로 고정하면, 1번 문장 뒤에 "등록" 이 열린다.
   FE 가 자기 진행 번호를 쓰도록 고쳐야 한다 (BE 는 voice_review 에 n 을 싣지 않는다).
@@ -114,6 +115,11 @@ class VoiceProfileSync:
         self._queued = self._busy = self._closed = False
         self._pending = None
         self._worker = None
+
+    def is_active_profile(self, profile_ref):
+        """서버가 알린 최신 활성 프로필과 인증 당시 프로필이 같은지 확인한다."""
+        with self._condition:
+            return not self._closed and self._desired == profile_ref
 
     def on_changed(self, ref):
         """전체 설정의 blobs.voice와 voice_changed가 같은 최신 요청을 갱신한다."""
@@ -422,8 +428,8 @@ class VoiceSession:
             use = [k for k in keys if k != low[0]]
             print(f"[화자 등록] 문장 {low[0]} 이 나머지와 안 닮음(유사도 {loo[low[0]]:.2f}) — 프로필 평균에서 빼고 {len(use)}문장으로 만든다")
         centroid, min_sim = self.speaker.centroid_of_embs([self._embs[k] for k in use])
-        wav = np.concatenate([self._samples[k] for k in keys])   # 재생용 샘플은 다섯 문장 다 — 사용자가 들은 그대로
-        noise = noise_level(wav)
+        wav = self._samples[keys[-1]]  # 마지막 문장도 해당 녹음만 재생한다.
+        noise = noise_level(np.concatenate([self._samples[k] for k in keys]))  # 등록 소음은 모든 문장으로 판정한다.
         quality = "양호" if min_sim >= QUALITY_MIN_SIM else "낮음"
         print(f"[화자 등록] 샘플 일관성 {min_sim:.2f} → {quality}, 소음 {noise}")
         self._upload_and_capture(self.speaker.npz_bytes(centroid), wav_bytes(wav), round(len(wav) / SR, 1), quality, noise)
