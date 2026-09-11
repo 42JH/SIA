@@ -80,6 +80,29 @@ const displayName = (gesture) => gesture.custom ? gesture.name : (gesture.label 
 const displayTool = (step) => toolLabels[step.tool] || step.tool;
 const initialStep = () => ({ tool: '', args: {}, delayMs: '' });
 
+const directionLabels = { up: '위', down: '아래', left: '왼쪽', right: '오른쪽' };
+const presetLabels = { LEFT_HALF: '화면 왼쪽 절반', RIGHT_HALF: '화면 오른쪽 절반', CENTER: '화면 가운데' };
+const argumentLabels = {
+  appRef: '앱', winRef: '대상 창', query: '검색어', path: '경로', name: '파일 이름', content: '내용',
+  dir: '방향', amount: '이동량', level: '볼륨', preset: '위치', x1: '시작 X', y1: '시작 Y', x2: '끝 X', y2: '끝 Y',
+};
+
+function displayStepDetail(step, apps) {
+  const args = step.args || {};
+  const details = Object.entries(args).map(([key, value]) => {
+    let displayed = value;
+    if (key === 'appRef') {
+      const appKey = String(value).replace(/^app:/, '');
+      displayed = apps.find((app) => app.appKey === appKey)?.displayName || appKey;
+    } else if (key === 'dir') displayed = directionLabels[value] || value;
+    else if (key === 'preset') displayed = presetLabels[value] || value;
+    else if (key === 'level') displayed = `${value}%`;
+    return `${argumentLabels[key] || key}: ${displayed}`;
+  });
+  if (step.delayMs) details.push(`실행 전 ${step.delayMs}ms 대기`);
+  return details.join(' · ') || '추가 설정 없이 실행';
+}
+
 const categoryLabels = {
   app: '앱', browser: '브라우저', context: '화면 정보', explorer: '파일 탐색기', files: '파일 · 폴더',
   media: '미디어', screen: '화면 캡처', scroll: '스크롤', session: '세션', system: '시스템', volume: '볼륨', window: '창',
@@ -267,10 +290,17 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
         /> : <div className={styles.detailBody}>
           <HoverPreview gesture={gesture} large />
           <h3>{displayName(gesture)}</h3>
-          {gesture.description && <p>{gesture.description}</p>}
+          <p className={styles.gestureDescription}>{gesture.description?.trim() || '등록된 제스처 설명이 없습니다.'}</p>
           <p className={styles.meta}>{gesture.custom ? `커스텀 제스처${gesture.createdAt ? ` · 등록일 ${gesture.createdAt.slice(0, 10)}` : ''}` : '기본 제공 제스처'}</p>
           {!gesture.virtual && <div className={styles.detailToggle}><span>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
-          {gesture.custom && !!gesture.steps?.length && <ol className={styles.stepSummary}>{gesture.steps.map((step, index) => <li key={`${step.tool}-${index}`}>{displayTool(step)}</li>)}</ol>}
+          {gesture.custom && !!gesture.steps?.length && <div className={styles.macroSummary}>
+            <h4>실행 동작</h4>
+            <p>제스처를 인식하면 아래 기능을 순서대로 실행합니다.</p>
+            <ol className={styles.stepSummary}>{gesture.steps.map((step, index) => <li key={`${step.tool}-${index}`}>
+              <strong>{displayTool(step)}</strong>
+              <span>{displayStepDetail(step, apps)}</span>
+            </li>)}</ol>
+          </div>}
         </div>}
         <footer className={styles.actions}>
           {editing ? <><button onClick={() => setEditing(false)}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '저장'}</button></> : gesture.custom ? <><button onClick={() => setEditing(true)}>수정</button><button onClick={() => setConfirmDelete(true)}>삭제</button></> : <button onClick={onClose}>확인</button>}
