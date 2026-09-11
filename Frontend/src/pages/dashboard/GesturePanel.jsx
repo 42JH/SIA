@@ -13,6 +13,8 @@ import {
   assignGestureMacro,
   finishGestureRecording,
   startGestureRegistration,
+  startGesturePreview,
+  stopGesturePreview,
   subscribeGestures,
 } from '../../ws/gestures';
 import styles from './GesturePanel.module.css';
@@ -391,7 +393,9 @@ export function GestureRegistration({ onClose, onSaved }) {
   const [steps, setSteps] = useState([initialStep()]);
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState(null);
+  const [captureTypeOpen, setCaptureTypeOpen] = useState(false);
   const stopSent = useRef(false);
+  const previewStarted = useRef(false);
   const ignoredTempIds = useRef(new Set());
 
   useEffect(() => {
@@ -404,6 +408,14 @@ export function GestureRegistration({ onClose, onSaved }) {
   }, []);
 
   useEffect(() => subscribeGestures({
+    gesture_preview_state: (data) => {
+      const ready = data.phase === 'READY';
+      updateRegistration({ previewReady: ready, ...(data.message ? { error: data.message } : {}) });
+    },
+    gesture_preview_frame: (data) => {
+      if (!data.jpegB64) return;
+      updateRegistration({ previewFrame: `data:image/jpeg;base64,${data.jpegB64}`, previewReady: true });
+    },
     reg_state: (data) => {
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
@@ -424,7 +436,10 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (current?.tempId && data.tempId !== current.tempId) return;
       if (current?.stage === 'rejected') return;
       const completed = data.phase === 'DONE' ? [...new Set([...(current?.completedTakes || []), data.take])] : (current?.completedTakes || []);
-      updateRegistration({ tempId: data.tempId, stage: 'capture', take: data.take, takePhase: data.phase, completedTakes: completed });
+      const photoPreviews = current?.captureType === 'STATIC' && data.phase === 'DONE' && current.frame
+        ? [...(current.previews || []).filter((take) => take.take !== data.take), { take: data.take, imageUrl: current.frame }]
+        : current?.previews || [];
+      updateRegistration({ tempId: data.tempId, stage: 'capture', take: data.take, takePhase: data.phase, completedTakes: completed, previews: photoPreviews });
       if (data.take === 3 && data.phase === 'DONE' && !stopSent.current) {
         stopSent.current = true;
         try { finishGestureRecording(data.tempId); } catch (error) { updateRegistration({ error: error.message }); }
@@ -441,14 +456,21 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
-      const valid = (data.takes || []).filter((take) => take.webmUrl);
-      updateRegistration({ tempId: data.tempId, previews: valid, selectedTake: valid[0]?.take || 1, stage: current?.stage === 'rejected' ? 'rejected' : 'review', ...(data.reason ? { error: data.reason } : {}) });
+      // TODO(BE): 정적 촬영 결과를 reg_recorded takes[].imageUrl 로 전달하는 계약 추가 필요
+      const valid = (data.takes || []).filter((take) => take.webmUrl || take.imageUrl);
+      const previews = valid.length ? valid : current?.previews || [];
+      updateRegistration({ tempId: data.tempId, previews, selectedTake: previews[0]?.take || 1, stage: current?.stage === 'rejected' ? 'rejected' : 'review', ...(data.reason ? { error: data.reason } : {}) });
     },
     macro_saved: () => {
       setSaving(false);
       updateRegistration({ stage: 'complete' });
     },
     error: (data) => {
+      if (['gesture_preview_start', 'gesture_preview_stop'].includes(data.of)) {
+        previewStarted.current = false;
+        updateRegistration({ previewReady: false, error: data.message || '카메라 미리보기를 시작할 수 없습니다.' });
+        return;
+      }
       if (!['reg_start', 'reg_stop', 'macro_assign'].includes(data.of)) return;
       setSaving(false);
       updateRegistration({
@@ -457,6 +479,24 @@ export function GestureRegistration({ onClose, onSaved }) {
       });
     },
   }), [updateRegistration]);
+
+  useEffect(() => {
+    if (registration?.stage !== 'intro' || previewStarted.current) return undefined;
+    try {
+      startGesturePreview();
+      previewStarted.current = true;
+      updateRegistration({ previewReady: false, error: '' });
+    } catch (error) {
+      updateRegistration({ previewReady: false, error: error.message });
+    }
+    return undefined;
+  }, [registration?.stage, updateRegistration]);
+
+  useEffect(() => () => {
+    if (!previewStarted.current) return;
+    try { stopGesturePreview(); } catch { /* 연결 종료 시 별도 처리 없음 */ }
+    previewStarted.current = false;
+  }, []);
 
   useEffect(() => {
     if (registration?.takePhase !== 'COUNTDOWN') {
@@ -468,12 +508,22 @@ export function GestureRegistration({ onClose, onSaved }) {
     return () => clearInterval(timer);
   }, [registration?.take, registration?.takePhase]);
 
-  const start = () => {
+  const stopPreview = () => {
+    if (!previewStarted.current) return;
+    try { stopGesturePreview(); } catch (error) { updateRegistration({ error: error.message }); }
+    previewStarted.current = false;
+  };
+
+  const start = (captureType = registration.captureType) => {
+    if (!captureType) return;
+    stopPreview();
+    setCaptureTypeOpen(false);
     const currentTempId = useGestureStore.getState().registration?.tempId;
     if (currentTempId) ignoredTempIds.current.add(currentTempId);
     stopSent.current = false;
     updateRegistration({
       stage: 'waiting',
+      captureType,
       tempId: null,
       phase: null,
       take: 0,
@@ -487,7 +537,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       similarity: null,
       error: '',
     });
-    try { startGestureRegistration(); } catch (error) { updateRegistration({ stage: 'intro', error: error.message }); }
+    try { startGestureRegistration(captureType); } catch (error) { updateRegistration({ stage: 'intro', error: error.message }); }
   };
 
   const next = () => updateRegistration({ stage: 'form', error: '' });
@@ -505,18 +555,18 @@ export function GestureRegistration({ onClose, onSaved }) {
       updateRegistration({ error: error.message });
     }
   };
-  const close = () => { closeRegistration(); onClose(); };
+  const close = () => { stopPreview(); closeRegistration(); onClose(); };
 
   if (!registration) return null;
   return <div className={styles.registration}>
     <header><button onClick={close}>‹</button><h2>{registration.stage === 'complete' ? '제스처 등록' : registration.stage === 'review' ? '촬영 결과' : '제스처 촬영'}</h2></header>
     <div className={styles.registrationBody}>
-      {/* TODO(BE): 카메라 사용 불가 전용 이벤트와 시스템 카메라 설정 열기 API가 명세에 없음 */}
-      {registration.stage === 'intro' && <><div className={styles.cameraBox}>카메라 미리보기는 촬영이 시작되면 표시됩니다.</div><p>등록하고 싶은 제스처를 취한 뒤 촬영 버튼을 눌러주세요.</p><button className={styles.primary} onClick={start}>촬영하기</button><small>3초 카운트다운 후 2초씩 3회 반복 촬영합니다.</small></>}
+      {/* TODO(BE): 카메라 사용 불가 시 시스템 카메라 설정을 여는 API가 명세에 없음 */}
+      {registration.stage === 'intro' && <><div className={styles.cameraBox}>{registration.previewFrame ? <img src={registration.previewFrame} alt="AI 카메라 미리보기" /> : <span>{registration.previewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}<b className={styles.cameraState}>{registration.previewReady ? '● 카메라 준비 완료' : '카메라 연결 중'}</b></div><p>카메라 화면을 확인한 뒤 촬영 버튼을 눌러주세요.</p><button className={styles.primary} disabled={!registration.previewReady} onClick={() => setCaptureTypeOpen(true)}>촬영하기</button><small>촬영 방식을 선택한 뒤 3회 촬영합니다.</small>{captureTypeOpen && <CaptureTypeDialog onClose={() => setCaptureTypeOpen(false)} onSelect={start} />}</>}
       {registration.stage === 'waiting' && <><div className={styles.cameraBox}>카메라 연결을 기다리고 있습니다.</div><p>잠시만 기다려주세요.</p></>}
-      {registration.stage === 'capture' && <><div className={styles.liveFrame}>{registration.frame ? <img src={registration.frame} alt="제스처 촬영 화면" /> : <span>카메라 화면을 기다리고 있습니다.</span>}<b>● REC {registration.take || 1}/3</b>{registration.takePhase === 'COUNTDOWN' && <strong className={styles.countdown} aria-live="assertive">{countdown ?? 3}</strong>}</div><div className={styles.progress}><i style={{ width: `${Math.max(registration.take - (registration.takePhase === 'DONE' ? 0 : 1), 0) / 3 * 100}%` }} /></div><p>{registration.takePhase === 'COUNTDOWN' ? `${registration.take}회차 촬영을 준비하세요.` : registration.takePhase === 'DONE' && registration.take === 3 ? '촬영 영상을 처리하고 있습니다.' : `${registration.take || 1}/3회 인식 중`}</p></>}
-      {registration.stage === 'review' && <Review registration={registration} onSelect={(selectedTake) => updateRegistration({ selectedTake })} onRetry={start} onNext={next} />}
-      {registration.stage === 'rejected' && <SimilarityResult registration={registration} onRetry={start} />}
+      {registration.stage === 'capture' && <><div className={styles.liveFrame}>{registration.frame ? <img src={registration.frame} alt="제스처 촬영 화면" /> : <span>카메라 화면을 기다리고 있습니다.</span>}<b>● {registration.captureType === 'STATIC' ? 'PHOTO' : 'REC'} {registration.take || 1}/3</b>{registration.takePhase === 'COUNTDOWN' && <strong className={styles.countdown} aria-live="assertive">{countdown ?? 3}</strong>}</div><div className={styles.progress}><i style={{ width: `${Math.max(registration.take - (registration.takePhase === 'DONE' ? 0 : 1), 0) / 3 * 100}%` }} /></div><p>{registration.takePhase === 'COUNTDOWN' ? `${registration.take}회차 촬영을 준비하세요.` : registration.takePhase === 'DONE' && registration.take === 3 ? `${registration.captureType === 'STATIC' ? '촬영 사진' : '촬영 영상'}을 처리하고 있습니다.` : `${registration.take || 1}/3회 ${registration.captureType === 'STATIC' ? '사진 촬영 중' : '인식 중'}`}</p></>}
+      {registration.stage === 'review' && <Review registration={registration} onSelect={(selectedTake) => updateRegistration({ selectedTake })} onRetry={() => start(registration.captureType)} onNext={next} />}
+      {registration.stage === 'rejected' && <SimilarityResult registration={registration} onRetry={() => start(registration.captureType)} />}
       {registration.stage === 'form' && <><GestureForm name={name} setName={setName} description={description} setDescription={setDescription} repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={registration.error} /><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '등록하기'}</button></>}
       {registration.stage === 'complete' && <><div className={styles.completeIcon}>✓</div><h3>등록 완료!</h3><p>제스처와 연결한 기능을 바로 사용할 수 있습니다.</p><button className={styles.primary} onClick={() => { onSaved(); close(); }}>확인</button></>}
       {registration.error && !['rejected', 'form'].includes(registration.stage) && <p className={styles.error} role="alert">{registration.error}</p>}
@@ -524,9 +574,14 @@ export function GestureRegistration({ onClose, onSaved }) {
   </div>;
 }
 
+function CaptureTypeDialog({ onClose, onSelect }) {
+  return <div className={styles.captureTypeBackdrop} role="presentation" onMouseDown={onClose}><div className={styles.captureTypeDialog} role="dialog" aria-modal="true" aria-labelledby="capture-type-title" onMouseDown={(event) => event.stopPropagation()}><h3 id="capture-type-title">촬영 방식을 선택해주세요</h3><div><article><span className={styles.captureTypeIcon} aria-hidden="true">▣</span><strong>정적 제스처 등록</strong><p>제스처 동작을 사진으로 촬영합니다.<br />3초 카운트다운 후 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('STATIC')}>사진으로 등록</button></article><article><span className={styles.captureTypeIcon} aria-hidden="true">▻</span><strong>동적 제스처 등록</strong><p>제스처 동작을 영상으로 촬영합니다.<br />3초 카운트다운 후 2초간 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('DYNAMIC')}>영상으로 등록</button></article></div></div></div>;
+}
+
 function Review({ registration, onSelect, onRetry, onNext }) {
   const selected = registration.previews.find((take) => take.take === registration.selectedTake);
-  return <><video className={styles.reviewVideo} src={mediaUrl(selected?.webmUrl)} controls autoPlay muted loop /><div className={styles.takeChoices}>{registration.previews.map((take) => <button className={registration.selectedTake === take.take ? styles.selectedTake : ''} onClick={() => onSelect(take.take)} key={take.take}><video src={mediaUrl(take.webmUrl)} muted preload="metadata" /><span>{take.take}회</span></button>)}</div><p>목록과 상세 화면에서 보여줄 대표 영상을 골라주세요.</p><small>세 번의 촬영 데이터는 모두 제스처 학습에 사용됩니다.</small><div className={styles.actions}><button onClick={onRetry}>다시 촬영</button><button className={styles.primary} disabled={!registration.captured || !registration.previews.length} onClick={onNext}>{registration.captured ? '다음' : '학습 처리 중'}</button></div></>;
+  const isStatic = registration.captureType === 'STATIC';
+  return <>{isStatic ? <img className={styles.reviewVideo} src={mediaUrl(selected?.imageUrl)} alt="선택한 정적 제스처" /> : <video className={styles.reviewVideo} src={mediaUrl(selected?.webmUrl)} controls autoPlay muted loop />}<div className={styles.takeChoices}>{registration.previews.map((take) => <button className={registration.selectedTake === take.take ? styles.selectedTake : ''} onClick={() => onSelect(take.take)} key={take.take}>{isStatic ? <img src={mediaUrl(take.imageUrl)} alt={`${take.take}회 촬영`} /> : <video src={mediaUrl(take.webmUrl)} muted preload="metadata" />}<span>{take.take}회</span></button>)}</div><p>목록과 상세 화면에서 보여줄 대표 {isStatic ? '사진' : '영상'}을 골라주세요.</p><small>세 번의 촬영 데이터는 모두 제스처 학습에 사용됩니다.</small><div className={styles.actions}><button onClick={onRetry}>다시 촬영</button><button className={styles.primary} disabled={!registration.captured || !registration.previews.length} onClick={onNext}>{registration.captured ? '다음' : '학습 처리 중'}</button></div></>;
 }
 
 function SimilarityResult({ registration, onRetry }) {
