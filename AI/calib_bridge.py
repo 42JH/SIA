@@ -28,7 +28,8 @@ import numpy as np
 from gaze import Calibrator
 
 TOTAL = 9              # 3×3
-COLLECT_S = 0.7        # 점당 수집 창(초) — 게임 리듬에 맞춰 튜닝
+SETTLE_S = 0.4         # 점이 뜬 뒤 눈이 그 점에 착지할 때까지 — 이 구간은 수집 안 한다(saccade 프레임 버림)
+COLLECT_S = 0.9        # settle 뒤 실제 수집 창(초). 점당 총 체류 = SETTLE_S + COLLECT_S ≈ 1.3 s
 MIN_TOTAL_SAMPLES = 30  # calibrate.py와 동일 하한
 # grade 절대 px 컷 (해상도 고정 = 개발 노트북 기준, 통합 재실측[-176]으로 튜닝).
 # 컷은 AI 소유 — spec 변경 없이 여기만 고치면 된다.
@@ -54,6 +55,7 @@ class CalibSession:
         self.tempId = None
         self._n = 0                      # 현재 수집 중인 점(0=대기)
         self._until = 0.0                # 수집 창 마감 시각
+        self._collect_after = 0.0        # 이 시각 이후부터 수집(점당 settle 뒤)
         self._pts = {}                   # n -> {"x","y","feats":[...]}
         self._order = []                 # 이번 세션의 점 방문 순서(1~9 랜덤 순열)
         self._done = 0                   # 지금까지 마친 점 수 — 순서와 무관하게 9면 마감
@@ -71,6 +73,9 @@ class CalibSession:
         self._n = 0
         self._order = random.sample(range(1, TOTAL + 1), TOTAL)
         self._done = 0
+        # 새 보정마다 precheck 를 재전송해야 한다 — None 으로 리셋 안 하면 이전 보정에서 얼굴이
+        # 이미 True 라 "상태 변화"가 없어 calib_precheck 가 안 나가고, FE 위치확인이 "확인 중"에서 멈춘다.
+        self._face_ok = None
         self._request_point(self._order[0])
 
     def on_start(self, tempId):
@@ -85,7 +90,9 @@ class CalibSession:
             return
         self._n = int(n)
         self._pts[self._n] = {"x": int(x), "y": int(y), "feats": []}
-        self._until = time.monotonic() + COLLECT_S
+        now = time.monotonic()
+        self._collect_after = now + SETTLE_S   # 눈이 새 점에 착지할 시간 — 그 전 프레임은 안 담는다
+        self._until = self._collect_after + COLLECT_S
 
     def on_registered(self, prof_id, is_active):
         # 프로필 확정. 활성 여부는 BE가 결정 — 활성 리로드는 calib_changed에서만 한다.
@@ -117,10 +124,11 @@ class CalibSession:
         self._maybe_precheck(f is not None)
         if self._n == 0:                   # 점 사이 대기(collect_start 기다림)
             return
-        if time.monotonic() > self._until:  # 창 끝 → 이 점 마감
+        now = time.monotonic()
+        if now > self._until:              # 창 끝 → 이 점 마감
             self._close_point()
             return
-        if f is not None:
+        if f is not None and now >= self._collect_after:  # settle 지난 뒤(착지 후)만 담는다
             self._pts[self._n]["feats"].append(f)
 
     # ── 내부 ──
@@ -223,6 +231,7 @@ def _selftest():
         requested.append(n)
         x, y = cell[n - 1]
         cs.on_collect_start(n, x, y)
+        cs._collect_after = 0  # 셀프테스트는 즉시 feed 라 settle 우회(라이브는 SETTLE_S 만큼 대기)
         for _ in range(10):
             cs.feed_frame(np.array([x / sw, y / sh], dtype=float))  # 특징=정규화 목표
         cs._until = 0  # 창 강제 마감
