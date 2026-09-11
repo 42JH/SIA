@@ -297,6 +297,7 @@ class FaceEngine:
             )
         )
         self._last_ts = 0
+        self.last_ipd_norm = None  # 두 홍채 사이 정규화 거리 — 위치 프리체크(거리) 용, 얼굴 없으면 None
         # detect_for_video는 스레드 안전하지 않고 _last_ts 단조 상태를 공유한다.
         # 재보정 중엔 GazeWorker 스레드와 CalibSession(메인 루프)이 같은 엔진을 동시에 부르는데,
         # 락이 없으면 두 스레드가 같은 _last_ts 를 읽어 같은/역전 ts 를 넣어 "타임스탬프가 증가하지 않음"으로 터진다.
@@ -316,8 +317,15 @@ class FaceEngine:
                 result = self.landmarker.detect_for_video(img, ts_ms)
         except Exception as e:  # MediaPipe 간헐 실패 — 한 프레임만 버리고 앱은 계속
             print(f"[시선 추론 오류, 프레임 건너뜀] {type(e).__name__}: {str(e)[:80]}")
+            self.last_ipd_norm = None
             return None
         f = gaze_features(result)
+        if result.face_landmarks:  # 위치 프리체크(거리)용 홍채간 정규화 거리 갱신
+            lm = result.face_landmarks[0]
+            self.last_ipd_norm = float(((lm[R_IRIS].x - lm[L_IRIS].x) ** 2
+                                        + (lm[R_IRIS].y - lm[L_IRIS].y) ** 2) ** 0.5)
+        else:
+            self.last_ipd_norm = None
         if f is None or self.deep is None:
             return f
         from deepgaze import face_crop
