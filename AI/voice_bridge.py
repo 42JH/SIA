@@ -27,8 +27,8 @@ AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩
   FE 의 "등록" 버튼이 열린다. voice_quality_warn 은 보내지 않는다 — 문장마다 결과를 줬으니 그 자리에서 고치는 쪽이 빠르다.
   NOTE(한계): FE 가 voice_review 를 5번째 문장 것으로만 보고 화면 번호를 5로 고정하면, 1번 문장 뒤에 "등록" 이 열린다.
   FE 가 자기 진행 번호를 쓰도록 고쳐야 한다 (BE 는 voice_review 에 n 을 싣지 않는다).
-- 로컬 프로필(models/speaker.npz)은 여기서 안 건드린다. 확정은 FE voice_commit 이고, 활성이 되면 BE 가
-  voice_changed 를 보내므로 그때 활성 npz 를 내려받아 교체한다 — 중단·미확정 등록이 쓰던 프로필을 덮지 않게.
+- 등록 과정에서는 로컬 프로필(models/speaker.npz)을 건드리지 않는다. 확정은 FE voice_commit 이고,
+  voice_changed 또는 설정의 활성 참조를 받으면 VoiceProfileSync가 검증 후 교체한다 — 미확정 등록과 분리한다.
 
 NOTE(한계): 샘플은 VAD 가 잘라 준 발화를 자르지 않고 통째로 쓴다(말 시작 전 여유분 2 s 포함) — CLI 등록(voice_enroll.py)과
 같은 입력이라 화자 인증을 실측했을 때와 조건이 같다.
@@ -37,11 +37,15 @@ NOTE(한계): 샘플은 VAD 가 잘라 준 발화를 자르지 않고 통째로 
 (VoiceSession, voice_*). ②에서 문장마다 임베딩하고 프로필을 만든다. 같은 5문장을 한 번 더 읽히던 command_* 단계는
 아무것도 만들지 않는 중복이라 폐기됐다(229) — BE 는 그 이벤트를 받아도 무시한다.
 """
+import hashlib
 import io
 import json
+import os
+import tempfile
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import numpy as np
 
@@ -87,10 +91,158 @@ def log_rx(type_, data):
     print(f"[BE←] {type_} {json.dumps(data, ensure_ascii=False)}")
 
 
+def clear_voice_cache(speaker, profile_path):
+    """활성 음성 캐시만 지운다 — 보정·제스처 파일과 등록 샘플은 건드리지 않는다."""
+    path = Path(profile_path)
+    if path.exists():
+        print(f"[보이스 동기화] 서버에 사용 중인 목소리가 없어 로컬 프로필을 지운다 — {path}")
+    path.unlink(missing_ok=True)
+    speaker.apply_profile(None, speaker.default_threshold)
+
+
+class VoiceProfileSync:
+    """다운로드는 워커, 적용은 메인 루프. 늦게 받은 이전 프로필은 적용 전에 버린다."""
+
+    def __init__(self, speaker, profile_path):
+        self.speaker = speaker
+        self.path = Path(profile_path)
+        self.link = None
+        self._condition = threading.Condition()
+        self._desired = object()  # 아직 수신하지 않음 — 명시적 null과 구분한다.
+        self._applied = object()
+        self._generation = 0
+        self._queued = self._busy = self._closed = False
+        self._pending = None
+        self._worker = None
+
+    def on_changed(self, ref):
+        """전체 설정의 blobs.voice와 voice_changed가 같은 최신 요청을 갱신한다."""
+        if ref is not None:
+            if (not isinstance(ref, dict) or type(ref.get("id")) is not int or ref["id"] <= 0
+                    or not isinstance(ref.get("sha256"), str) or len(ref["sha256"]) != 64
+                    or any(c not in "0123456789abcdefABCDEF" for c in ref["sha256"])):
+                print("[보이스 동기화] 잘못된 프로필 참조 — 기존 프로필 유지")
+                return
+            ref = (ref["id"], ref["sha256"].lower())
+        with self._condition:
+            if self._closed:
+                return
+            if ref == self._desired and (self._queued or self._busy or self._pending is not None):
+                return
+            if ref != self._desired:
+                self._generation += 1
+                self._desired = ref
+            self._pending = None
+            if ref is None:
+                # 이전 HTTP 응답을 기다리지 않고 다음 메인 루프에서 삭제한다.
+                self._queued = False
+                self._pending = (self._generation, None, None)
+            else:
+                self._queued = True
+                if self._worker is None:
+                    self._worker = threading.Thread(target=self._run, daemon=True)
+                    self._worker.start()
+            self._condition.notify_all()
+
+    def _prepare(self, ref):
+        _, digest = ref
+        try:
+            body = self.path.read_bytes()
+            if hashlib.sha256(body).hexdigest() != digest:
+                raise ValueError("로컬 해시 불일치")
+            profile = self.speaker.read_profile(io.BytesIO(body), self.speaker.default_threshold)
+            return body, profile
+        except Exception:  # 손상된 ZIP·객체 배열도 로컬 캐시 실패로 보고 서버에서 다시 받는다.
+            pass
+        body = self.link.get_voice_npz()
+        if hashlib.sha256(body).hexdigest() != digest:
+            raise ValueError("다운로드한 보이스의 sha256이 수신 참조와 다릅니다")
+        return body, self.speaker.read_profile(io.BytesIO(body), self.speaker.default_threshold)
+
+    def _run(self):
+        while True:
+            with self._condition:
+                self._condition.wait_for(lambda: self._closed or self._queued)
+                if self._closed:
+                    return
+                ref = self._desired
+                self._queued, self._busy = False, True
+            try:
+                prepared = self._prepare(ref)
+                with self._condition:
+                    # ID만 바뀐 최신 요청에도 이미 검증한 동일 해시의 파일을 쓸 수 있다.
+                    if not self._closed and self._desired is not None and self._desired[1] == ref[1]:
+                        self._pending = (self._generation, self._desired, prepared)
+                        self._queued = False
+            except Exception as exc:
+                print(f"[보이스 동기화] 실패 — 기존 프로필 유지: {exc}")
+            finally:
+                with self._condition:
+                    self._busy = False
+                    self._condition.notify_all()
+
+    def apply_pending(self, reset_audio):
+        """검증을 마친 최신 파일만 교체한다. 네트워크·임베딩 중에는 잠금을 잡지 않는다."""
+        with self._condition:
+            pending, self._pending = self._pending, None
+            if self._closed or pending is None or pending[0] != self._generation:
+                return False
+            _, ref, prepared = pending
+            temp_path = None
+            try:
+                if ref is None:
+                    changed = (self._applied is not None or self.path.exists()
+                               or self.speaker.enrolled or self.speaker.profile_id is not None)
+                    if changed:
+                        reset_audio()
+                    clear_voice_cache(self.speaker, self.path)
+                    self._applied = None
+                    return changed
+                body, (centroid, threshold) = prepared
+                profile_id, digest = ref
+                try:
+                    same_file = self.path.read_bytes() == body
+                except OSError:
+                    same_file = False
+                old = self.speaker.snapshot()
+                changed = (old[2:] != ref or old[0] is None or old[1] != threshold
+                           or not np.array_equal(old[0], centroid))
+                if not same_file:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(dir=self.path.parent, suffix=".npz", delete=False) as f:
+                        temp_path = Path(f.name)
+                        f.write(body)
+                if changed:
+                    reset_audio()  # 실패할 수 있는 콜백은 기존 정상 파일을 교체하기 전에 끝낸다.
+                if temp_path is not None:
+                    os.replace(temp_path, self.path)
+                if changed:
+                    self.speaker.apply_profile(centroid, threshold, profile_id, digest)
+                    print(f"[보이스 동기화] 활성 프로필 적용 id={profile_id}")
+                self._applied = ref
+                return changed
+            except Exception as exc:
+                print(f"[보이스 동기화] 적용 실패: {exc}")
+                return False
+            finally:
+                if temp_path is not None:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError as exc:
+                        print(f"[보이스 동기화] 임시 파일 정리 실패: {exc}")
+
+    def close(self):
+        with self._condition:
+            self._closed = True
+            self._queued = False
+            self._pending = None
+            self._condition.notify_all()
+
+
 class VoiceSession:
     def __init__(self, link, speaker, profile_path):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
-        self.speaker = speaker              # SpeakerVerifier — 임베딩·centroid 계산, 활성 교체 시 reload
+        self.speaker = speaker              # SpeakerVerifier — 등록 임베딩·centroid 계산용
         self.profile_path = str(profile_path)
         self.active = False
         self.started_at = 0.0               # 이 수집이 시작된 시각 — 두 수집이 겹치면 나중에 시작한 쪽이 발화를 받는다
@@ -158,19 +310,10 @@ class VoiceSession:
         print(f"[화자 등록] 프로필 확정 id={prof_id} active={is_active}")
 
     def on_changed(self, data):
-        """활성 보이스가 바뀜 → 활성 npz 를 내려받아 로컬 프로필 교체 + 게이트 즉시 갱신(재시작 불필요)."""
+        """활성 교체는 전체 설정 수신과 같은 동기화 경로로 보낸다."""
         log_rx("voice_changed", data)
-        try:
-            url = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/voices/active/npz"
-            with urllib.request.urlopen(url, timeout=15) as r:
-                body = r.read()
-            print(f"[BE REST] GET {url} → {r.status} ({len(body)} B)")
-            with open(self.profile_path, "wb") as f:
-                f.write(body)
-            self.speaker.reload()
-            print(f"[화자 등록] 활성 보이스 리로드 id={data.get('id')} → {self.profile_path}")
-        except Exception as e:
-            print(f"[화자 등록] 활성 npz 리로드 실패: {e}")
+        if self.link.voice_sync is not None:
+            self.link.voice_sync.on_changed(data)
 
     # ── 메인 루프가 VAD 발화마다 호출 (등록 중엔 brain 대신 여기로) ──
     def on_utter(self, audio_i16, t_utter=None):

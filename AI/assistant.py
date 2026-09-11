@@ -325,8 +325,10 @@ def main():
     if not os.environ.get("SIA_NO_BE"):
         try:
             from be_link import AgentLink
+            from voice_bridge import VoiceProfileSync
 
-            link = AgentLink()
+            voice_sync = VoiceProfileSync(speaker, HERE / "models" / "speaker.npz") if speaker else None
+            link = AgentLink(voice_sync=voice_sync)
             print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
             from calib_bridge import CalibSession
 
@@ -345,7 +347,7 @@ def main():
     brain.start()
 
     voice_events = collections.deque(maxlen=16)
-    voice = VoiceListener(voice_events)
+    voice = VoiceListener(voice_events, on_reset=brain.reset_audio)
     voice.start()
 
     pyautogui.FAILSAFE = False  # 커서를 안 쓰는 모드 — 킬스위치는 ESC
@@ -469,6 +471,8 @@ def main():
                             link.send_event("model_load_failed", {"name": model_name,
                                                                      "reason": "모델 파일을 찾을 수 없습니다"})
                     elif event_type in ("hello_ack", "recognition_start", "settings_changed"):
+                        if voice.set_settings(data.get("settings")):
+                            pending_capture = None
                         blobs = data.get("blobs", {}) if isinstance(data, dict) else {}
                         refs = blobs.get("gestures", []) if isinstance(blobs, dict) else []
                         remote_refs = {str(item["id"]): item for item in refs
@@ -539,12 +543,20 @@ def main():
                         print(f"[BE RESULT] name={data.get('name', '-')} | "
                               f"ok={data.get('ok', False)} | message={hud_feedback}")
 
+            if link and link.voice_sync and link.voice_sync.apply_pending(voice.reset_audio):
+                pending_capture = None
+
             # --- 음성 이벤트 처리 ---
             from brain import active_window_title, foreground_hwnd, press_keys
 
-            while voice_events:
-                ev = voice_events.popleft()
-                if ev[0] == "onset":
+            while (ev := voice.take_event()) is not None:
+                if ev[0] == "reset":
+                    pending_capture = None
+                elif ev[0] == "notice":
+                    if link:
+                        link.notice(ev[1])
+                    overlay.toast(ev[1])
+                elif ev[0] == "onset":
                     # 말이 시작된 '그 순간'의 화면·응시 영역·대상 창을 즉시 확보
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
@@ -844,7 +856,8 @@ def main():
                 break
     finally:
         camera.running = False
-        voice.running = False
+        voice.stop()
+        voice.join(timeout=4)
         if worker:
             worker.running = False
         if link:
