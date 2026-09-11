@@ -7,11 +7,10 @@
 시험:  python gesture_studio.py --test    (라이브로 분류 결과 확인)
 
 등록 흐름: 이름 입력 → 3초 카운트다운 → 손모양 유지한 채 샘플 30장 수집
-→ 혼동도 검사(기존 커스텀·내장 제스처와 겹치면 경고) → 저장
-→ 원하면 실행할 앱을 지정해 gestures.json에 바로 연결.
+→ 혼동도 검사(기존 커스텀·내장 제스처와 겹치면 경고) → 저장 (품질 검증용 로컬
+템플릿만 만들며, 실행 매핑은 BE 제스처 등록 UI에서 별도로 지정한다).
 """
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -145,17 +144,6 @@ def register(camera_idx):
     # gestures.json here. Register and assign the gesture through the BE/UI flow.
     print("[등록 완료] 로컬 품질 검증용 템플릿만 저장했습니다. "
           "실행 기능은 제스처 등록 UI에서 BE 매핑으로 지정하세요.")
-    return
-    print(f"등록 완료: {name} (샘플 {len(feats)}개"
-          + (f", 최근접 기존 클래스 '{near}' 거리 {dist:.2f})" if near else ")"))
-
-    app = input("이 제스처로 실행할 앱 (chrome/notepad/calc 등, 엔터=연결 안 함): ").strip()
-    if app:
-        gj = HERE / "gestures.json"
-        data = json.loads(gj.read_text(encoding="utf-8"))
-        data.setdefault("default", {})[name] = {"run": app, "label": name}
-        gj.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"gestures.json에 연결됨: {name} → {app} (assistant 재시작 후 적용)")
 
 
 def live_test(camera_idx, distance="미기록", lighting="미기록", hand_side="미기록"):
@@ -641,7 +629,7 @@ if __name__ == "__main__":
     elif args.remove:
         s = CustomGestures(STORE)
         s.remove(args.remove)
-        print(f"삭제됨: {args.remove} (gestures.json의 연결은 직접 지우세요)")
+        print(f"삭제됨: {args.remove} (BE 제스처 등록 UI의 매핑도 함께 정리하세요)")
     elif args.screen_repeat_test:
         if args.target not in ("Screen_Next", "Screen_Prev"):
             ap.error("--screen-repeat-test에는 --target Screen_Next 또는 Screen_Prev가 필요합니다.")
