@@ -135,7 +135,7 @@ class RegistrationOrchestratorTest {
 
         orchestrator.assign(assignBody(tempId));
 
-        verify(gestureService).updateCustom(eq(7L), eq("손가락 하트"), eq("음악 재생"), any(), eq(false), any());
+        verify(gestureService).update(eq(7L), eq("손가락 하트"), eq("음악 재생"), any(), eq(false), any());
         verify(gestureService).updateNpz(7L, npz, Sha256.hex(npz), null, "DYNAMIC");
         verify(gestureService, never()).saveCustom(any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);

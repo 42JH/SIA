@@ -116,7 +116,8 @@ public class GestureMappingController {
     }
 
     /**
-     * 커스텀 제스처 수정 — {name?, label?, description?, repeatable?, steps?}.
+     * 제스처 수정 — {name?, label?, description?, repeatable?, steps?}.
+     * 기본 제공 제스처는 steps · repeatable 만 받는다 (모양과 표시 문구는 BE 소유). 빈 steps 는 기능 해제다.
      * 동작(영상) 재촬영은 WS reg_start {replaceGestureId} 경로다.
      */
     @PutMapping("/{id}")
@@ -133,7 +134,7 @@ public class GestureMappingController {
                         s.hasNonNull("delayMs") ? s.path("delayMs").asInt() : null));
             }
         }
-        gestureService.updateCustom(id,
+        gestureService.update(id,
                 body.hasNonNull("name") ? body.path("name").asText() : null,
                 body.hasNonNull("label") ? body.path("label").asText() : null,
                 body.hasNonNull("description") ? body.path("description").asText() : null,

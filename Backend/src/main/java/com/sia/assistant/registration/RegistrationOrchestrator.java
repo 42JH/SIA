@@ -383,7 +383,7 @@ public class RegistrationOrchestrator {
         Long replaceId = reg.replaceGestureId;
         long gestureId;
         if (replaceId != null) {
-            gestureService.updateCustom(replaceId, name, label, description, repeatable,
+            gestureService.update(replaceId, name, label, description, repeatable,
                     steps.isEmpty() ? null : steps);
             gestureService.updateNpz(replaceId, npz, npzSha256, hands, reg.motion);
             gestureId = replaceId;

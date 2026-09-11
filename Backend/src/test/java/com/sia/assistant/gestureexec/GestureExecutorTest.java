@@ -118,6 +118,20 @@ class GestureExecutorTest {
                 .containsEntry("message", "지원하지 않는 스크롤 방향입니다");
     }
 
+    @Test
+    @DisplayName("기능이 지정되지 않은 제스처는 성공이 아니라 실패로 보고한다 — 빈 매크로는 실행이 아니다")
+    void unassignedGestureIsReportedAsFailure() {
+        stubGesture("손바닥 펴기"); // 기본 제공 제스처는 스텝 0개로 태어난다
+
+        executor.execute(exec("손바닥 펴기"));
+
+        Map<String, Object> body = awaitResult();
+        assertThat(body).containsEntry("ok", false);
+        assertThat((String) body.get("message")).contains("기능이 지정되지 않은");
+        assertThat(body.get("steps")).asList().isEmpty();
+        verify(toolInvoker, never()).invoke(any(), any(), any());
+    }
+
     // ------------------------------------------------------------------ 도우미
 
     private void stubGesture(String name, GestureService.Step... steps) {

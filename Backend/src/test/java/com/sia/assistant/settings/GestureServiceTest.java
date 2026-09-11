@@ -2,8 +2,10 @@ package com.sia.assistant.settings;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,9 +55,9 @@ class GestureServiceTest {
         // 스텝 검증이 tool 행을 보므로 하나 심는다 (운영은 ToolCatalogSync 가 채운다)
         jdbc.update("INSERT INTO tool (name, description, input_schema_json, session_required, confirm_required,"
                 + " available, synced_at) VALUES ('scroll.step', 'd', '{}', 1, 0, 1, ?)", Times.now());
-        // 기본 제공(canned) 제스처 한 건 — DefaultMappings 와 같은 형태 (custom=0, npz 없음, 한손 정적)
+        // 기본 제공 제스처 한 종 — DefaultGestures 와 같은 형태 (custom=0, npz 없음, 한손 정적, 스텝 없음)
         jdbc.update("INSERT INTO gesture (custom, kind, context, name, label, repeatable, hands, motion)"
-                + " VALUES (0, 'HAND', NULL, 'Open_Palm', '세션 연장', 0, 1, 'STATIC')");
+                + " VALUES (0, 'HAND', NULL, 'Open_Palm', '손바닥 펴기', 0, 1, 'STATIC')");
         agentHub = mock(AgentHub.class);
         notifier = mock(AgentSyncNotifier.class);
         ObjectProvider<AgentSyncNotifier> notifierProvider = mock(ObjectProvider.class);
@@ -115,12 +117,44 @@ class GestureServiceTest {
     }
 
     @Test
+    @DisplayName("기본 제공 제스처는 기능만 바꿀 수 있다 — 빈 배열은 기능 해제, 이름·라벨·설명은 거절")
+    void builtinTakesFunctionOnly() {
+        long builtin = jdbc.queryForObject("SELECT id FROM gesture WHERE name = 'Open_Palm'", Long.class);
+
+        service.update(builtin, null, null, null, true,
+                List.of(new GestureService.Step("scroll.step", Map.of("dir", "up"), null)));
+
+        assertThat(service.getOne(builtin)).containsEntry("repeatable", true)
+                .containsEntry("runnable", true);
+        assertThat(service.getOne(builtin).get("steps")).asList().hasSize(1);
+        assertThat(jdbc.queryForList("SELECT tool_name, args_json FROM gesture_step WHERE gesture_id = ?",
+                builtin)).singleElement().satisfies(step -> assertThat(step)
+                        .containsEntry("tool_name", "scroll.step").containsEntry("args_json", "{\"dir\":\"up\"}"));
+
+        // 이름·라벨·설명은 BE 소유다 — 기동 시드가 카탈로그 값으로 되돌리므로 받지 않는다
+        assertThatThrownBy(() -> service.update(builtin, "내 손바닥", null, null, null, null))
+                .isInstanceOf(ApiException.class).hasMessageContaining("기능 변경만");
+        assertThatThrownBy(() -> service.update(builtin, null, "손바닥", null, null, null))
+                .isInstanceOf(ApiException.class).hasMessageContaining("기능 변경만");
+        verify(agentHub, never()).send(eq("gesture_renamed"), any());
+
+        // 빈 배열 = 기능 해제. 기본 제공 제스처만 허용된다
+        service.update(builtin, null, null, null, null, List.of());
+        assertThat(service.getOne(builtin).get("steps")).asList().isEmpty();
+        assertThat(service.getOne(builtin)).containsEntry("runnable", false);
+
+        long custom = save("손가락 하트", NPZ_A);
+        assertThatThrownBy(() -> service.update(custom, null, null, null, null, List.of()))
+                .isInstanceOf(ApiException.class).hasMessageContaining("최소 한 단계");
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     @DisplayName("이름 변경·삭제 통지는 id 를 싣고, 삭제하면 템플릿도 목록에서 사라진다 — AI 의 npz 재업로드는 없다")
     void renameAndRemoveCarryId() {
         long a = save("손가락 하트", NPZ_A);
 
-        service.updateCustom(a, "하트", null, null, null, null);
+        service.update(a, "하트", null, null, null, null);
         ArgumentCaptor<Map<String, Object>> renamed = ArgumentCaptor.forClass(Map.class);
         verify(agentHub).send(eq("gesture_renamed"), renamed.capture());
         assertThat(renamed.getValue()).containsEntry("id", a)

@@ -79,6 +79,13 @@ public class GestureExecutor {
                 sendResult(name, false, "꺼져 있는 제스처예요. 제스처 목록에서 켠 뒤 사용할 수 있습니다", stepResults);
                 return;
             }
+            // 기본 제공 제스처는 기능이 빈칸으로 태어난다 (DefaultGestures) — 빈 매크로를 그대로 돌리면
+            // 스텝 0개짜리 성공 보고가 나가 "실행했다는데 아무 일도 안 일어나는" 상태가 된다.
+            if (def.steps().isEmpty()) {
+                sendResult(name, false, "아직 기능이 지정되지 않은 제스처예요. 제스처 목록에서 기능을 지정해 주세요",
+                        stepResults);
+                return;
+            }
             // 세션 게이트는 매크로 단위다 — S 도구가 하나라도 있으면 첫 스텝 전에 확인한다 (프로토콜 §8.6).
             // 스텝마다 검사하면 앞 스텝이 이미 실행된 뒤 중간에서 막혀 반쯤 실행된 매크로가 남는다.
             if (needsSession(def) && sessionService.activeOrNull() == null) {

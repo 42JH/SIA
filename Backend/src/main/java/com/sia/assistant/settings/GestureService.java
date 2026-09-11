@@ -29,6 +29,8 @@ import tools.jackson.databind.ObjectMapper;
  *   받아 GET /api/agent/gestures/{id}/npz 로 내려받고, 이름 변경·삭제에는 npz 를 다시 올리지 않는다.
  * 와이어프레임 확정(2026-09-01) 반영: 켜기/끄기(enabled)·등록일(created_at)·등록 영상(video_path)·
  * 목록 페이지네이션·수정(이름/기능)·매크로 최대 5단계.
+ * ★2026-09-11: 기본 제공 제스처(custom=0)는 모양(DefaultGestures 카탈로그 9종)만 갖고 스텝이 없다 —
+ *   무엇을 실행할지는 사용자가 update(steps) 로 채우고, 비우면 다시 기능 없는 상태로 돌아간다.
  */
 @Service
 public class GestureService {
@@ -317,7 +319,7 @@ public class GestureService {
         String ctx = (context == null || context.isBlank()) ? null : context;
         Integer safeHands = hands == null ? null : requireHands(hands);
         String safeMotion = motion == null ? null : requireMotion(motion);
-        validateSteps(steps);
+        validateSteps(steps, false);
 
         // SQLite 의 UNIQUE 는 NULL 끼리 충돌하지 않아 ON CONFLICT 를 못 쓴다 — 직접 조회 후 분기
         Long id = findGestureId("HAND", ctx, name);
@@ -357,17 +359,23 @@ public class GestureService {
     }
 
     /**
-     * 커스텀 제스처 수정 (와이어프레임 제스처 수정 화면) — 이름·라벨·설명·반복·기능(스텝).
+     * 제스처 수정 (와이어프레임 제스처 수정 화면) — 이름·라벨·설명·반복·기능(스텝).
      * 이름이 바뀌면 AI 에 gesture_renamed {id, oldName, newName} 를 보낸다 — 템플릿은 id 로 내려받으므로
      * AI 는 이름표만 바꾸고 npz 를 다시 올리지 않는다.
      * 영상 재촬영은 여기가 아니라 WS reg_start {replaceGestureId} 경로다.
+     *
+     * 기본 제공 제스처(custom=0)는 기능(steps)과 반복만 바꿀 수 있다 — 기본 제공은 모양만 정의하고
+     * 행동을 비워 둔 채 태어나므로(DefaultGestures) 그 빈칸을 채우는 경로가 여기다.
+     * 이름·라벨·설명은 BE 가 소유해 거절한다: 이름은 AI 가 gesture_exec 로 보내는 키이고,
+     * 라벨·설명은 모양 설명이라 기동 시드가 카탈로그 값으로 다시 맞춘다.
+     * steps 를 빈 배열로 보내면 기능을 지운다 (기본 제공만 — 커스텀은 최소 한 단계가 필요하다).
      */
     @Transactional
-    public void updateCustom(long id, String nameOrNull, String labelOrNull, String descriptionOrNull,
-                             Boolean repeatableOrNull, List<Step> stepsOrNull) {
+    public void update(long id, String nameOrNull, String labelOrNull, String descriptionOrNull,
+                       Boolean repeatableOrNull, List<Step> stepsOrNull) {
         Row row = requireRow(id);
-        if (!row.custom()) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처는 켜기/끄기만 가능합니다");
+        if (!row.custom() && (nameOrNull != null || labelOrNull != null || descriptionOrNull != null)) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST, "기본 제공 제스처는 켜기/끄기와 기능 변경만 가능합니다");
         }
         String oldName = row.name();
         String ctx = row.context();
@@ -394,7 +402,7 @@ public class GestureService {
             jdbc.update("UPDATE gesture SET repeatable = ? WHERE id = ?", repeatableOrNull ? 1 : 0, id);
         }
         if (stepsOrNull != null) {
-            validateSteps(stepsOrNull);
+            validateSteps(stepsOrNull, !row.custom());
             jdbc.update("DELETE FROM gesture_step WHERE gesture_id = ?", id);
             writeSteps(id, stepsOrNull);
         }
@@ -464,8 +472,12 @@ public class GestureService {
         }
     }
 
-    private void validateSteps(List<Step> steps) {
+    /** allowEmpty = 기능 해제 허용 (기본 제공 제스처). 커스텀은 최소 한 단계가 있어야 한다. */
+    private void validateSteps(List<Step> steps, boolean allowEmpty) {
         if (steps == null || steps.isEmpty()) {
+            if (allowEmpty && steps != null) {
+                return;
+            }
             throw new ApiException(ErrorCode.INVALID_REQUEST, "매크로에는 최소 한 단계가 필요합니다");
         }
         if (steps.size() > MAX_STEPS) {
