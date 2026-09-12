@@ -3,6 +3,7 @@ package com.sia.assistant.wsroutes;
 import com.sia.assistant.registration.CalibrationOrchestrator;
 import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
+import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.WsEvents;
@@ -27,25 +28,35 @@ public class FeWsRoutes {
     private final VoiceRegistrationOrchestrator voiceRegistration;
     private final CalibrationOrchestrator calibration;
     private final EnrollmentRelay enrollment;
+    private final CameraPreviewRelay cameraPreview;
 
     public FeWsRoutes(AgentHub agentHub, RegistrationOrchestrator registration,
                       VoiceRegistrationOrchestrator voiceRegistration,
-                      CalibrationOrchestrator calibration, EnrollmentRelay enrollment) {
+                      CalibrationOrchestrator calibration, EnrollmentRelay enrollment,
+                      CameraPreviewRelay cameraPreview) {
         this.agentHub = agentHub;
         this.registration = registration;
         this.voiceRegistration = voiceRegistration;
         this.calibration = calibration;
         this.enrollment = enrollment;
+        this.cameraPreview = cameraPreview;
     }
 
     @EventListener
     public void on(WsEvents.FeMessage msg) {
         JsonNode d = msg.data();
         switch (msg.type()) {
+            // ---- 촬영 전 카메라 미리보기 (등록 흐름과 독립 — 설정 화면 등에서도 쓴다)
+            case "cam_preview_start" -> cameraPreview.start();
+            case "cam_preview_stop" -> cameraPreview.stop();
             // ---- 커스텀 제스처 (3회 촬영 · motion 은 정적/동적 등록 창 · replaceGestureId 면 동작 재촬영)
-            case "reg_start" -> registration.start(
-                    d.hasNonNull("replaceGestureId") ? d.path("replaceGestureId").asLong() : null,
-                    d.hasNonNull("motion") ? d.path("motion").asText() : null);
+            //      실제 촬영이 시작되면 미리보기는 끝이다 — 같은 카메라가 reg_frame 으로 이중 송출되지 않게
+            case "reg_start" -> {
+                cameraPreview.stopFor("제스처 등록 시작");
+                registration.start(
+                        d.hasNonNull("replaceGestureId") ? d.path("replaceGestureId").asLong() : null,
+                        d.hasNonNull("motion") ? d.path("motion").asText() : null);
+            }
             case "reg_stop" -> registration.stop(d.path("tempId").asText());
             case "macro_assign" -> registration.assign(d);
             // ---- 온보딩: 이름 불러보기
@@ -62,7 +73,10 @@ public class FeWsRoutes {
                     d.hasNonNull("deviceLabel") ? d.path("deviceLabel").asText() : null);
             case "voice_reg_cancel" -> voiceRegistration.cancel(d.path("tempId").asText());
             // ---- 시선 보정 (재측정 최대 3회 — BE 가 센다)
-            case "calib_start" -> calibration.start();
+            case "calib_start" -> {
+                cameraPreview.stopFor("시선 보정 시작"); // 보정 중에는 프리뷰를 보내지 않는다 (자세 안내는 calib_precheck)
+                calibration.start();
+            }
             case "calib_point_shown" -> calibration.onPointShown(d.path("n").asInt(),
                     d.hasNonNull("x") ? d.path("x").asInt() : null,
                     d.hasNonNull("y") ? d.path("y").asInt() : null);

@@ -6,6 +6,7 @@ import com.sia.assistant.model.ModelManager;
 import com.sia.assistant.registration.CalibrationOrchestrator;
 import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
+import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
 import com.sia.assistant.session.SessionService;
 import com.sia.assistant.ws.FeHub;
@@ -35,12 +36,13 @@ public class AgentWsRoutes {
     private final EnrollmentRelay enrollment;
     private final ModelManager modelManager;
     private final AgentBootstrapper bootstrapper;
+    private final CameraPreviewRelay cameraPreview;
 
     public AgentWsRoutes(FeHub feHub, SessionService sessionService,
                          GestureExecutor gestureExecutor, RegistrationOrchestrator registration,
                          VoiceRegistrationOrchestrator voiceRegistration, CalibrationOrchestrator calibration,
                          EnrollmentRelay enrollment, ModelManager modelManager,
-                         AgentBootstrapper bootstrapper) {
+                         AgentBootstrapper bootstrapper, CameraPreviewRelay cameraPreview) {
         this.feHub = feHub;
         this.sessionService = sessionService;
         this.gestureExecutor = gestureExecutor;
@@ -50,6 +52,7 @@ public class AgentWsRoutes {
         this.enrollment = enrollment;
         this.modelManager = modelManager;
         this.bootstrapper = bootstrapper;
+        this.cameraPreview = cameraPreview;
     }
 
     @EventListener
@@ -75,6 +78,9 @@ public class AgentWsRoutes {
             case "voice_rejected" -> feHub.send("voice_rejected",
                     Map.of("message", "등록된 목소리로 한 명령이 아닙니다."));
             case "gesture_exec" -> gestureExecutor.execute(d);
+            // ---- 촬영 전 카메라 미리보기 — 저장 없이 그대로 FE 로 흘린다
+            case "cam_preview_state" -> cameraPreview.onState(d);
+            case "cam_preview_frame" -> cameraPreview.onFrame(d);
             case "reg_started" -> registration.onRegStarted(d.path("tempId").asText());
             case "reg_take" -> registration.onTake(d.path("tempId").asText(), d);
             case "reg_frame" -> registration.onFrame(d.path("tempId").asText(),

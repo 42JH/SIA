@@ -1,7 +1,9 @@
 package com.sia.assistant.wsroutes;
 
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -9,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.sia.assistant.registration.CalibrationOrchestrator;
 import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
+import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.WsEvents;
@@ -16,6 +19,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -26,14 +30,40 @@ class FeWsRoutesTest {
 
     private final ObjectMapper om = new ObjectMapper();
     private AgentHub agentHub;
+    private RegistrationOrchestrator registration;
+    private CalibrationOrchestrator calibration;
+    private CameraPreviewRelay cameraPreview;
     private FeWsRoutes routes;
 
     @BeforeEach
     void setUp() {
         agentHub = mock(AgentHub.class);
-        routes = new FeWsRoutes(agentHub, mock(RegistrationOrchestrator.class),
-                mock(VoiceRegistrationOrchestrator.class), mock(CalibrationOrchestrator.class),
-                mock(EnrollmentRelay.class));
+        registration = mock(RegistrationOrchestrator.class);
+        calibration = mock(CalibrationOrchestrator.class);
+        cameraPreview = mock(CameraPreviewRelay.class);
+        routes = new FeWsRoutes(agentHub, registration,
+                mock(VoiceRegistrationOrchestrator.class), calibration,
+                mock(EnrollmentRelay.class), cameraPreview);
+    }
+
+    @Test
+    @DisplayName("reg_start 는 등록을 시작하기 전에 카메라 미리보기를 끈다 — reg_frame 과 이중 송출되지 않게")
+    void regStartStopsPreviewFirst() throws Exception {
+        routes.on(new WsEvents.FeMessage("reg_start", om.readTree("{\"motion\":\"STATIC\"}")));
+
+        InOrder order = inOrder(cameraPreview, registration);
+        order.verify(cameraPreview).stopFor(anyString());
+        order.verify(registration).start(null, "STATIC");
+    }
+
+    @Test
+    @DisplayName("calib_start 도 미리보기를 끈다 — 보정 중에는 영상을 FE 로 보내지 않는다")
+    void calibStartStopsPreview() throws Exception {
+        routes.on(new WsEvents.FeMessage("calib_start", om.readTree("{}")));
+
+        InOrder order = inOrder(cameraPreview, calibration);
+        order.verify(cameraPreview).stopFor(anyString());
+        order.verify(calibration).start();
     }
 
     @Test

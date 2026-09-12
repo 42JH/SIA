@@ -29,7 +29,8 @@ public abstract class BaseHub extends TextWebSocketHandler {
      * 초당 수십 번 오가거나(gaze_cursor·ping/pong) 수백 KB 짜리(reg_frame)라 INFO 로 찍으면
      * 콘솔이 잠기는 type — 이것들만 DEBUG 로 내린다. 나머지 송수신은 전부 INFO 다.
      */
-    private static final Set<String> NOISY = Set.of("gaze_cursor", "reg_frame", "ping", "pong");
+    private static final Set<String> NOISY =
+            Set.of("gaze_cursor", "reg_frame", "cam_preview_frame", "ping", "pong");
 
     /** 원본 세션 id → 동시 전송 안전 데코레이터 */
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
