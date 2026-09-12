@@ -1007,7 +1007,7 @@ GET /api/previews/9f3a2c17-2.webm
 GET /api/previews/9f3a2c17-2.jpg
 ```
 
-**200** — 동적 등록은 `video/webm`, 정적 등록은 `image/jpeg` 다. Content-Type 은 확장자가 정한다. URL 은 WS `reg_recorded` 의 `takes[].webmUrl` 을 그대로 쓴다. **404** 파일 없음 (본문 없음).
+**200** — 동적 등록은 `video/webm`, 정적 등록은 `image/jpeg` 다. Content-Type 은 확장자가 정한다. URL 은 WS `reg_recorded` 의 `takes[].previewUrl` 을 그대로 쓴다. **404** 파일 없음 (본문 없음).
 
 파일명은 `[a-zA-Z0-9-]+\.(?:webm|jpg)` 패턴만 허용한다. 사용자 카메라 영상·사진이므로 PC 밖으로 내보내지 않는다.
 
@@ -2281,7 +2281,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `reg_state` | `{tempId: string, phase: MODE_STARTED \| RECORDING \| REJECTED \| CAPTURED \| ENCODING, reason?: string, similarTo?: string, similarity?: number}` | 등록 진행 상태. `reason` · `similarTo` · `similarity` 는 `REJECTED` 에만 |
 | `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 촬영 회차 진행. 동적은 `COUNTDOWN → RECORDING → DONE`, 정적은 촬영 구간이 없어 `COUNTDOWN → DONE` 이다. `reg_state.phase` 와는 다른 축이라 정적에서도 `reg_state {RECORDING}` 은 뜬다 |
 | `reg_frame` | `{tempId: string, take: int, seq: long, jpegB64: string}` | 실시간 미리보기 프레임 (JPEG base64) |
-| `reg_recorded` | `{tempId: string, takes: {take: int, webmUrl: string \| null}[], reason?: string}` | 회차별 미리보기. 동적은 webm, 정적은 jpg URL 이다 (필드 이름은 `webmUrl` 그대로). 전 회차 실패면 `reason` |
+| `reg_recorded` | `{tempId: string, takes: {take: int, mediaType: VIDEO \| IMAGE, previewUrl: string \| null}[], reason?: string}` | 회차별 미리보기. `mediaType` 은 `VIDEO`(webm) \| `IMAGE`(jpg) 로, FE 가 `<video>` / `<img>` 를 고르는 값이다. 실패 회차는 `previewUrl: null` 이고 `mediaType` 은 그대로 채운다. 전 회차 실패면 `reason` |
 | `macro_saved` | `{id: long, name: string, videoUrl: string \| null}` | 매크로 저장 완료 |
 
 #### 온보딩 · 보이스
@@ -2407,8 +2407,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 { "type": "reg_state", "data": { "tempId": "9f3a2c17", "phase": "REJECTED", "reason": "이미 등록된 제스처와 너무 비슷해요", "similarTo": "주먹 쥐기", "similarity": 0.87 } }
 ```
 ```json
-{ "type": "reg_recorded", "data": { "tempId": "9f3a2c17", "takes": [ { "take": 1, "webmUrl": "/api/previews/9f3a2c17-1.webm" }, { "take": 2, "webmUrl": "/api/previews/9f3a2c17-2.webm" }, { "take": 3, "webmUrl": null } ] } }
-{ "type": "reg_recorded", "data": { "tempId": "5b1c88d4", "takes": [ { "take": 1, "webmUrl": "/api/previews/5b1c88d4-1.jpg" }, { "take": 2, "webmUrl": "/api/previews/5b1c88d4-2.jpg" }, { "take": 3, "webmUrl": "/api/previews/5b1c88d4-3.jpg" } ] } }
+{ "type": "reg_recorded", "data": { "tempId": "9f3a2c17", "takes": [ { "take": 1, "mediaType": "VIDEO", "previewUrl": "/api/previews/9f3a2c17-1.webm" }, { "take": 2, "mediaType": "VIDEO", "previewUrl": "/api/previews/9f3a2c17-2.webm" }, { "take": 3, "mediaType": "VIDEO", "previewUrl": null } ] } }
+{ "type": "reg_recorded", "data": { "tempId": "5b1c88d4", "takes": [ { "take": 1, "mediaType": "IMAGE", "previewUrl": "/api/previews/5b1c88d4-1.jpg" }, { "take": 2, "mediaType": "IMAGE", "previewUrl": "/api/previews/5b1c88d4-2.jpg" }, { "take": 3, "mediaType": "IMAGE", "previewUrl": "/api/previews/5b1c88d4-3.jpg" } ] } }
 ```
 ```json
 { "type": "voice_review", "data": { "tempId": "9f3a2c17", "sampleUrl": "/api/voice-reg/9f3a2c17/sample", "durationSec": 4.2, "quality": "양호", "noise": "낮음" } }
