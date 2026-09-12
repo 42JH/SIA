@@ -33,5 +33,6 @@ public class FeHub extends BaseHub {
 
     @Override
     protected void onDisconnected() {
+        events.publishEvent(new WsEvents.FeDisconnected());
     }
 }

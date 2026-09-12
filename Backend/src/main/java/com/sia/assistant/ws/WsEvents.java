@@ -33,6 +33,9 @@ public final class WsEvents {
     public record FeConnected() {
     }
 
+    public record FeDisconnected() {
+    }
+
     public record ExtConnected() {
     }
 
