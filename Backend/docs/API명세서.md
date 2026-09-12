@@ -2184,7 +2184,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | 필드 | 타입 | 필수 | 규칙 |
 |---|---|:-:|---|
 | `tempId` | string | O | 진행 중 등록의 id. 다르면 `error`. `reg_start {replaceGestureId}` 로 시작한 등록이면 신규 대신 그 제스처를 갱신한다 (재촬영 경로) |
-| `take` | int | | 1~3. 기본 1. 이 회차의 미리보기가 제스처 영상이 되고 AI 도 이 회차로 템플릿을 확정한다 |
+| `take` | int | | 1~3. 기본 1. **대표 미디어 선택 전용** — 고른 회차의 미리보기가 제스처 영상으로 승격된다. 템플릿은 `take` 확정 전에 `PUT /api/agent/gestures/{tempId}/npz` 로 통째로 올라오므로 회차와 무관하다 |
 | `name` | string | O | 공백 불가. 같은 (HAND, context, name) 조합의 커스텀 제스처가 있으면 갱신. 기본 제공 제스처와 같은 이름은 `error` |
 | `label` | string | | UI 표시용 이름 |
 | `context` | string | | 적용 컨텍스트 (`video` · `youtube` 등). 검증 없이 그대로 저장하고, 생략하면 `null`. 재촬영 경로에서는 무시한다 |
@@ -2244,6 +2244,12 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `시선 보정은 최대 4개까지 저장할 수 있습니다. 먼저 사용하지 않는 보정을 삭제해 주세요` | 시작 뒤 확정 사이에 프로필이 4개가 됐다 |
 
 ```json
+{ "type": "reg_start", "data": { "motion": "DYNAMIC" } }
+```
+```json
+{ "type": "reg_start", "data": { "motion": "STATIC", "replaceGestureId": 14 } }
+```
+```json
 { "type": "voice_commit", "data": { "tempId": "9f3a2c17", "name": "스튜디오 보이스", "deviceLabel": "마이크(Realtek(R) Audio)" } }
 ```
 ```json
@@ -2273,7 +2279,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `type` | `data` | 설명 |
 |---|---|---|
 | `reg_state` | `{tempId: string, phase: MODE_STARTED \| RECORDING \| REJECTED \| CAPTURED \| ENCODING, reason?: string, similarTo?: string, similarity?: number}` | 등록 진행 상태. `reason` · `similarTo` · `similarity` 는 `REJECTED` 에만 |
-| `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 촬영 회차 진행 |
+| `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 촬영 회차 진행. 동적은 `COUNTDOWN → RECORDING → DONE`, 정적은 촬영 구간이 없어 `COUNTDOWN → DONE` 이다. `reg_state.phase` 와는 다른 축이라 정적에서도 `reg_state {RECORDING}` 은 뜬다 |
 | `reg_frame` | `{tempId: string, take: int, seq: long, jpegB64: string}` | 실시간 미리보기 프레임 (JPEG base64) |
 | `reg_recorded` | `{tempId: string, takes: {take: int, webmUrl: string \| null}[], reason?: string}` | 회차별 미리보기. 동적은 webm, 정적은 jpg URL 이다 (필드 이름은 `webmUrl` 그대로). 전 회차 실패면 `reason` |
 | `macro_saved` | `{id: long, name: string, videoUrl: string \| null}` | 매크로 저장 완료 |
@@ -2443,7 +2449,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `type` | `data` | 설명 |
 |---|---|---|
 | `reg_started` | `{tempId: string}` | 등록 모드 진입 완료 |
-| `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 회차 진행 |
+| `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 회차 진행. 정적은 촬영 구간이 없어 `RECORDING` 없이 `COUNTDOWN → DONE` |
 | `reg_frame` | `{tempId: string, take: int, seq: long, tsMs: long, jpegB64: string}` | 압축 프레임. `take` 생략 시 1. `tsMs` 는 재생 타이밍 근거 |
 | `reg_rejected` | `{tempId: string, reason: string, similarTo?: string, similarity?: number}` | 품질 검증 미달 |
 | `reg_captured` | `{tempId: string, hands: 1 \| 2}` | 템플릿 후보 생성 완료. npz 를 `PUT /api/agent/gestures/{tempId}/npz` 로 먼저 올린 뒤 보낸다. `hands` 는 랜드마크를 본 AI 만 아는 관측값이다 — 없거나 `1` · `2` 가 아니면 경고를 남기고 `hands` 없이 저장한다(등록 자체는 막지 않는다) |
@@ -2557,7 +2563,10 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `user_choice` | `{choiceId?: string, n?: int, cancelled?: boolean}` | FE 클릭의 무해석 중계 |
 
 ```json
-{ "type": "reg_mode_start", "data": { "tempId": "9f3a2c17", "takes": 3, "countdownSec": 3, "takeDurationSec": 2, "replaceGestureName": "손가락 하트" } }
+{ "type": "reg_mode_start", "data": { "tempId": "9f3a2c17", "motion": "DYNAMIC", "takes": 3, "countdownSec": 3, "takeDurationSec": 2, "replaceGestureName": "손가락 하트" } }
+```
+```json
+{ "type": "reg_mode_start", "data": { "tempId": "5b1c88d4", "motion": "STATIC", "takes": 3, "countdownSec": 3 } }
 ```
 ```json
 { "type": "gesture_registered", "data": { "tempId": "9f3a2c17", "take": 2, "id": 14, "name": "손가락 하트", "label": "음악 재생", "sha256": "8c22b1de44a0…" } }
