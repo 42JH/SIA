@@ -751,7 +751,7 @@ def test_voice_bridge():
 
 def test_wake_enroll():
     """온보딩 이름 불러보기(206) — wakeword_enroll_start 뒤 "시아야" 길이 발화 WAKE_TOTAL(5)개 → wakeword_sample 5건 → npz PUT → wakeword_done.
-    너무 짧거나(헛기침) 긴(문장) 발화는 세지 않고, 끝난 뒤 다시 시작하면 처음부터 다시 센다."""
+    너무 짧거나(헛기침) 긴(문장) 발화는 사유를 보내되 세지 않고, 끝난 뒤 다시 시작하면 처음부터 다시 센다."""
     from voice_bridge import WAKE_TOTAL, WakeEnroll
 
     class FakeLink:
@@ -759,31 +759,62 @@ def test_wake_enroll():
         def __init__(self): self.sent = []
         def _send(self, o): self.sent.append((o["type"], o["data"]))
 
+    class FakeSpeaker:
+        def _model(self): pass
+        def embed(self, a):
+            return np.array([-1.0, 0.0]) if int(a[0]) == 6 else np.array([1.0, 0.0])
+        def centroid_of_embs(self, embs):
+            c = np.asarray(embs).mean(axis=0)
+            c /= np.linalg.norm(c) + 1e-9
+            return c, float((np.asarray(embs) @ c).min())
+
     rng = np.random.default_rng(1)
     def loud(s):
         return (rng.standard_normal(int(s * 16000)) * 2000).astype(np.int16)
+    def clean(s, marker=7):
+        a = np.concatenate([np.zeros(4800, np.int16), loud(s)])
+        a[0] = marker
+        return a
 
     link, puts = FakeLink(), []
-    we = WakeEnroll(link)
+    we = WakeEnroll(link, FakeSpeaker())
     we._put = lambda url, body, ctype: puts.append((url, len(body), ctype))
     we.on_utter(loud(0.7))                                     # 시작 전 발화는 무시
     assert not we.active and link.sent == []
     we.on_start()
     we.on_utter(loud(0.1))                                     # 0.1 s — 헛기침, 안 센다
     we.on_utter(loud(3.0))                                     # 3 s — 문장, 안 센다
-    assert link.sent == []
-    for _ in range(WAKE_TOTAL):
-        we.on_utter(loud(0.7))
+    we.on_utter(loud(0.7))                                     # 지속 소음은 등록당 두 번만 거절한다
+    we.on_utter(loud(0.7))
+    assert link.sent == [
+        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
+                               "reason": "너무 짧게 들렸어요. \"시아야\"를 끝까지 불러주세요.", "code": "TOO_SHORT"}),
+        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
+                               "reason": "너무 길게 들렸어요. \"시아야\"만 불러주세요.", "code": "TOO_LONG"}),
+        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
+                               "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"}),
+        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
+                               "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"}),
+    ]
+    we.on_utter(clean(0.7))                                    # 첫 샘플은 비교 기준
+    we.on_utter(clean(0.7, 6))                                 # 불일치는 등록당 두 번만 거절한다
+    we.on_utter(clean(0.7, 6))
+    assert [d.get("code") for t, d in link.sent if t == "wakeword_rejected"][-2:] == ["INCONSISTENT", "INCONSISTENT"]
+    we.on_utter(clean(0.7, 6))                                 # 불일치 거절 예산 소진 — 수집 진행
+    for _ in range(WAKE_TOTAL - 2):
+        we.on_utter(clean(0.7))
     types = [t for t, _ in link.sent]
+    samples = [event for event in link.sent if event[0] == "wakeword_sample"]
     assert types.count("wakeword_sample") == WAKE_TOTAL and types[-1] == "wakeword_done" and not we.active
-    assert link.sent[0][1] == {"n": 1, "total": WAKE_TOTAL} and link.sent[-2][1] == {"n": WAKE_TOTAL, "total": WAKE_TOTAL}
+    assert samples[0][1] == {"n": 1, "total": WAKE_TOTAL} and samples[-1][1] == {"n": WAKE_TOTAL, "total": WAKE_TOTAL}
+    assert types.count("wakeword_rejected") == 6
     assert len(puts) == 1 and puts[0][0].endswith("/api/agent/blobs/wakeword") and puts[0][1] > 0
     assert puts[0][2] == "application/octet-stream"
     we.on_utter(loud(0.7))                                     # 끝난 뒤 발화는 안 센다
-    assert len(link.sent) == WAKE_TOTAL + 1
+    assert len(link.sent) == WAKE_TOTAL + 7
     link.sent.clear()
     we.on_start()                                              # 두 번째 회차 — 처음부터
-    we.on_utter(loud(0.7))
+    we.on_utter(clean(0.7))
     assert link.sent == [("wakeword_sample", {"n": 1, "total": WAKE_TOTAL})]
 
 

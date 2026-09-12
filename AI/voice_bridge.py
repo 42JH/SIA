@@ -1,43 +1,8 @@
 # -*- coding: utf-8 -*-
-"""화자 등록의 AI 측 핸들러 — BE voice_* WS 이벤트로 구동 (65).
+"""BE WS 이벤트로 구동하는 호출어·화자 등록.
 
-FE 가 낭독 문장을 화면에 띄우고, BE 가 voice_collect{tempId, n} 으로 "n번 문장 수집" 을 지시한다.
-AI 는 그 다음 VAD 발화를 n번 샘플로 받아 그 자리에서 임베딩을 뽑고 voice_progress{n} 을 보낸다. 마지막 문장 뒤에는
-모아 둔 임베딩의 평균(centroid)을 npz 로 만들어 REST 로 올린 뒤 voice_captured 를 보낸다. voice_enroll.py 의 CLI 등록을
-이벤트 구동으로 옮긴 것 — 임베딩·centroid 계산은 speaker.SpeakerVerifier 그대로 쓴다.
-
-계약(dev/be 4ce6ec3 프로토콜 §8.7):
-- 문장 원문은 BE 가 보내지 않는다. SENTENCES 의 n번째 — FE 상수와 글자 단위로 같아야 한다.
-- 같은 n 이 다시 오면 그 문장을 교체 수집("이 문장 다시"). "다시 녹음" 은 BE 가 n=1 부터 다시 발급한다.
-  둘 다 n번과 그 뒤 샘플도 함께 버린다. 그 지시보다 먼저 시작된 발화도 버린다 — 무르려던 낭독이 VAD 에서 뒤늦게
-  나와 그대로 통과하는 사고를 막는다.
-- 문장 하나가 미달이면 voice_sentence_rejected{tempId, n, reason, code} 를 보내고 같은 문장을 계속 기다린다 — 순번을
-  진행하지 않는다. code 는 TOO_SHORT · TOO_LONG · NOISY · INCONSISTENT, FE 는 모르는 code 면 reason 을 쓴다.
-  소음·불일치 거절은 등록 1회당 각각 REJECT_BUDGET 번까지 — 선풍기 소음이나 찌그러진 1번 문장에 영영 갇히지 않게.
-  비슷한 이름은 다른 뜻이다 — voice_rejected 는 실행 중 화자 게이트 거부(4.1), voice_reg_denied 는 프로필 4개 초과.
-- 1번 문장이 찌그러진 채 기준이 된 경우: 같은 문장을 두 번 읽었는데 둘은 닮았고 앞 문장 하나와만 다르면 앞 문장을 의심해
-  기준에서 빼고 이번 문장을 받는다(2 대 1). 마지막엔 혼자 튀는 문장 하나를 프로필 평균에서 뺀다. BE 는 순번을 되돌릴 수
-  없어 앞 문장을 다시 읽히진 못한다 — 프로필에서만 걸러낸다.
-- 문장 하나가 통과할 때마다 voice_progress{tempId, n} 뒤에 그 문장 녹음을 PUT 하고 voice_captured 를 보낸다 — BE 가
-  곧장 FE 에 voice_review 를 주므로, 사용자는 방금 읽은 문장을 들어 보고 판독 결과(quality·noise)를 본 자리에서
-  다시 읽을지 정한다. quality 는 앞 문장들과 유사도가 QUALITY_MIN_SIM 미만이거나 소음이 높으면 "낮음", 1번 문장은
-  비교 대상이 없어 소음만 본다. 중간 문장에서는 npz 를 올리지 않는다 — 다섯 문장을 다 모으기 전에 npz 가 서버에
-  있으면 그것만으로 프로필이 확정될 수 있다.
-- 다섯 문장이 다 모이거나 voice_finalize 를 받으면 마지막 수집 문장의 wav → 수집한 임베딩의 npz 순으로 PUT 하고 voice_captured(전체 판정)를 보낸다.
-  voice_finalize 는 진행 중인 tempId 에만 적용한다. 문장이 없으면 사유만 보내고 1번 문장을 기다린다.
-  재생 샘플은 1~5번 모두 해당 문장 하나이며, durationSec 도 그 녹음 길이다. 마무리할 때만 npz 가 올라가고
-  FE 의 "등록" 버튼이 열린다. voice_quality_warn 은 보내지 않는다 — 문장마다 결과를 줬으니 그 자리에서 고치는 쪽이 빠르다.
-  NOTE(한계): FE 가 voice_review 를 5번째 문장 것으로만 보고 화면 번호를 5로 고정하면, 1번 문장 뒤에 "등록" 이 열린다.
-  FE 가 자기 진행 번호를 쓰도록 고쳐야 한다 (BE 는 voice_review 에 n 을 싣지 않는다).
-- 등록 과정에서는 로컬 프로필(models/speaker.npz)을 건드리지 않는다. 확정은 FE voice_commit 이고,
-  voice_changed 또는 설정의 활성 참조를 받으면 VoiceProfileSync가 검증 후 교체한다 — 미확정 등록과 분리한다.
-
-NOTE(한계): 샘플은 VAD 가 잘라 준 발화를 자르지 않고 통째로 쓴다(말 시작 전 여유분 2 s 포함) — CLI 등록(voice_enroll.py)과
-같은 입력이라 화자 인증을 실측했을 때와 조건이 같다.
-
-온보딩은 2단계다 — ① "시아야" 5회(WakeEnroll, wakeword_*) → ② "명령하듯 말해보세요" 5문장 낭독 = 이 화자 등록
-(VoiceSession, voice_*). ②에서 문장마다 임베딩하고 프로필을 만든다. 같은 5문장을 한 번 더 읽히던 command_* 단계는
-아무것도 만들지 않는 중복이라 폐기됐다(229) — BE 는 그 이벤트를 받아도 무시한다.
+WakeEnroll은 호출어 샘플을 수집한다. VoiceSession은 낭독 음성을 검증해 화자 프로필을 만들고,
+VoiceProfileSync는 BE의 활성 프로필을 로컬에 동기화한다.
 """
 import hashlib
 import io
@@ -59,7 +24,7 @@ SENTENCES = [  # 화자 인증 등록 문장 5개 — FE 와 공통 상수. 순�
     "다음 영상으로 넘어가고 음소거 해줘",
     "안녕하세요 저는 이 컴퓨터의 주인입니다",
 ]
-MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 ≤ 0.3 s, WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
+MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 < 0.4 s, WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
                        # 무른다. "문장을 끝까지 읽었나" 는 여기서 안 본다 — 그건 유사도 게이트와 문장별 quality 몫이다.
                        # 1.5 였다가 내림: speech_s 는 앞 여유분·단어 틈을 안 세서 녹음 길이의 39%(로그 147건 중앙값)만 잡힌다 —
                        # 문장을 2 s 에 읽으면 0.8~1.0 s 라 실제 낭독이 거절됐다. voice_enroll 의 1.5 는 녹음 전체 길이 기준이라 다른 자다
@@ -74,8 +39,9 @@ REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(IN
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
 NOISE_RMS = 350.0      # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
-WAKE_MIN_S = 0.3       # NOTE(튜닝): "시아야" 말소리 하한. 이보다 짧으면 헛기침·클릭음으로 보고 세지 않는다
+WAKE_MIN_S = MIN_SPEECH_S  # "시아야"도 화자 등록 문장과 같은 말소리 하한을 쓴다
 WAKE_MAX_S = 2.0       # NOTE(튜닝): 말소리 상한. 이보다 길면 문장을 말한 것이라 이름 부르기로 세지 않는다
+WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
 
 
 def noise_level(audio_i16, block=480):
@@ -476,14 +442,20 @@ class WakeEnroll:
     FE 가 "시아야" 를 WAKE_TOTAL(5)번 부르게 하고, 부를 때마다 AI 가 wakeword_sample{n, total} 을 보내 진행바를 채운다.
     다 모이면 샘플 원본을 npz 하나로 묶어 PUT /api/agent/blobs/wakeword 로 올리고 wakeword_done 을 보낸다.
     FE 는 wakeword_done 이 와야 "다음" 버튼을 연다. 호출어 모델(고정 파일)은 여기서 바꾸지 않고 BE 도 npz 를 저장만 한다.
-    NOTE(한계): 샘플 판정은 말소리 길이뿐 — 실제로 "시아야" 라고 했는지는 확인하지 않는다.
+    길이·소음·화자 유사도 기준을 통과하지 못하면 wakeword_rejected{n, total, reason, code} 로 사유를 보내고 같은 순번을 계속 기다린다.
+    NOTE(한계): 실제로 "시아야" 라고 했는지는 확인하지 않는다.
     """
 
-    def __init__(self, link):
+    def __init__(self, link, speaker=None):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
+        self.speaker = speaker
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
         self._samples = []
+        self._embs = []
+        self._rejects = 0
+        self._noisy = 0
+        self._preload = None
         self._put = VoiceSession._put       # REST 업로드 — 테스트에서 바꿔 끼운다
 
     def _tx(self, type_, data):
@@ -493,7 +465,11 @@ class WakeEnroll:
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
     def on_start(self):
         log_rx("wakeword_enroll_start", {})
-        self.active, self._samples, self.started_at = True, [], time.monotonic()
+        self.active, self._samples, self._embs, self.started_at = True, [], [], time.monotonic()
+        self._rejects = self._noisy = 0
+        if self.speaker is not None:
+            self._preload = threading.Thread(target=self.speaker._model, daemon=True)
+            self._preload.start()
         print(f"[호출어 수집] 시작 — \"시아야\" {WAKE_TOTAL}번")
 
     # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──
@@ -503,10 +479,48 @@ class WakeEnroll:
         from brain import speech_s
 
         spoken = speech_s(audio_i16)
-        if not WAKE_MIN_S <= spoken <= WAKE_MAX_S:
+        if spoken < WAKE_MIN_S or spoken > WAKE_MAX_S:
+            code, reason = (("TOO_SHORT", "너무 짧게 들렸어요. \"시아야\"를 끝까지 불러주세요.")
+                            if spoken < WAKE_MIN_S else
+                            ("TOO_LONG", "너무 길게 들렸어요. \"시아야\"만 불러주세요."))
             print(f"[호출어 수집] 말소리 {spoken:.1f} s — 이름 부르기로 안 봄, 다시 기다린다")
+            self._tx("wakeword_rejected", {
+                "n": len(self._samples) + 1, "total": WAKE_TOTAL, "reason": reason, "code": code})
             return
+        if noise_level(audio_i16) == "높음" and self._noisy < REJECT_BUDGET:
+            self._noisy += 1
+            print(f"[호출어 수집] 소음 높음 — 거절 {self._noisy}/{REJECT_BUDGET}, 다시 기다린다")
+            self._tx("wakeword_rejected", {
+                "n": len(self._samples) + 1, "total": WAKE_TOTAL,
+                "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"})
+            return
+        emb = None
+        if self.speaker is not None:
+            if self._preload is not None:
+                self._preload.join()
+                self._preload = None
+            try:
+                emb = self.speaker.embed(audio_i16)
+                if not np.isfinite(emb).all():
+                    raise ValueError("임베딩에 NaN")
+                if self._embs:
+                    centroid, _ = self.speaker.centroid_of_embs(self._embs)
+                    sim = float(emb @ centroid)
+                    if sim < WAKE_MIN_SIM and self._rejects < REJECT_BUDGET:
+                        self._rejects += 1
+                        print(f"[호출어 수집] 앞 샘플들과 유사도 {sim:.2f} < {WAKE_MIN_SIM} — "
+                              f"거절 {self._rejects}/{REJECT_BUDGET}, 다시 기다린다")
+                        self._tx("wakeword_rejected", {
+                            "n": len(self._samples) + 1, "total": WAKE_TOTAL,
+                            "reason": "앞서 부른 목소리와 다르게 들려요. 같은 분이 다시 불러주세요.",
+                            "code": "INCONSISTENT"})
+                        return
+            except Exception as e:
+                emb = None
+                print(f"[호출어 수집] 화자 유사도 판정 실패, 길이·소음 기준으로 진행: {e}")
         self._samples.append(np.asarray(audio_i16, dtype=np.int16))
+        if emb is not None:
+            self._embs.append(emb)
         n = len(self._samples)
         print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} ({spoken:.1f} s)")
         self._tx("wakeword_sample", {"n": n, "total": WAKE_TOTAL})
