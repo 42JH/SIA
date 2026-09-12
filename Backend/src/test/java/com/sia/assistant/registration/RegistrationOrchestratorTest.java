@@ -222,7 +222,8 @@ class RegistrationOrchestratorTest {
         verify(feHub, timeout(5000)).send(eq("reg_recorded"), captor.capture());
         List<Map<String, Object>> takes = (List<Map<String, Object>>) captor.getValue().get("takes");
         assertThat(takes).hasSize(1);
-        assertThat(takes.get(0)).containsEntry("webmUrl", "/api/previews/" + tempId + "-1.jpg");
+        assertThat(takes.get(0)).containsEntry("previewUrl", "/api/previews/" + tempId + "-1.jpg");
+        assertThat(takes.get(0)).containsEntry("mediaType", "IMAGE");
         // 자세가 가장 정착된 마지막 장이 남는다
         assertThat(previews.resolve(tempId + "-1.jpg")).hasBinaryContent(last);
         verifyNoInteractions(encoder);

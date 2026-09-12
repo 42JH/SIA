@@ -18,6 +18,10 @@ public final class RegistrationMedia {
     static final String WEBM = ".webm";
     static final String JPG = ".jpg";
 
+    /** reg_recorded 의 mediaType — FE 가 {@code <video>} / {@code <img>} 를 고르는 값이다. */
+    static final String VIDEO = "VIDEO";
+    static final String IMAGE = "IMAGE";
+
     private static final MediaType WEBM_TYPE = MediaType.parseMediaType("video/webm");
 
     /** 이 motion 으로 찍은 촬영본의 확장자. motion 이 없으면(옛 등록) 동적으로 본다. */

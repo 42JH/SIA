@@ -42,7 +42,7 @@ public class WebmEncoder {
     /**
      * @param baseName 출력 파일 이름(확장자 제외) — 회차별 미리보기는 "{tempId}-{take}" 다
      * @return 생성된 webm 경로 (outDir/baseName.webm)
-     * @throws IOException 인코딩 실패 — 호출자가 reg_recorded 의 해당 회차 webmUrl:null 로 처리한다
+     * @throws IOException 인코딩 실패 — 호출자가 reg_recorded 의 해당 회차 previewUrl:null 로 처리한다
      */
     public Path encode(String baseName, List<Frame> frames, Path outDir) throws IOException {
         if (frames == null || frames.isEmpty()) {

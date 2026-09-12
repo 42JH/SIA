@@ -223,7 +223,10 @@ public class RegistrationOrchestrator {
      * 회차별 미리보기 만들기. 동적은 프레임 시퀀스를 webm 으로 인코딩하고, 정적은 마지막 프레임의
      * JPEG 를 그대로 쓴다 — reg_frame 이 처음부터 JPEG 를 보내므로 ffmpeg 를 태울 이유가 없다.
      * 정적에서 마지막 장을 쓰는 이유: 회차당 한 장이 계약이지만 여러 장이 와도 자세가 가장 정착된 장이다.
-     * webmUrl 이라는 필드 이름은 FE 가 이미 소비 중이라 유지한다 — 정적이면 .jpg 를 가리킨다.
+     *
+     * <p>회차마다 {@code mediaType}(VIDEO | IMAGE)과 {@code previewUrl} 을 낸다. mediaType 은 motion 에서
+     * 파생되는 중복이지만, reg_recorded 는 reg_captured 와 도착 순서가 보장되지 않아 FE 가 이 메시지 하나로
+     * 렌더링 방식을 정할 수 있어야 한다. 둘 다 같은 isStatic 에서 나오므로 어긋날 경로는 없다.
      */
     private void encodeAndNotify(String tempId, String motion,
                                  Map<Integer, List<WebmEncoder.Frame>> takes) {
@@ -234,6 +237,7 @@ public class RegistrationOrchestrator {
             String baseName = tempId + "-" + entry.getKey();
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("take", entry.getKey());
+            item.put("mediaType", isStatic ? RegistrationMedia.IMAGE : RegistrationMedia.VIDEO);
             try {
                 String ext;
                 if (isStatic) {
@@ -248,17 +252,17 @@ public class RegistrationOrchestrator {
                     ext = RegistrationMedia.WEBM;
                     encoder.encode(baseName, entry.getValue(), previews);
                 }
-                item.put("webmUrl", "/api/previews/" + baseName + ext);
+                item.put("previewUrl", "/api/previews/" + baseName + ext);
             } catch (Exception e) {
                 log.warn("등록 {} 회차 {} 미리보기 생성 실패", tempId, entry.getKey(), e);
-                item.put("webmUrl", null);
+                item.put("previewUrl", null);
             }
             results.add(item);
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tempId", tempId);
         body.put("takes", results);
-        if (results.isEmpty() || results.stream().allMatch(r -> r.get("webmUrl") == null)) {
+        if (results.isEmpty() || results.stream().allMatch(r -> r.get("previewUrl") == null)) {
             body.put("reason", isStatic ? "사진을 저장하지 못했습니다" : "영상 인코딩에 실패했습니다");
         }
         feHub.send("reg_recorded", body);
