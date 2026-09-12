@@ -2161,6 +2161,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 | `type` | `data` | 설명 |
 |---|---|---|
+| `cam_preview_start` | `{}` | 촬영 전 카메라 미리보기 시작. AI 에 그대로 중계. AI 미연결이면 `error`, 이미 켜져 있으면 중복 전달하지 않는다 |
+| `cam_preview_stop` | `{}` | 미리보기 종료. `reg_start` · `calib_start` · FE 연결 종료 때는 BE 가 대신 끊는다 |
 | `reg_start` | `{replaceGestureId?: long, motion?: STATIC \| DYNAMIC}` | 커스텀 제스처 등록 시작. `motion` 은 정적/동적 등록 창 중 사용자가 고른 쪽이다 — 생략하면 `DYNAMIC` 이다. `replaceGestureId` 가 있으면 그 제스처의 동작 재촬영. `motion` 이 두 값이 아니면 `error` |
 | `reg_stop` | `{tempId: string}` | 등록 구간 종료. 3회차 촬영이 끝난 뒤 FE 가 보낸다 |
 | `macro_assign` | 아래 상세 | 매크로 지정 · 저장 |
@@ -2278,6 +2280,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 | `type` | `data` | 설명 |
 |---|---|---|
+| `cam_preview_state` | `{phase: STARTING \| READY \| STOPPED \| ERROR, message?: string}` | 미리보기 상태. `ERROR` 면 `message` 를 그대로 보여준다. 카메라가 이미 열려 있어 `STARTING` 은 생략될 수 있다 |
+| `cam_preview_frame` | `{seq: long, jpegB64: string}` | 미리보기 프레임. `data:image/jpeg;base64,{jpegB64}` 로 표시한다 |
 | `reg_state` | `{tempId: string, phase: MODE_STARTED \| RECORDING \| REJECTED \| CAPTURED \| ENCODING, reason?: string, similarTo?: string, similarity?: number}` | 등록 진행 상태. `reason` · `similarTo` · `similarity` 는 `REJECTED` 에만 |
 | `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 촬영 회차 진행. 동적은 `COUNTDOWN → RECORDING → DONE`, 정적은 촬영 구간이 없어 `COUNTDOWN → DONE` 이다. `reg_state.phase` 와는 다른 축이라 정적에서도 `reg_state {RECORDING}` 은 뜬다 |
 | `reg_frame` | `{tempId: string, take: int, seq: long, jpegB64: string}` | 실시간 미리보기 프레임 (JPEG base64) |
@@ -2448,6 +2452,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | `type` | `data` | 설명 |
 |---|---|---|
+| `cam_preview_state` | `{phase: STARTING \| READY \| STOPPED \| ERROR, message?: string}` | 미리보기 상태. FE 로 그대로 중계 |
+| `cam_preview_frame` | `{seq: long, jpegB64: string, tsMs?: long}` | 미리보기 프레임. `tsMs` 는 BE 가 쓰지 않아 선택이고 FE 로도 넘기지 않는다. 미리보기가 꺼져 있으면 버린다 |
 | `reg_started` | `{tempId: string}` | 등록 모드 진입 완료 |
 | `reg_take` | `{tempId: string, take: int, phase: COUNTDOWN \| RECORDING \| DONE}` | 회차 진행. 정적은 촬영 구간이 없어 `RECORDING` 없이 `COUNTDOWN → DONE` |
 | `reg_frame` | `{tempId: string, take: int, seq: long, tsMs: long, jpegB64: string}` | 압축 프레임. `take` 생략 시 1. `tsMs` 는 재생 타이밍 근거 |
@@ -2525,6 +2531,8 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | `type` | `data` | 설명 |
 |---|---|---|
+| `cam_preview_start` | `{}` | 미리보기 송출 시작 지시. 카메라를 새로 열라는 뜻이 아니라 이미 도는 상시 인식 루프의 프레임을 보내라는 신호다 |
+| `cam_preview_stop` | `{}` | 미리보기 송출 중지 지시 |
 | `reg_mode_start` | `{tempId: string, motion: STATIC \| DYNAMIC, takes: int, countdownSec: int, takeDurationSec?: int, replaceGestureName?: string}` | 등록 모드 진입 지시. `takes` 3 · `countdownSec` 3 · `takeDurationSec` 2. `motion` 이 `STATIC` 이면 회차당 사진 한 장이라 구간이 없어 **`takeDurationSec` 를 아예 보내지 않는다**. AI 는 `motion` 으로 단일 프레임 템플릿과 시퀀스 템플릿 중 무엇을 만들지 촬영 전에 정한다 |
 | `reg_finish` | `{tempId: string}` | 등록 구간 종료 지시 |
 | `gesture_registered` | `{tempId: string, take: int, id: long, name: string, label: string \| null, sha256: string}` | 매크로 지정 완료. `take` 회차 템플릿이 `id` 로 확정됐다. `GET /api/agent/gestures/{id}/npz` 로 내려받아 적재한다 |
@@ -2703,10 +2711,10 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | 채널 | 방향 | `type` | 절 |
 |---|---|---|---|
-| `/ws/fe` | FE → BE | `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_next` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
-| `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `voice_sentence` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
-| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `voice_ready` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
-| `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` | §4.5 |
+| `/ws/fe` | FE → BE | `cam_preview_start` · `cam_preview_stop` · `reg_start` · `reg_stop` · `macro_assign` · `wakeword_enroll_start` · `voice_reg_start` · `voice_sentence_next` · `voice_sentence_retry` · `voice_reg_retry` · `voice_accept_anyway` · `voice_commit` · `voice_reg_cancel` · `calib_start` · `calib_point_shown` · `calib_restart` · `calib_commit` · `calib_cancel` · `user_choice` | §4.2 |
+| `/ws/fe` | BE → FE | `listening` · `session_state` · `tool_result` · `gesture_result` · `notice` · `voice_rejected` · `gaze_cursor` · `capture_saved` · `cam_preview_state` · `cam_preview_frame` · `reg_state` · `reg_take` · `reg_frame` · `reg_recorded` · `macro_saved` · `wakeword_progress` · `wakeword_done` · `voice_sentence` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_review` · `voice_saved` · `voice_reg_denied` · `calib_precheck` · `calib_point` · `calib_result` · `calib_limit` · `calib_saved` · `calib_denied` · `model_progress` · `model_downloaded` · `model_ready` · `model_error` · `agent_status` · `ext_status` · `settings_sync` · `error` | §4.3 |
+| `/ws/agent` | AI → BE | `hello` · `wakeword_detected` · `session_open` · `session_renew` · `session_end` · `recognition_started` · `model_loaded` · `model_load_failed` · `gesture_exec` · `notice` · `gaze_cursor` · `voice_rejected` · `cam_preview_state` · `cam_preview_frame` · `reg_started` · `reg_take` · `reg_frame` · `reg_rejected` · `reg_captured` · `wakeword_sample` · `wakeword_done` · `voice_ready` · `voice_progress` · `voice_sentence_rejected` · `voice_quality_warn` · `voice_captured` · `calib_precheck` · `calib_point_ready` · `calib_point_done` · `calib_result` | §4.4 |
+| `/ws/agent` | BE → AI | `hello_ack` · `model_load` · `recognition_start` · `settings_changed` · `session_state` · `wipe` · `error` · `cam_preview_start` · `cam_preview_stop` · `reg_mode_start` · `reg_finish` · `gesture_registered` · `gesture_renamed` · `gesture_removed` · `gesture_toggled` · `gesture_result` · `wakeword_enroll_start` · `voice_reg_start` · `voice_collect` · `voice_finalize` · `voice_reg_cancel` · `voice_registered` · `voice_changed` · `calib_start` · `calib_collect_start` · `calib_restart` · `calib_cancel` · `calib_registered` · `calib_changed` · `user_choice` | §4.5 |
 | `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `browser_open` · `ping` | §4.6 |
 | `/ws/ext` | BE → 확장 | `dom_text_request` · `browser_open_request` · `pong` · `error` | §4.6 |
 
