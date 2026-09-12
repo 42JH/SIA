@@ -249,7 +249,7 @@ def main():
             link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
             from voice_bridge import WakeEnroll
 
-            link.wake = WakeEnroll(link)        # 온보딩 이름 불러보기(206) — 화자 인증을 꺼도 FE 진행바는 채워야 한다
+            link.wake = WakeEnroll(link, speaker)  # 온보딩 이름 불러보기(206) — 화자 인증을 꺼도 FE 진행바는 채워야 한다
             if speaker is not None:
                 from voice_bridge import VoiceSession
 
