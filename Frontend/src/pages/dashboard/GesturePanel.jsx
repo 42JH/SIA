@@ -484,7 +484,10 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (current?.tempId && data.tempId !== current.tempId) return;
       if (current?.stage === 'rejected') return;
       const completed = data.phase === 'DONE' ? [...new Set([...(current?.completedTakes || []), data.take])] : (current?.completedTakes || []);
-      updateRegistration({ tempId: data.tempId, stage: 'capture', take: data.take, takePhase: data.phase, completedTakes: completed });
+      const photoPreviews = current?.motion === 'STATIC' && data.phase === 'DONE' && current.frame
+        ? [...(current.previews || []).filter((take) => take.take !== data.take), { take: data.take, previewUrl: current.frame, mediaType: 'IMAGE' }]
+        : current?.previews || [];
+      updateRegistration({ tempId: data.tempId, stage: 'capture', take: data.take, takePhase: data.phase, completedTakes: completed, previews: photoPreviews });
       if (data.take === 3 && data.phase === 'DONE' && !stopSent.current) {
         stopSent.current = true;
         try { finishGestureRecording(data.tempId); } catch (error) { updateRegistration({ error: error.message }); }
@@ -501,7 +504,8 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
-      const previews = (data.takes || []).filter((take) => take.previewUrl);
+      const valid = (data.takes || []).filter((take) => take.previewUrl);
+      const previews = valid.length ? valid : current?.previews || [];
       updateRegistration({ tempId: data.tempId, previews, selectedTake: previews[0]?.take || 1, stage: current?.stage === 'rejected' ? 'rejected' : 'review', ...(data.reason ? { error: data.reason } : {}) });
     },
     macro_saved: () => {
