@@ -500,6 +500,10 @@ def main():
                         print(f"[BE RESULT] name={data.get('name', '-')} | "
                               f"ok={data.get('ok', False)} | message={hud_feedback}")
 
+            if link and link.voice:
+                # 끝난 등록 업로드의 판독 결과·완료를 보낸다. 업로드 자체는 워커가 하므로 이 루프는 멈추지 않고,
+                # 방금 처리한 "다시 녹음"·"중단" 지시가 먼저 반영된 뒤라 지나간 수집의 결과는 여기서 버려진다.
+                link.voice.apply_uploads()
             if link and link.voice_sync and link.voice_sync.apply_pending(voice.reset_audio):
                 pending_capture = None
 
