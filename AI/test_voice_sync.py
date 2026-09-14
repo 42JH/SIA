@@ -378,6 +378,53 @@ def test_voice_control_events_use_main_loop_queue():
     link.close()
 
 
+def test_upload_result_dropped_when_retry_or_cancel_arrives():
+    """업로드가 끝나기 전에 도착한 "다시 녹음"·"중단" 은 그 업로드의 판독 결과·완료를 취소한다.
+
+    두 지시는 WS 수신 스레드가 아니라 메인 루프 큐를 지나 오므로 큐를 실제로 흘려 확인한다.
+    재녹음은 tempId 가 그대로라 등록 이름만으로는 구분되지 않는다 — 수집 회차로 걸러야 한다."""
+    with session() as (link, _, speaker, path):
+        registration = VoiceSession(link, speaker, path)
+        link.rt = {"port": 0}
+        sent = []
+        link._send = lambda message: sent.append(message["type"]) or True
+        speaker._model = lambda: None                       # 임베딩 모델은 부르지 않는다 (다운로드·12 s 로드)
+        speaker.embed = lambda audio: np.eye(192, dtype=np.float32)[0]
+        audio = np.concatenate([np.zeros(9600, np.int16),   # 앞 0.6 s 무음 + 말소리 1.5 s
+                                (np.random.default_rng(0).standard_normal(24000) * 2000).astype(np.int16)])
+
+        uploading, release = threading.Event(), threading.Event()
+
+        def put(url, body, ctype):                          # 업로드 워커를 지시가 도착할 때까지 붙잡아 둔다
+            uploading.set()
+            assert release.wait(3)
+        registration._put = put
+
+        def main_loop():                                    # assistant 메인 루프가 하는 일 그대로
+            for kind, payload in link.take_events():
+                if kind == "voice_collect":
+                    registration.on_collect(payload["tempId"], payload["n"])
+                elif kind == "voice_reg_cancel":
+                    registration.on_cancel(payload["tempId"])
+            registration.apply_uploads()
+
+        for event_type, data in (("voice_collect", {"tempId": "q1", "n": 1}),   # "다시 녹음" — 같은 tempId 로 온다
+                                 ("voice_reg_cancel", {"tempId": "q1"})):       # "중단"
+            uploading.clear()
+            release.clear()
+            registration.on_start("q1", 5)
+            registration.on_collect("q1", 1)
+            sent.clear()
+            registration.on_utter(audio)                    # 업로드는 워커가 맡고 메인 루프는 돌아온다
+            assert uploading.wait(3) and sent == []
+            receive(link, event_type, data)                 # 업로드가 끝나기 전에 지시가 도착한다
+            release.set()
+            main_loop()                                     # 지시를 먼저 처리하고 업로드 결과를 꺼낸다
+            assert sent == [], f"{event_type} 뒤에도 이벤트를 보냄: {sent}"
+        assert not registration.active and registration._samples == {}
+    link.close()
+
+
 if __name__ == "__main__":
     import sys
     try:

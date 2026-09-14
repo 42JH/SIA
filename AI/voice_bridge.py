@@ -4,6 +4,7 @@
 WakeEnroll은 호출어 샘플을 수집한다. VoiceSession은 낭독 음성을 검증해 화자 프로필을 만들고,
 VoiceProfileSync는 BE의 활성 프로필을 로컬에 동기화한다.
 """
+import collections
 import hashlib
 import io
 import json
@@ -230,6 +231,14 @@ class VoiceSession:
         self._last_reject = None            # (n, 임베딩) — 직전에 목소리 불일치로 무른 시도. 같은 문장 두 시도를 견주는 데 쓴다
         self._suspect = set()               # 찌그러진 것으로 의심돼 비교 기준에서 뺀 문장 번호
         self._collect_t = 0.0               # 마지막 voice_collect 시각 — 그보다 먼저 시작된 발화는 이전 지시의 것이다
+        self._warn_pending = False          # 음질 경고를 보내고 사용자 선택을 기다리는 중 — voice_finalize 는 이때만 받는다
+        self._warned = False                # 이번 등록에서 음질 경고를 보냈다 — _finish 의 임시 가드
+        self.epoch = 0                      # 수집 회차 — 재녹음은 tempId 가 그대로라, 늦게 끝난 이전 업로드를 이 값으로 가린다
+        self._results = []                  # 끝난 업로드 — 워커가 넣고 메인 루프가 apply_uploads() 로 꺼낸다
+        self._jobs = collections.deque()    # 올릴 것들 — 받은 순서대로 하나씩. 겹쳐 올리면 늦게 끝난 쪽이 덮어쓴다
+        self._jobs_cv = threading.Condition()
+        self._uploading = False             # 워커가 올리는 중
+        self._upload_worker = None          # 업로드 워커 (하나만 둔다)
         self._preload = None                # 모델 프리로드 스레드
 
     def _tx(self, type_, data):
@@ -243,7 +252,8 @@ class VoiceSession:
         self.tempId, self.active, self.started_at = tempId, True, time.monotonic()
         self.total = int(total or len(SENTENCES))
         self._samples, self._embs, self._n, self._rejects, self._noisy = {}, {}, 0, 0, 0
-        self._last_reject, self._suspect = None, set()
+        self._last_reject, self._suspect, self._warn_pending, self._warned = None, set(), False, False
+        self.epoch += 1
         # 모델(첫 로드 12 s)은 낭독하는 동안 미리 — 마무리 때 메인 루프가 멈추지 않게. 이미 로드됐으면 즉시 끝난다
         self._preload = threading.Thread(target=self.speaker._model, daemon=True)
         self._preload.start()
@@ -255,6 +265,8 @@ class VoiceSession:
             return
         self._n = int(n)
         self._collect_t = time.monotonic()  # 이 시각 전에 시작된 발화는 이전 지시의 것 — on_utter 가 버린다
+        self._warn_pending = False          # 다시 읽기로 답했다 — 앞선 경고에 대한 "그대로 진행" 이 늦게 와도 받지 않는다
+        self.epoch += 1                    # 새 회차 — 진행 중이던 업로드의 결과는 이 문장에 반영하지 않는다
         # n번을 다시 읽으라는 뜻이니 n번과 그 뒤에 받아 둔 샘플은 버린다 — 안 버리면 "다시 녹음"(n=1) 때
         # 앞서 읽은 2·3번이 남아, 새 1번 발화 하나만으로 "문장이 다 모였다" 가 되어 등록이 일찍 끝난다
         keep = {k: v for k, v in self._samples.items() if k < self._n}
@@ -275,14 +287,21 @@ class VoiceSession:
         log_rx("voice_finalize", {"tempId": tempId})
         if not self.active or tempId != self.tempId:
             return
-        self._finish()
+        if not self._warn_pending:
+            # 음질 경고에 대한 "그대로 진행" 답이다 — 경고 전이거나 이미 다시 녹음에 들어갔으면 늦게 온 옛 답이다.
+            # 지금 모으는 중인 문장으로 등록을 끝내 버리면 안 된다
+            print("[화자 등록] 음질 경고 대기 상태가 아니라 마무리 지시를 무시한다")
+            return
+        self._warn_pending = False
+        self._finish(forced=True)   # 같은 경고로 다시 막으면 등록이 끝나지 않는다
 
     def on_cancel(self, tempId):
         log_rx("voice_reg_cancel", {"tempId": tempId})
         if not self.active or tempId != self.tempId:
             return
         self.active, self._n, self._samples, self._embs, self._rejects = False, 0, {}, {}, 0
-        self._last_reject, self._suspect = None, set()
+        self._last_reject, self._suspect, self._warn_pending = None, set(), False
+        self.epoch += 1
         print("[화자 등록] 중단 — 이전 프로필 유지")
 
     def on_registered(self, prof_id, is_active):
@@ -365,7 +384,6 @@ class VoiceSession:
                                  f"앞 문장들과 유사도 {sim:.2f} < {VOICE_MIN_SIM}, 거절 {self._rejects}/{REJECT_BUDGET}")
                     return
         self._last_reject = None
-        self._n = 0
         self._samples[n], self._embs[n] = audio, emb
         # 이 문장의 판독 결과 — 거절 예산이 떨어져 받아 준 문장도 여기서 "낮음" 이 되어 사용자가 그 자리에서 다시 읽을 수 있다
         quality = "양호" if (sim is None or sim >= QUALITY_MIN_SIM) and noise != "높음" else "낮음"
@@ -373,13 +391,15 @@ class VoiceSession:
         print(f"[화자 등록] 문장 {n} 통과 — 말소리 {spoken:.1f} s, "
               + (f"앞 문장들과 유사도 {sim:.2f}" if sim is not None else "첫 문장(비교 없음)")
               + f", 품질 {quality}, 소음 {noise}")
-        self._tx("voice_progress", {"tempId": self.tempId, "n": n})
         if all(k in self._samples for k in range(1, self.total + 1)):
-            self._finish()
+            self._n = 0
+            self._tx("voice_progress", {"tempId": self.tempId, "n": n})
+            self._finish()   # 마지막 문장 — 샘플과 npz 를 여기서 함께 올린다
             return
         # 방금 읽은 문장만 올리고 판독 결과를 보낸다 — FE 가 문장마다 그 녹음을 들어 보고 다시 읽을지 정한다.
         # npz 는 아직 안 올린다: 다섯 문장을 다 모으기 전 npz 가 서버에 있으면 그것만으로 프로필이 확정될 수 있다
-        self._upload_and_capture(None, wav_bytes(audio), round(len(audio) / SR, 1), quality, noise)
+        self._n = 0
+        self._start_upload(wav_bytes(audio), None, round(len(audio) / SR, 1), quality, noise, n, False)
 
     # ── 내부 ──
     def _reject(self, n, code, reason, why):
@@ -390,7 +410,9 @@ class VoiceSession:
             data["code"] = code             # 없으면 키 자체를 넣지 않는다 — BE 계약 (FE 는 reason 으로 폴백)
         self._tx("voice_sentence_rejected", data)
 
-    def _finish(self):
+    def _finish(self, forced=False):
+        """다 모은 문장으로 프로필을 만든다. 음질이 미달이면 올리지 않고 voice_quality_warn 으로 사용자에게 묻는다.
+        forced 는 그 물음에 "그대로 진행" 이 돌아온 경우(voice_finalize)다 — 그때는 묻지 않고 마무리한다."""
         from brain import noise_level, wav_bytes
 
         keys = sorted(self._embs)
@@ -415,19 +437,85 @@ class VoiceSession:
         quality = "양호" if min_sim >= QUALITY_MIN_SIM else "낮음"
         print(f"[화자 등록] 샘플 일관성 {min_sim:.2f} → {quality}, 소음 {noise}")
         self._n = 0  # finalize 가 수집 중에 와도 마무리 뒤 발화를 새 문장으로 받지 않는다.
-        self._upload_and_capture(self.speaker.npz_bytes(centroid), wav_bytes(wav), round(len(wav) / SR, 1), quality, noise)
+        if not forced and not self._warned and (quality == "낮음" or noise == "높음"):
+            # 이대로 만든 프로필은 본인도 자주 거부된다 — 올리기 전에 묻고 "그대로 진행"(voice_finalize) 이 오면 마무리한다.
+            # NOTE(한계): 묻는 것은 등록당 한 번뿐이다(_warned). 온보딩 화면엔 "그대로 진행" 이 없고 "다시 녹음" 은 마지막
+            # 문장만 다시 받아(실측 2026-09-14), 매번 물으면 시끄러운 곳에서는 등록을 못 끝낸다. FE 가 고쳐지면 이 가드를 뺀다
+            reason = ("주변이 시끄러워 목소리가 잘 담기지 않았어요. 조용한 곳에서 다시 녹음하시겠어요?" if noise == "높음"
+                      else "문장마다 목소리가 다르게 들렸어요. 다시 녹음하시겠어요?")
+            print("[화자 등록] 음질 미달 — 업로드를 멈추고 사용자 선택을 기다린다")
+            self._warned = self._warn_pending = True
+            self._tx("voice_quality_warn", {"tempId": self.tempId, "reason": reason, "noise": noise})
+            return
+        self._start_upload(wav_bytes(wav), self.speaker.npz_bytes(centroid),
+                           round(len(wav) / SR, 1), quality, noise, keys[-1], True)
 
-    def _upload_and_capture(self, npz, wav, dur, quality, noise):
-        """샘플(+마지막이면 npz)을 올리고 voice_captured 를 보낸다 — BE 가 곧장 FE 에 voice_review(재생 URL)를 준다."""
-        base = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/voices/{self.tempId}"
+    def _start_upload(self, wav, npz, dur, quality, noise, n, final):
+        """업로드를 워커에 맡기고 메인 루프를 돌려준다 — PUT 한 번이 최대 15 s 라 그동안 카메라·발화 처리가 멈춘다.
+
+        결과는 apply_uploads() 가 꺼내므로 올리는 동안 온 "다시 녹음"·"중단" 이 먼저 처리된다.
+        올릴 대상과 회차는 여기서 고정한다 — 워커가 늦게 돌아도 그때의 등록에 올린다."""
+        with self._jobs_cv:
+            self._jobs.append((self.tempId, self.epoch, wav, npz, dur, quality, noise, n, final))
+            if self._upload_worker is None or not self._upload_worker.is_alive():
+                self._upload_worker = threading.Thread(target=self._run_uploads, daemon=True)
+                self._upload_worker.start()
+            self._jobs_cv.notify_all()
+
+    def _run_uploads(self):
+        """업로드 워커 — 받은 순서대로 하나씩 올린다. 겹쳐 올리면 늦게 끝난 이전 PUT 이 방금 올린 녹음을 덮어쓴다."""
+        while True:
+            with self._jobs_cv:
+                if not self._jobs:
+                    self._uploading = False
+                    self._jobs_cv.notify_all()
+                    if not self._jobs_cv.wait_for(lambda: bool(self._jobs), timeout=60):
+                        return                      # 한동안 할 일이 없으면 워커를 접는다
+                temp_id, epoch, wav, npz, dur, quality, noise, n, final = self._jobs.popleft()
+                self._uploading = True
+            if epoch != self.epoch or not self.active:
+                print("[화자 등록] 이전 회차의 업로드 — 올리지 않습니다")   # 올리면 지금 녹음을 덮어쓴다
+                continue
+            ok = self._upload(temp_id, wav, npz)
+            self._results.append((temp_id, epoch, ok, dur, quality, noise, n, final))
+
+    def apply_uploads(self):
+        """메인 루프가 매 프레임 부른다 — 끝난 업로드의 판독 결과·완료·실패 안내를 여기서 보낸다."""
+        while self._results:
+            temp_id, epoch, ok, dur, quality, noise, n, final = self._results.pop(0)
+            if epoch != self.epoch or not self.active:
+                print("[화자 등록] 이전 회차의 업로드 완료 — 새 회차에 반영하지 않습니다")
+                continue
+            if ok:
+                if not final:
+                    # 방금 읽은 문장의 판독 결과 — 서버에 녹음이 있어야 FE 가 들어 보고 "다음" 을 누를 수 있다
+                    self._tx("voice_progress", {"tempId": temp_id, "n": n})
+                self._tx("voice_captured", {"tempId": temp_id, "durationSec": dur,
+                                            "quality": quality, "noise": noise})
+                continue
+            # 서버에 녹음이 없으면 통과로 세지 않고 그 문장을 다시 읽게 한다 — 계약에 "녹음 없이 업로드만 다시" 는 없다.
+            # 앞서 받아 둔 문장은 그대로 두므로 그 문장만 다시 읽으면 이어서 진행된다
+            if not final:
+                self._samples.pop(n, None)
+                self._embs.pop(n, None)
+            self._n = n
+            self._reject(n, None, "녹음을 저장하지 못했어요. "
+                         + ("마지막 문장을 한 번 더 읽어주세요." if final else "문장을 한 번 더 읽어주세요."),
+                         "마무리 업로드 실패" if final else "샘플 업로드 실패")
+
+    def _upload(self, temp_id, wav, npz=None):
+        """문장 녹음(+마무리면 npz)을 temp_id 등록에 올린다. 대상은 넘겨받는다 — 도중에 새 등록이 시작돼도 거기 쓰지 않는다.
+
+        다 성공했을 때만 True — 서버에 녹음이 없는데 완료를 알리면 FE 는 재생도 확정도 못 하는 화면에서 멈춘다."""
+        base = f"http://127.0.0.1:{self.link.rt['port']}/api/agent/voices/{temp_id}"
         try:
             self._put(base + "/sample", wav, "audio/wav")
             if npz is not None:
                 self._put(base + "/npz", npz, "application/octet-stream")
         except Exception as e:
-            print(f"[화자 등록] 업로드 실패: {e}")  # voice_captured 는 보낸다 — FE 가 멈추지 않게. 확정(commit)은 BE 가 npz 없음으로 거절한다
-        self._tx("voice_captured", {
-            "tempId": self.tempId, "durationSec": dur, "quality": quality, "noise": noise})
+            print(f"[화자 등록] 업로드 실패: {e}")
+            return False
+        return True
 
     @staticmethod
     def _put(url, body, ctype):

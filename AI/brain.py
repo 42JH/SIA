@@ -437,7 +437,7 @@ def load_api_key():
 
 
 def load_wake_model():
-    """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (게이트 없이 LLM 판정만).
+    """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (호출어 인식·등록 비활성).
 
     siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
     (melspectrogram·embedding)는 패키지에 없고 별도 다운로드다 — 신규 클론에서 없으면
@@ -445,7 +445,7 @@ def load_wake_model():
     향상 켜짐 — 헤드셋·다른 PC는 미검증.
     """
     if not WAKE_MODEL.exists():
-        print(f"시동어 모델 없음({WAKE_MODEL.name}) → 게이트 비활성, 호출어 판정은 LLM만")
+        print(f"시동어 모델 없음({WAKE_MODEL.name}) → 호출어 인식·등록 비활성 (Gemini 키와 무관)")
         return None
     try:
         from openwakeword.model import Model
@@ -463,7 +463,7 @@ def load_wake_model():
             download_models()
             return _load()
     except Exception as e:
-        print(f"시동어 모델 비활성({type(e).__name__}: {e}) → 호출어 판정은 LLM만:  pip install openwakeword")
+        print(f"시동어 모델 로드 실패({type(e).__name__}: {e}) → 호출어 인식·등록 비활성:  pip install openwakeword")
         return None
 
 
@@ -642,6 +642,7 @@ class Brain(threading.Thread):
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
         self.wake_template = wake_template  # WakeTemplateStore 또는 None (호출어 개인화 판정)
         self._wake_notified = None  # 같은 사유의 안내를 발화마다 반복하지 않으려고 마지막 사유를 들고 있는다
+        self._speaker_error_notified = False  # 화자 인증 오류 안내도 같은 이유로 한 번만 (인증에 성공하면 다시 켠다)
         self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
         self.queue = []
         self._audio_lock = threading.RLock()
@@ -655,18 +656,19 @@ class Brain(threading.Thread):
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         self._keys = load_api_keys()
         self._key_i = 0
-        self.wake = None  # 시동어 모델 (openwakeword Model) 또는 None
         self._accum = SpeakerAccum()  # 화자 인증에서 거부된 짧은 조각 모음 (다음 발화와 이어붙여 재판정)
+        # 시동어 모델은 Gemini 키와 상관없이 올린다 — 온보딩 호출어 등록이 이 인스턴스를 그대로 쓰기 때문에,
+        # 키가 없다는 이유로 건너뛰면 등록 첫 발화가 "호출어 모델이 없어 등록할 수 없어요." 로 막힌다.
+        self.wake = load_wake_model()  # openwakeword Model 또는 None (모델 파일 없음·로드 실패)
+        if self.wake is not None:
+            print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
+                  + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         if self._keys:
             from google import genai
 
             self._client = genai.Client(api_key=self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
-            self.wake = load_wake_model()  # 시동어 게이트 — LLM을 안 쓰면 게이트도 의미 없음
-            if self.wake is not None:
-                print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
-                      + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         else:
             print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
@@ -870,16 +872,21 @@ class Brain(threading.Thread):
                 if profile is not None and profile[0] is not None:
                     spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
                     ok, sim = self.speaker.verify(spk_audio, profile)
-                    if not ok:
+                    if not ok and sim is not None:
                         # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
                         # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
+                        # 유사도를 아예 재지 못한 인증 오류(sim None)는 이 재판정에 넣지 않는다 — 목소리를
+                        # 확인하지 못한 발화를 조각에 업혀 통과시키면 게이트를 우회하는 길이 된다.
                         combined = accum.offer(speech_part(spk_audio), sim, t_utter)
                         if combined is not None:
                             accum_n = accum.n_joined
                             ok, accum_sim = self.speaker.verify(combined, profile)
                             if ok:
-                                sim = accum_sim  # 재판정에서 측정 실패로 통과했다면 정확도도 생략한다.
+                                sim = accum_sim  # 이어붙여 통과했으니 기록도 재판정 유사도로 남긴다.
+                            elif accum_sim is None:
+                                sim = None  # 재판정이 오류로 끝났다 — 타인이라는 근거가 아니므로 아래 오류 분기로.
                     if ok:
+                        self._speaker_error_notified = False
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                         be = self._be()
                         with self._audio_lock:
@@ -887,6 +894,18 @@ class Brain(threading.Thread):
                         if fresh and be and be.rt and sim is not None:
                             be.queue_active_voice_sample(wav_bytes(audio), profile[2:], generation,
                                                          self._active_voice_sample_is_current)
+                    elif sim is None:
+                        # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
+                        # 그래서 거부(voice_rejected)로 기록하지 않고 이번 발화만 버린다. 예외 내용은
+                        # speaker.verify 가 콘솔에 남기고, 사용자에게는 안내 문구만 보낸다.
+                        if not self._speaker_error_notified:
+                            self._speaker_error_notified = True
+                            self._say("목소리를 확인하지 못했습니다 — 다시 한 번 말씀해 주세요.")
+                        log_utterance(gate="speaker_error", accum_n=accum_n,
+                                      wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
+                                      speech_s=round(speech_s(audio), 2),
+                                      session=t_utter < self._session_until(), **audio_stats(audio))
+                        continue
                     else:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
                               + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))

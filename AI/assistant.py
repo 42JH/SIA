@@ -456,6 +456,8 @@ def main():
                                 remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                                 active_custom = remote_custom if remote_custom.n else custom
                                 ensure_static_gesture_names(active_custom)
+                                if registration:
+                                    registration.custom_store = active_custom
                             except Exception as exc:
                                 print(f"[BE] 이름 변경 동기화 실패: {exc}")
                     elif event_type == "gesture_registered" and data.get("id") is not None:
@@ -491,13 +493,17 @@ def main():
                             gesture_preview.stop()
                         registration.start(data, now)
                     elif event_type == "reg_finish" and registration:
-                        registration.finish()
+                        registration.finish_for(data.get("tempId"))
                     elif event_type == "gesture_result":
                         hud_feedback = data.get("message", "제스처 실행 결과")
                         hud_feedback_until = now + 1.5
                         print(f"[BE RESULT] name={data.get('name', '-')} | "
                               f"ok={data.get('ok', False)} | message={hud_feedback}")
 
+            if link and link.voice:
+                # 끝난 등록 업로드의 판독 결과·완료를 보낸다. 업로드 자체는 워커가 하므로 이 루프는 멈추지 않고,
+                # 방금 처리한 "다시 녹음"·"중단" 지시가 먼저 반영된 뒤라 지나간 수집의 결과는 여기서 버려진다.
+                link.voice.apply_uploads()
             if link and link.voice_sync and link.voice_sync.apply_pending(voice.reset_audio):
                 pending_capture = None
 
@@ -700,6 +706,12 @@ def main():
                     # 완성된 커스텀 동작이 최우선 — 같은 손 움직임이 우연히
                     # 스와이프/스크롤로도 읽혀 이중 발동하는 것을 막는다.
                     dynamic_event = custom_motion_event
+                elif custom_claimed:
+                    # 아직 완성 전이지만 커스텀 동작 후보를 추적 중이면(시작 궤적이
+                    # 등록된 커스텀 동작과 일치) 완성되거나 후보가 풀릴 때까지 다른
+                    # 해석(스와이프·스크롤·핀치)으로 새지 않는다 — 감지기 자체는
+                    # 위에서 계속 갱신되므로 후보가 풀리면 바로 이어서 판정한다.
+                    dynamic_event = None
                 elif pinch_event:
                     dynamic_event = pinch_event
                 elif motion_event == "Swipe_Right":

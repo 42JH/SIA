@@ -122,15 +122,22 @@ class SpeakerVerifier:
         return min_sim
 
     def verify(self, audio_i16, profile=None):
-        """(통과여부, 유사도). 미등록·대조 오류는 통과하되 측정하지 못한 유사도는 None."""
+        """(통과여부, 유사도). 미등록은 (True, None) 으로 통과시키고, 등록돼 있는데 대조에 실패하면
+        (False, None) — 목소리를 확인하지 못한 발화를 통과시키면 화자 인증이 없는 것과 같아진다.
+        실제 불일치는 유사도가 숫자로 남으므로 호출한 쪽에서 오류와 구분할 수 있다."""
         centroid, threshold, _, _ = self.snapshot() if profile is None else profile
         if centroid is None:
             return True, None
         try:
             sim = float(self.embed(audio_i16) @ centroid)
         except Exception as e:
-            print(f"[화자 인증 오류, 통과 처리] {e}")
-            return True, None
+            print(f"[화자 인증 오류, 차단] {type(e).__name__}: {e}")
+            return False, None
+        if not np.isfinite(sim):
+            # 임베딩이 NaN·Inf 로 나오면(모델 이상·오디오 손상) 유사도도 숫자가 아니다.
+            # 이대로 비교하면 항상 False 라 불일치처럼 보이므로, 오류로 구분해 돌려준다.
+            print("[화자 인증 오류, 차단] 유사도가 유효한 숫자가 아닙니다")
+            return False, None
         return sim >= threshold, sim
 
 

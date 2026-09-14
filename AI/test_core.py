@@ -556,26 +556,41 @@ def test_voice_bridge():
         uploads.append((url, body, ctype))
         link.sent.append(("PUT", ctype))
     vs._put = put
+
+    def settle():
+        """메인 루프 자리 — 업로드 워커가 끝나기를 기다렸다가 결과(판독·완료·실패 안내)를 내보낸다."""
+        with vs._jobs_cv:
+            assert vs._jobs_cv.wait_for(lambda: not vs._jobs and not vs._uploading, 3), "업로드 시간 초과"
+        vs.apply_uploads()
+
+    def utter(audio, t=None):
+        vs.on_utter(audio, t)
+        settle()
+
+    def finalize(temp_id):
+        vs.on_finalize(temp_id)
+        settle()
+
     assert len(SENTENCES) >= 5                                 # BE 가 total(현재 5)을 정한다 — 상수는 그 이상이면 된다
     # 길이·소음 거절 — 임베딩 전에 거른다. 소음은 예산(2)이 다하면 받되 품질 낮음
     vs.on_start("t0", 5)
     vs.on_collect("t0", 1)
-    vs.on_utter(loud(7, 5.5))                                  # 발화 5.5 s — 문장 하나치곤 길다
+    utter(loud(7, 5.5))                                  # 발화 5.5 s — 문장 하나치곤 길다
     assert link.sent[-1][1]["code"] == "TOO_LONG"
     noisy = (rng.standard_normal(2 * 16000) * 2000).astype(np.int16)   # 조용한 구간이 없다 → 소음 높음
     noisy[0] = 7
-    vs.on_utter(noisy)
-    vs.on_utter(noisy)
+    utter(noisy)
+    utter(noisy)
     assert [d.get("code") for t, d in link.sent if t == "voice_sentence_rejected"][-2:] == ["NOISY", "NOISY"] and spk.embeds == 0
-    vs.on_utter(noisy)                                         # 소음 거절 예산 소진 — 받되 품질 낮음
-    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]   # 문장 하나 = 진행 + 샘플 + 판독
+    utter(noisy)                                         # 소음 거절 예산 소진 — 받되 품질 낮음
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "voice_progress", "voice_captured"]   # 문장 하나 = 샘플 업로드 + 진행 + 판독
     assert link.sent[-1][1]["quality"] == "낮음" and link.sent[-1][1]["durationSec"] == 2.0 and spk.embeds == 1
     spk.embeds = 0
     link.sent.clear()
     vs.on_start("t1", 5)
     assert link.sent[-1] == ("voice_ready", {"tempId": "t1"})
     vs.on_collect("t1", 1)
-    vs.on_utter(loud(7, 0.2))                                  # 말소리 0.2 s — 헛기침 길이, 문장 1 그대로
+    utter(loud(7, 0.2))                                  # 말소리 0.2 s — 헛기침 길이, 문장 1 그대로
     assert "voice_progress" not in [t for t, _ in link.sent]
     assert link.sent[-1][0] == "voice_sentence_rejected" and link.sent[-1][1]["tempId"] == "t1"
     assert link.sent[-1][1]["code"] == "TOO_SHORT" and spk.embeds == 0   # 짧으면 임베딩까지 가지도 않는다
@@ -583,7 +598,7 @@ def test_voice_bridge():
     samples = [loud(7, 1.0 + 0.2 * n) for n in range(1, 6)]
     for n, sample in enumerate(samples, 1):
         vs.on_collect("t1", n)
-        vs.on_utter(sample)
+        utter(sample)
         assert spk.embeds == n                                 # 문장을 받을 때마다 하나씩 — 마지막에 5개를 몰아 뽑지 않는다
     types = [t for t, _ in link.sent]
     assert types.count("voice_progress") == 5 and types[-3:] == ["PUT", "PUT", "voice_captured"]
@@ -605,62 +620,94 @@ def test_voice_bridge():
     vs.on_start("t2", 5)
     for n in (1, 2):
         vs.on_collect("t2", n)
-        vs.on_utter(loud(7))
+        utter(loud(7))
     vs.on_collect("t2", 3)
-    vs.on_utter(loud(9))                                       # 앞 문장과 안 닮음 → 거절 1
+    utter(loud(9))                                       # 앞 문장과 안 닮음 → 거절 1
     assert link.sent[-1][0] == "voice_sentence_rejected" and link.sent[-1][1]["code"] == "INCONSISTENT"
     assert vs._n == 3 and sorted(vs._samples) == [1, 2]        # 순번은 그대로 — 같은 문장을 계속 기다린다
-    vs.on_utter(loud(7, 0.2))                                  # 짧은 발화(헛기침)는 늘 거절하되 예산은 안 쓴다
+    utter(loud(7, 0.2))                                  # 짧은 발화(헛기침)는 늘 거절하되 예산은 안 쓴다
     assert link.sent[-1][1]["code"] == "TOO_SHORT" and vs._rejects == 1
-    vs.on_utter(loud(9))                                       # 거절 2 — 예산 소진
+    utter(loud(9))                                       # 거절 2 — 예산 소진
     assert [t for t, _ in link.sent].count("voice_sentence_rejected") == 3
-    vs.on_utter(loud(9))                                       # 예산이 없으니 받는다 — 1번 문장이 잘못 녹음돼도 갇히지 않게
-    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]
+    utter(loud(9))                                       # 예산이 없으니 받는다 — 1번 문장이 잘못 녹음돼도 갇히지 않게
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "voice_progress", "voice_captured"]
     assert link.sent[-1][1]["quality"] == "낮음"                # 받긴 하지만 판독 결과는 낮음 — FE 가 그 자리에서 "다시 녹음" 을 연다
     for n, marker in ((4, 9), (5, 6)):                         # 4번도 다른 목소리, 5번은 또 다른 방향 — 튀는 문장이 둘 이상
         vs.on_collect("t2", n)
-        vs.on_utter(loud(marker))
-    assert "voice_quality_warn" not in [t for t, _ in link.sent]   # 5문장 뒤 경고는 없다 — 문장마다 결과를 이미 줬다
-    assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "낮음"   # 하나만 뺄 수 없으니 전체 판정은 낮음
+        utter(loud(marker))
+    # 하나만 뺄 수 없어 전체 판정이 낮음 — 올리기 전에 경고하고 사용자 선택을 기다린다
+    assert link.sent[-1] == ("voice_quality_warn", {
+        "tempId": "t2", "reason": "문장마다 목소리가 다르게 들렸어요. 다시 녹음하시겠어요?", "noise": "낮음"})
+    assert "application/octet-stream" not in [c for t, c in link.sent if t == "PUT"]   # npz 는 아직 안 올린다
+    vs.on_collect("t2", 5)                                     # "이 문장 다시" — 경고 대기가 풀리고 5번만 다시 기다린다
+    assert vs._n == 5 and sorted(vs._samples) == [1, 2, 3, 4] and not vs._warn_pending
+    sent_n, upload_n = len(link.sent), len(uploads)
+    finalize("t2")                                       # 앞 경고에 대한 늦은 "그대로 진행" — 재수집 중이니 받지 않는다
+    assert len(link.sent) == sent_n and len(uploads) == upload_n and vs._n == 5
+    utter(loud(6))
+    # 묻는 것은 등록 한 건에 한 번뿐 — 다시 읽고도 미달이면 올려서 녹음 확인 화면으로 넘긴다.
+    # 온보딩 화면에는 "그대로 진행" 버튼이 없고 "다시 녹음" 은 마지막 문장만 다시 받아서, 매번 물으면 등록을 끝낼 수 없다
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "PUT", "voice_captured"]
+    assert link.sent[-1][1]["quality"] == "낮음" and not vs._warn_pending
+    sent_n, upload_n = len(link.sent), len(uploads)
+    finalize("t2")                                        # 경고 대기가 아니므로 다시 올리지 않는다
+    assert len(link.sent) == sent_n and len(uploads) == upload_n
     with np.load(io.BytesIO(uploads[-1][1]), allow_pickle=False) as profile:
         assert np.allclose(profile["centroid"], np.array([1.0, 2.0]) / np.sqrt(5))  # 마지막 문장만으로 프로필을 만들지 않는다.
     vs.on_cancel("t2")
     assert not vs.active
+    # 일관성은 좋아도 소음이 높으면 같은 경고를 보낸다 — 사유는 noise 로 구분한다. "중단" 은 경고 대기도 같이 끝낸다
+    link.sent.clear()
+    uploads.clear()
+    vs.on_start("t2n", 5)
+    for n in range(1, 6):
+        vs.on_collect("t2n", n)
+        for _ in range(3):                                     # 소음 거절 예산(2) 이 남아 있는 동안은 무른다 — 통과할 때까지 다시 읽는다
+            utter(noisy)
+            if not vs._n:
+                break
+    assert link.sent[-1] == ("voice_quality_warn", {
+        "tempId": "t2n", "reason": "주변이 시끄러워 목소리가 잘 담기지 않았어요. 조용한 곳에서 다시 녹음하시겠어요?",
+        "noise": "높음"})
+    vs.on_cancel("t2n")
+    link.sent.clear()
+    finalize("t2n")
+    assert not link.sent and not vs.active                     # 중단 뒤 "그대로 진행" 이 늦게 와도 올리지 않는다
     # FE "다시 녹음" — 3번까지 읽은 뒤 1번부터 다시. 옛 2·3번이 남아 있으면 1번 하나로 등록이 끝나 버린다
     link.sent.clear()
     vs.on_start("t3", 5)
     for n in (1, 2, 3):
         vs.on_collect("t3", n)
-        vs.on_utter(loud(7))
+        utter(loud(7))
     vs.on_collect("t3", 1)
     assert vs._samples == {}
-    vs.on_utter(loud(7))                                       # 1번만 다시 읽은 상태 — 아직 끝나면 안 된다
+    utter(loud(7))                                       # 1번만 다시 읽은 상태 — 아직 끝나면 안 된다
     assert "application/octet-stream" not in [c for t, c in link.sent if t == "PUT"]   # npz 는 다 모여야 올라간다
     for n in (2, 3, 4, 5):
         vs.on_collect("t3", n)
-        vs.on_utter(loud(7))
+        utter(loud(7))
     assert [c for t, c in link.sent if t == "PUT"].count("application/octet-stream") == 1
     # FE "이 문장 다시" — 같은 n 이 다시 오면 그 문장만 버리고 앞 문장은 남는다
     vs.on_start("t4", 5)
     for n in (1, 2):
         vs.on_collect("t4", n)
-        vs.on_utter(loud(7))
+        utter(loud(7))
     vs.on_collect("t4", 2)
     assert sorted(vs._samples) == [1] and sorted(vs._embs) == [1]   # 버린 문장은 임베딩도 같이 버린다
-    vs.on_utter(loud(9))                                       # 2번을 다른 목소리로 → 거절
+    utter(loud(9))                                       # 2번을 다른 목소리로 → 거절
     assert vs._rejects == 1
     vs.on_collect("t4", 1)                                     # "다시 녹음" — 비교 기준이 사라지면 예산도 되돌린다
     assert vs._embs == {} and vs._rejects == 0
     # "이 문장 다시" 를 누르기 직전에 시작한 낭독은 버린다 — 받으면 무르려던 그 발화로 문장이 그대로 넘어간다
     link.sent.clear()
-    vs.on_utter(loud(7), vs._collect_t - 0.1)                  # 지시보다 먼저 시작된 발화
+    utter(loud(7), vs._collect_t - 0.1)                  # 지시보다 먼저 시작된 발화
     assert vs._n == 1 and link.sent == []                      # 진행도 거절도 없다 — 같은 문장을 계속 기다린다
-    vs.on_utter(loud(7), vs._collect_t + 0.1)                  # 지시 뒤에 시작한 낭독만 센다
-    assert [t for t, _ in link.sent] == ["voice_progress", "PUT", "voice_captured"]
+    utter(loud(7), vs._collect_t + 0.1)                  # 지시 뒤에 시작한 낭독만 센다
+    assert [t for t, _ in link.sent] == ["PUT", "voice_progress", "voice_captured"]
     vs.on_collect("t4", 1)                                     # 1번을 다시 — 아래 임베딩 실패 검사의 출발점
     # 임베딩 자체가 실패(모델 로드 불가 등)하면 사유만 보내고 code 키는 없다 — FE 가 멈춘 것처럼 보이지 않게
     spk.embed = lambda a: (_ for _ in ()).throw(RuntimeError("모델 없음"))
-    vs.on_utter(loud(7))
+    utter(loud(7))
     assert link.sent[-1][0] == "voice_sentence_rejected" and "code" not in link.sent[-1][1] and vs._n == 1
     del spk.embed
     # 1번이 찌그러진 경우 — 2번을 두 번 읽었는데 둘은 닮고 1번과만 다르면 1번을 의심해 기준에서 빼고 2번을 받는다.
@@ -668,30 +715,107 @@ def test_voice_bridge():
     link.sent.clear()
     vs.on_start("t5", 5)
     vs.on_collect("t5", 1)
-    vs.on_utter(loud(9))                                       # 찌그러진 1번 — 비교 대상이 없어 그냥 받는다
+    utter(loud(9))                                       # 찌그러진 1번 — 비교 대상이 없어 그냥 받는다
     vs.on_collect("t5", 2)
-    vs.on_utter(loud(7))                                       # 본인 — 1번과 안 닮음 → 거절 1
+    utter(loud(7))                                       # 본인 — 1번과 안 닮음 → 거절 1
     assert link.sent[-1][0] == "voice_sentence_rejected" and vs._rejects == 1
-    vs.on_utter(loud(7))                                       # 다시 읽음 — 첫 시도와 닮음, 1번과만 다름 → 1번 의심, 2번 통과
-    assert [t for t, _ in link.sent][-3:] == ["voice_progress", "PUT", "voice_captured"]
+    utter(loud(7))                                       # 다시 읽음 — 첫 시도와 닮음, 1번과만 다름 → 1번 의심, 2번 통과
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "voice_progress", "voice_captured"]
     assert vs._suspect == {1} and vs._rejects == 1
     for n in (3, 4, 5):
         vs.on_collect("t5", n)
-        vs.on_utter(loud(7))                                   # 기준이 2번뿐이라 전부 통과
+        utter(loud(7))                                   # 기준이 2번뿐이라 전부 통과
     assert [t for t, _ in link.sent].count("voice_sentence_rejected") == 1
     assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "양호"   # 1번 제외, 4문장 프로필
     # 진짜 2번 문제 — 두 시도가 서로도 안 닮으면 앞 문장을 의심하지 않고 그냥 거절 2/2
     link.sent.clear()
     vs.on_start("t6", 5)
     vs.on_collect("t6", 1)
-    vs.on_utter(loud(7))
+    utter(loud(7))
     vs.on_collect("t6", 2)
-    vs.on_utter(loud(9))                                       # 1번과 다름 → 거절 1
-    vs.on_utter(loud(6))                                       # 1번과도, 첫 시도와도 다름 → 거절 2
+    utter(loud(9))                                       # 1번과 다름 → 거절 1
+    utter(loud(6))                                       # 1번과도, 첫 시도와도 다름 → 거절 2
     assert [t for t, _ in link.sent].count("voice_sentence_rejected") == 2 and vs._suspect == set() and vs._n == 2
     vs.on_cancel("t5")  # 이전 등록의 취소가 늦게 와도 현재 수집 상태를 유지한다.
     assert vs.active and vs.tempId == "t6" and vs._n == 2
     assert sorted(vs._samples) == [1] and sorted(vs._embs) == [1] and vs._rejects == 2
+
+    # 업로드 실패 — 서버가 받지 못하면 판독 결과·완료를 보내지 않고, 사용자가 다시 시도할 수 있게 남겨 둔다
+    fail = {"sample": False, "npz": False}
+    def put_maybe_fail(url, body, ctype):
+        if fail["npz" if url.endswith("/npz") else "sample"]:
+            raise OSError("연결 거부")
+        put(url, body, ctype)
+    vs._put = put_maybe_fail
+    link.sent.clear()
+    uploads.clear()
+    vs.on_start("t7", 5)
+    vs.on_collect("t7", 1)
+    utter(loud(7))
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "voice_progress", "voice_captured"]
+    fail["sample"] = True
+    vs.on_collect("t7", 2)
+    utter(loud(7))
+    assert link.sent[-1][0] == "voice_sentence_rejected" and "code" not in link.sent[-1][1]
+    assert [t for t, _ in link.sent][-2] != "voice_progress"    # 저장 못 한 문장은 통과로 세지 않는다
+    assert vs._n == 2 and sorted(vs._samples) == [1]            # 앞 문장은 남고 이 문장만 다시 기다린다
+    fail["sample"] = False
+    utter(loud(7))                                        # 다시 읽으면 그대로 이어진다
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "voice_progress", "voice_captured"] and vs._n == 0
+    for n in (3, 4, 5):
+        vs.on_collect("t7", n)
+        fail["npz"] = n == 5
+        utter(loud(7))
+    # 마지막 문장 — npz 를 못 올렸으니 완료가 아니다. 음질 경고가 아니라 문장 재낭독으로 되돌린다
+    assert link.sent[-1][0] == "voice_sentence_rejected" and "code" not in link.sent[-1][1]
+    assert link.sent[-1][1]["n"] == 5 and "저장하지 못했" in link.sent[-1][1]["reason"]
+    assert "voice_quality_warn" not in [t for t, _ in link.sent] and not vs._warn_pending
+    assert vs._n == 5 and [t for t, _ in link.sent].count("voice_captured") == 4
+    fail["npz"] = False
+    utter(loud(7))                                        # 마지막 문장을 다시 읽으면 같은 업로드를 다시 시도한다
+    assert [t for t, _ in link.sent][-3:] == ["PUT", "PUT", "voice_captured"]
+    assert [c for t, c in link.sent if t == "PUT"][-1] == "application/octet-stream"
+    assert link.sent[-1][1]["tempId"] == "t7" and vs._n == 0
+    # 올리는 동안 도착한 "중단"·"다시 녹음" 은 업로드 결과보다 먼저 처리된다 — 지나간 수집의 판독 결과는 버린다.
+    # 업로드는 워커가 하고 결과는 apply_uploads() 가 꺼내므로, 그 사이에 들어온 지시가 항상 앞선다
+    for interrupt in ("cancel", "retry"):
+        link.sent.clear()
+        vs.on_start("t8", 5)
+        vs.on_collect("t8", 1)
+        vs.on_utter(loud(7))                                    # 업로드 워커 시작 — 결과는 아직 안 나간다
+        if interrupt == "cancel":
+            vs.on_cancel("t8")
+        else:
+            vs.on_collect("t8", 1)                              # 같은 tempId 로 다시 읽으라는 지시
+        settle()
+        # 업로드 자체는 이미 떠난 뒤라 PUT 은 남지만, 진행·판독·완료 이벤트는 보내지 않는다
+        assert [t for t, _ in link.sent if t != "PUT"] == ["voice_ready"]
+
+    # 올릴 대상은 시작할 때 고정하고, 겹친 업로드는 받은 순서대로 하나씩 올린다 —
+    # 늦게 끝난 이전 PUT 이 새 등록의 녹음을 덮어쓰면 안 된다
+    import threading
+    started, hold = threading.Event(), threading.Event()
+    def slow(url, body, ctype):
+        started.set()
+        assert hold.wait(3)
+        put(url, body, ctype)
+    vs._put = slow
+    link.sent.clear()
+    uploads.clear()
+    vs.on_start("t9", 5)
+    vs.on_collect("t9", 1)
+    vs.on_utter(loud(7))                                        # 업로드 1 — PUT 중에 붙잡아 둔다
+    assert started.wait(3)
+    vs.on_start("t10", 5)                                       # 올리는 도중 새 등록이 시작된다
+    vs.on_collect("t10", 1)
+    vs.on_utter(loud(7))                                        # 업로드 2 — 앞의 것이 끝난 뒤에 올라가야 한다
+    hold.set()
+    settle()
+    vs.apply_uploads()
+    assert [url.split("/voices/")[1].split("/")[0] for url, _, _ in uploads] == ["t9", "t10"]
+    assert [d["tempId"] for t, d in link.sent
+            if t in ("voice_progress", "voice_captured")] == ["t10", "t10"]   # 지나간 등록의 결과는 안 보낸다
+    vs._put = put
 
     # 부분 마무리: 1~4문장만 있어도 npz 를 만든다. 2문장이면 둘 다 쓰고, 3개 이상이면 기존 이상치 판정을 유지한다.
     for count in (1, 2, 3, 4):
@@ -700,16 +824,19 @@ def test_voice_bridge():
         for n in range(1, count + 1):
             vs.on_collect(temp_id, n)
             sample = loud(9 if n == 1 else 7, 1.0 + 0.2 * n)
-            vs.on_utter(sample)
+            utter(sample)
             if vs._n:  # 2번을 한 번 더 읽으면 1번과만 다른 목소리로 판정하여 수집한다.
-                vs.on_utter(sample)
+                utter(sample)
             assert vs._n == 0
         vs.on_collect(temp_id, count + 1)  # 다음 문장을 기다리던 중에도 현재 수집분으로 마무리한다.
         link.sent.clear()
         uploads.clear()
-        vs.on_finalize("old-temp")
+        finalize("old-temp")
         assert not link.sent and not uploads and vs._n == count + 1
-        vs.on_finalize(temp_id)
+        finalize(temp_id)                                # 경고 대기가 아니면 마무리하지 않는다
+        assert not link.sent and not uploads
+        vs._warn_pending = True                                # 음질 경고를 보내고 사용자가 "그대로 진행" 을 고른 상태
+        finalize(temp_id)
         assert [t for t, _ in link.sent] == ["PUT", "PUT", "voice_captured"]
         assert [ctype for _, _, ctype in uploads] == ["audio/wav", "application/octet-stream"]
         assert uploads[0][0].endswith(f"/api/agent/voices/{temp_id}/sample")
@@ -722,11 +849,12 @@ def test_voice_bridge():
             assert np.allclose(profile["centroid"], expected)
         assert link.sent[-1][1]["durationSec"] == round(len(sample) / 16000, 1)
         assert vs.active and vs._n == 0  # 등록 확정은 BE 의 voice_registered 를 기다린다.
-        vs.on_utter(loud(7))
+        utter(loud(7))
         assert len(uploads) == 2
-        # 같은 지시가 다시 와도 FE 가 기다리는 voice_review 용 captured 를 돌려준다.
+        # 같은 지시가 다시 와도 다시 올리거나 두 번 완료하지 않는다 — 경고 대기는 한 번 쓰면 끝난다.
+        sent_n, upload_n = len(link.sent), len(uploads)
         vs.on_finalize(temp_id)
-        assert [t for t, _ in link.sent][-3:] == ["PUT", "PUT", "voice_captured"]
+        assert len(link.sent) == sent_n and len(uploads) == upload_n
         vs.on_registered(1, False)
         link.sent.clear()
         uploads.clear()
@@ -736,17 +864,18 @@ def test_voice_bridge():
     # 문장 0개: code 없는 사유를 보내고 등록을 유지한다. 이후 1번 낭독을 그대로 받을 수 있다.
     vs.on_start("empty", 5)
     link.sent.clear()
-    vs.on_finalize("empty")
+    vs._warn_pending = True                                    # 마무리 지시는 경고 대기에서만 받는다
+    finalize("empty")
     assert link.sent == [("voice_sentence_rejected", {
         "tempId": "empty", "n": 1,
         "reason": "아직 문장을 하나도 받지 못했어요. 화면의 문장을 읽어주세요."})]
     assert not uploads and vs.active and vs._n == 1
-    vs.on_utter(loud(7), vs._collect_t + 0.1)
+    utter(loud(7), vs._collect_t + 0.1)
     assert sorted(vs._embs) == [1] and link.sent[-1][0] == "voice_captured"
     vs.on_cancel("empty")
     link.sent.clear()
     uploads.clear()
-    vs.on_finalize("empty")
+    finalize("empty")
     assert not link.sent and not uploads and not vs.active
 
 def test_wake_enroll():
@@ -928,6 +1057,42 @@ def test_be_dom_text():
     assert be_dom_text(None) is None                                                       # 링크 없음
 
 
+def test_wake_model_load():
+    """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
+    온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
+    모델 자체가 없거나 로드에 실패하면 그대로 None 이고, 그 사유는 키 없음과 따로 로그에 남는다."""
+    from unittest.mock import Mock, patch
+
+    import brain as brain_mod
+    from brain import WAKE_MODEL_WORD, Brain
+    from voice_bridge import WakeEnroll
+
+    model, loads = object(), []
+
+    def fake_loader():
+        loads.append(model)
+        return model
+
+    with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=[]):
+        no_key = Brain(Mock())
+    assert no_key.wake is model and not no_key.enabled and len(loads) == 1  # 키 없이도 모델은 올라온다
+
+    enroll = WakeEnroll(Mock(), None, None)
+    enroll.wake_model = no_key.wake                    # assistant.py 가 하는 것과 같은 전달
+    assert enroll.wake_model is model and len(loads) == 1   # 등록도 같은 인스턴스 — 다시 로드하지 않는다
+
+    with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()) as client:
+        with_key = Brain(Mock())
+    assert with_key.wake is model and with_key.enabled and client.call_count == 1  # 키가 있는 흐름은 그대로
+    assert len(loads) == 2                                                          # Brain 하나당 한 번
+
+    store = SimpleNamespace(snapshot=lambda: (WAKE_MODEL_WORD, None, 0))
+    with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=[]):
+        broken = Brain(Mock(), wake_template=store)
+    assert broken.wake is None                                                      # 로드 실패는 숨기지 않는다
+    assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
+
+
 if __name__ == "__main__":
     import sys
     try:
@@ -955,6 +1120,7 @@ if __name__ == "__main__":
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
+    test_wake_model_load()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 24/24 통과")
+    print("OK - 25/25 통과")
