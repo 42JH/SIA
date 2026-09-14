@@ -456,6 +456,8 @@ def main():
                                 remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                                 active_custom = remote_custom if remote_custom.n else custom
                                 ensure_static_gesture_names(active_custom)
+                                if registration:
+                                    registration.custom_store = active_custom
                             except Exception as exc:
                                 print(f"[BE] 이름 변경 동기화 실패: {exc}")
                     elif event_type == "gesture_registered" and data.get("id") is not None:
@@ -491,7 +493,7 @@ def main():
                             gesture_preview.stop()
                         registration.start(data, now)
                     elif event_type == "reg_finish" and registration:
-                        registration.finish()
+                        registration.finish_for(data.get("tempId"))
                     elif event_type == "gesture_result":
                         hud_feedback = data.get("message", "제스처 실행 결과")
                         hud_feedback_until = now + 1.5
