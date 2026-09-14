@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 const emptyRegistration = {
   stage: 'intro',
-  captureType: null,
+  motion: null,
   previewFrame: null,
   previewReady: false,
   tempId: null,
