@@ -116,7 +116,7 @@ class AgentLink:
     MCP 호출(call)은 brain 스레드에서만 일어난다(urllib 동기).
     """
 
-    def __init__(self, voice_sync=None):
+    def __init__(self, voice_sync=None, wake_store=None):
         self.rt = read_runtime()
         self.mcp = None
         self.ws = None
@@ -138,6 +138,9 @@ class AgentLink:
         self.voice_sync = voice_sync    # WS 연결 전에 주입해 부팅 직후 활성 참조도 놓치지 않는다.
         if voice_sync is not None:
             voice_sync.link = self
+        self.wake_store = wake_store    # WakeTemplateStore — 호출어 개인화 템플릿(전역 blob:wakeword)
+        if wake_store is not None:
+            wake_store.link = self
         self.wake = None                # WakeEnroll 또는 None (assistant가 주입) — 온보딩 이름 불러보기(206)
         self._send_lock = threading.Lock()
         self._stop = False
@@ -191,6 +194,12 @@ class AgentLink:
                 blobs = d.get("blobs")
                 if isinstance(blobs, dict) and "voice" in blobs:
                     self.voice_sync.on_changed(blobs["voice"])
+        if self.wake_store is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
+            # 호출어 설정을 먼저 적용한다. 다운로드 시작 뒤 설정이 바뀌면 받은 파일이 폐기된다.
+            self.wake_store.on_settings(d.get("settings"))   # settings.wakeWord — 호출어 문자열 자체
+            blobs = d.get("blobs")
+            if isinstance(blobs, dict) and "wakeword" in blobs:
+                self.wake_store.on_blob(blobs["wakeword"])   # 전역 호출어 템플릿 참조 (sha256 또는 null)
         if self.calib is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
             blobs = d.get("blobs")  # 시작·재접속·설정변경 시 활성 보정 참조를 로컬과 맞춘다(-161)
             self.calib.on_blob_ref(blobs.get("calib") if isinstance(blobs, dict) else None)
@@ -269,6 +278,12 @@ class AgentLink:
     def get_voice_npz(self):
         """해시가 다른 파일만 호출측에서 요청한다 — 조건부 GET 없이 누락된 캐시도 복구한다."""
         with self._agent_request("/api/agent/voices/active/npz",
+                                 headers={"Accept": "application/octet-stream"}) as response:
+            return response.read()
+
+    def get_blob_npz(self, name):
+        """이름에 해당하는 NPZ를 받는다. 다운로드 여부는 호출부에서 해시를 비교해 결정한다."""
+        with self._agent_request(f"/api/agent/blobs/{name}",
                                  headers={"Accept": "application/octet-stream"}) as response:
             return response.read()
 

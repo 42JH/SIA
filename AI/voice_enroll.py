@@ -5,6 +5,9 @@
 검증:  python voice_enroll.py --verify  (말하면 등록 목소리와 유사도 실시간 표시)
 초기화: python voice_enroll.py --reset
 
+호출어 개인화 템플릿(models/wake.npz)은 앱 온보딩에서 등록하고 여기서는 상태만 확인한다:
+  python voice_enroll.py --wake-info    (등록된 호출어·기준 샘플 수·연결된 프로필)
+
 마이크에 대고 아래 문구를 하나씩 자연스럽게 읽으면 된다. 조용한 곳에서 등록할수록
 소음 환경에서도 잘 구분한다.
 """
@@ -77,12 +80,33 @@ def verify_live():
               f"[임계 {sv.threshold}]")
 
 
+def wake_info():
+    from voice_bridge import WakeTemplateStore
+
+    store = WakeTemplateStore(HERE / "models" / "wake.npz")
+    t = store.current
+    if t is None:
+        sys.exit("등록된 호출어 템플릿이 없습니다" + (f" (읽기 실패: {store.load_error})" if store.load_error else ""))
+    print(f"호출어 \"{t.wake_text}\" — 기준 {t.base_n}개, "
+          f"보이스 프로필 {t.profile_id if t.bound else '미연결'}")
+    print(f"등록 때 시동어 점수(기록용, 판정에는 쓰지 않음): {[round(s, 2) for s in t.scores]}")
+    return store
+
+
 if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # cp949 콘솔에서 한글·em-dash 출력 크래시 방지
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--reset", action="store_true")
+    ap.add_argument("--wake-info", action="store_true", help="호출어 템플릿 상태 보기")
     args = ap.parse_args()
-    if args.reset:
+    if args.wake_info:
+        wake_info()
+    elif args.reset:
         PROFILE.unlink(missing_ok=True)
         print("화자 프로필 삭제됨.")
     elif args.verify:

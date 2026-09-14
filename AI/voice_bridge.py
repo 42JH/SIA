@@ -24,7 +24,7 @@ SENTENCES = [  # 화자 인증 등록 문장 5개 — FE 와 공통 상수. 순�
     "다음 영상으로 넘어가고 음소거 해줘",
     "안녕하세요 저는 이 컴퓨터의 주인입니다",
 ]
-MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 < 0.4 s, WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
+MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 < 0.4 s, brain.WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
                        # 무른다. "문장을 끝까지 읽었나" 는 여기서 안 본다 — 그건 유사도 게이트와 문장별 quality 몫이다.
                        # 1.5 였다가 내림: speech_s 는 앞 여유분·단어 틈을 안 세서 녹음 길이의 39%(로그 147건 중앙값)만 잡힌다 —
                        # 문장을 2 s 에 읽으면 0.8~1.0 s 라 실제 낭독이 거절됐다. voice_enroll 의 1.5 는 녹음 전체 길이 기준이라 다른 자다
@@ -37,20 +37,21 @@ VOICE_MIN_SIM = 0.40   # NOTE(튜닝): 문장 하나가 앞 문장들과 이만�
                        # 5문장 일관성 0.78 — 0.40 은 여유 있다. 다른 사람·다른 마이크는 아직 안 쟀다
 REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(INCONSISTENT)와 소음(NOISY) 을 따로 센다. 1번 문장이 잘못 녹음되면 그게
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
-NOISE_RMS = 350.0      # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
-WAKE_MIN_S = MIN_SPEECH_S  # "시아야"도 화자 등록 문장과 같은 말소리 하한을 쓴다
-WAKE_MAX_S = 2.0       # NOTE(튜닝): 말소리 상한. 이보다 길면 문장을 말한 것이라 이름 부르기로 세지 않는다
 WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
-
-
-def noise_level(audio_i16, block=480):
-    """주변 소음 표기(낮음/높음) — 말소리 블록은 빼고 조용한 블록(하위 20%)의 rms 바닥만 본다. 한 블록 미만이면 None."""
-    n = len(audio_i16) // block
-    if n == 0:
-        return None
-    rms = np.sqrt(np.mean(np.asarray(audio_i16[:n * block], dtype=np.float32).reshape(n, block) ** 2, axis=1))
-    return "높음" if np.percentile(rms, 20) > NOISE_RMS else "낮음"
+WAKE_REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
+                     # FE 가 다르게 그릴 수 있는 사유만 코드로 보낸다. 그 밖(클리핑·모델 실패·업로드 실패)은
+                     # 사용자가 할 행동이 같거나 사용자 잘못이 아니라 reason 만 보낸다 — VoiceSession._reject 와 같은 규칙
+REJECT_REASONS = {   # 품질 판정 사유 → FE 에 보여 줄 문구
+    "TOO_SHORT": "너무 짧게 들렸어요. 호출어를 끝까지 불러주세요.",
+    "TOO_LONG": "너무 길게 들렸어요. 호출어만 불러주세요.",
+    "NOISY": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.",
+    "LOW_QUALITY": "또렷하게 들리지 않았어요. 마이크에 조금 더 가까이, 호출어만 불러주세요.",
+}
+WAKE_DEFAULT_WORD = "시아야"   # 설정(settings.wakeWord)이 오기 전에 쓰는 기본 호출어 — brain.WAKE_WORD 와 같은 값
+WAKE_TEMPLATE_PATH = "wake.npz"  # models/ 안 파일 이름. 호출어 개인화 템플릿(speaker.WakeTemplate)
+WAKE_UPLOAD_RETRY_S = 5   # 업로드가 실패하면 이만큼 쉬었다가 다시 보낸다 — 그 사이 더 새 작업이 오면 그것부터
+WAKE_UPLOAD_TRIES = 3     # 같은 본문을 보낼 최대 횟수. 넘으면 서버는 이전 상태로 남는다 (로그로 알린다)
 
 
 def log_rx(type_, data):
@@ -311,7 +312,7 @@ class VoiceSession:
             # VAD 는 말이 끝나고 0.55 s 뒤에야 발화를 넘겨주므로 이 순서가 실제로 생긴다
             print(f"[화자 등록] 문장 {self._n} 지시보다 먼저 시작된 발화 — 버리고 다시 기다린다")
             return
-        from brain import speech_s
+        from brain import noise_level, speech_s
 
         n = self._n
         spoken = speech_s(audio_i16)
@@ -390,7 +391,7 @@ class VoiceSession:
         self._tx("voice_sentence_rejected", data)
 
     def _finish(self):
-        from brain import wav_bytes
+        from brain import noise_level, wav_bytes
 
         keys = sorted(self._embs)
         if not keys:
@@ -436,27 +437,415 @@ class VoiceSession:
             print(f"[BE REST] PUT {url} {ctype} ({len(body)} B) → {r.status}")
 
 
+class WakeTemplateStore:
+    """호출어 템플릿 보관소 — 로컬 파일과 BE blob(`wakeword`)의 등록·프로필 연결·동기화를 다룬다.
+
+    BE에는 호출어 NPZ 한 개를 저장한다. 템플릿의 profile_id로 등록자를 확인한다.
+    generation은 로컬 상태 변경을, 쓰기 순번은 업로드 순서를 구분한다.
+    다운로드·업로드는 각각 워커에서 처리하며, 오래된 작업은 적용하지 않는다.
+    """
+
+    def __init__(self, path, link=None, default_word=WAKE_DEFAULT_WORD):
+        self.path = Path(path)
+        self.link = link
+        self.default_word = default_word
+        self.setting_word = None     # settings.wakeWord — BE 설정이 오기 전에는 None
+        self.current = None          # WakeTemplate 또는 None
+        self.load_error = None       # 파일이 있는데 못 읽은 사유 (있으면 "미등록" 이 아니라 "재등록 필요")
+        self.generation = 0
+        self.dropped = 0             # 만료돼 보내지 않은 서버 쓰기 수 — 폐기가 실제로 일어났는지 보려고 센다
+        self.put = VoiceSession._put  # REST 업로드 — 테스트에서 바꿔 끼운다
+        self._lock = threading.Condition()
+        self._put_lock = threading.Lock()   # PUT을 하나씩 보내 저장 순서를 유지한다
+        self._write_seq = 0          # 서버 쓰기 순번. 새 예약이 생기면 앞선 예약은 만료다
+        self._want = None            # 서버가 알린 sha256 (없으면 아직 못 받음)
+        self._queued = False
+        self._worker = None
+        self._upload = None          # (순번, 본문, 보낸 횟수) — 올릴 것 하나만 (최신만 의미 있다)
+        self._writers = 0            # 진행 중인 서버 쓰기 수 — 등록의 직접 쓰기도 포함한다
+        self._sent_sha = None        # 업로드한 파일의 알림을 다시 다운로드하지 않도록 저장한 해시
+                                     # 로컬 저장이 끝나거나 실패하면 지운다
+        self._uploader = None
+        self._closed = False
+        self._bind_pending = None    # 이번 실행의 등록이 만든, 아직 프로필에 안 묶인 바로 그 템플릿
+        self.load()
+
+    # ── 판정용 스냅샷 ──
+    def snapshot(self):
+        """(설정 호출어, 템플릿, generation) — 한 판정이 끝까지 같은 상태를 보게 한다."""
+        with self._lock:
+            return self.wake_word(), self.current, self.generation
+
+    def still_current(self, generation):
+        """호출어 판정 도중 설정이나 템플릿이 바뀌었는지 확인한다."""
+        with self._lock:
+            return not self._closed and generation == self.generation
+
+    # ── 호출어 문자열 ──
+    def wake_word(self):
+        """지금 적용 중인 호출어 — BE 설정이 왔으면 그 값, 아니면 기본값."""
+        return self.setting_word or self.default_word
+
+    def on_settings(self, settings):
+        """호출어 설정 반영. 등록 당시 문자열과 다르면 matches_setting에서 사용을 막는다."""
+        if not isinstance(settings, dict) or "wakeWord" not in settings:
+            return False
+        word = settings["wakeWord"]
+        if not isinstance(word, str) or not word.strip() or word == self.setting_word:
+            return False
+        with self._lock:
+            self.setting_word = word
+            self.generation += 1          # 판정 중인 발화는 이 설정으로 다시 봐야 한다
+            template = self.current
+        from brain import WAKE_MODEL_WORD
+
+        # 고정 모델과 설정 호출어가 다르면 세션이 열리지 않으므로 원인을 출력한다.
+        print(f'[BE←] settings.wakeWord "{word}"'
+              + ("" if word == WAKE_MODEL_WORD else
+                 f' — 고정 모델 문구 "{WAKE_MODEL_WORD}" 와 달라 세션이 열리지 않습니다'
+                 " (사용자 지정 호출어는 아직 지원하지 않습니다)"))
+        if template is not None and not template.matches_setting(word):
+            print(f"[호출어 템플릿] 설정이 \"{word}\" 로 바뀌었는데 템플릿은 \"{template.wake_text}\" 로 등록돼 있습니다 "
+                  "— 새 호출어로 다시 등록해야 세션이 열립니다")
+        return True
+
+    # ── 로컬 파일 ──
+    def load(self):
+        """로컬 템플릿 읽기. 파일이 없으면 미등록, 있는데 못 읽으면 손상 — 둘을 구분해 둔다."""
+        from speaker import WakeTemplate
+
+        try:
+            with open(self.path, "rb") as f:
+                template = WakeTemplate.read(f)
+        except FileNotFoundError:
+            self.current, self.load_error = None, None
+            return
+        except Exception as e:
+            self.current, self.load_error = None, f"{type(e).__name__}: {e}"
+            print(f"[호출어 템플릿] 읽지 못했습니다({self.load_error}) — 다시 등록해야 합니다")
+            return
+        self.current, self.load_error = template, None
+        print(f"[호출어 템플릿] 로컬 적용 — 호출어 \"{template.wake_text}\", "
+              f"기준 {template.base_n}개, 프로필 "
+              + (str(template.profile_id) if template.bound else "미연결"))
+
+    def _prepare(self, template):
+        """NPZ를 임시 파일에 저장 → (본문, 임시 경로). 파일 준비 중에는 잠금을 잡지 않는다."""
+        body = template.npz_bytes()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=self.path.parent, suffix=".npz", delete=False) as f:
+            temp = Path(f.name)
+            f.write(body)
+        return body, temp
+
+    def commit(self, template, why, bindable=None, generation=None, want=None):
+        """검증까지 끝난 템플릿을 확정 → (본문, 새 generation, 서버 쓰기 순번) 또는 실패·만료면 None.
+
+        generation과 want가 현재 값과 같은지 확인한 뒤 파일과 메모리를 함께 바꾼다.
+        검사 중 삭제·재등록·새 다운로드 요청이 들어오면 이전 결과를 적용하지 않는다.
+        bindable=True는 이번 실행에서 새로 등록한 템플릿에만 사용한다. None이면 기존 연결 대기를 유지한다.
+        """
+        try:
+            with self._lock:
+                if (self._closed or (generation is not None and generation != self.generation)
+                        or (want is not None and self._want != want)):
+                    return None
+            try:
+                body, temp = self._prepare(template)
+            except OSError as e:
+                print(f"[호출어 템플릿] 저장 준비 실패 — 이전 템플릿 유지: {e}")
+                return None
+            with self._lock:
+                if (self._closed or (generation is not None and generation != self.generation)
+                        or (want is not None and self._want != want)):
+                    self._drop_temp(temp)
+                    print("[호출어 템플릿] 저장 직전에 상태가 바뀌어 폐기합니다 — 이전 상태 유지")
+                    return None
+                try:
+                    os.replace(temp, self.path)
+                except OSError as e:
+                    self._drop_temp(temp)
+                    print(f"[호출어 템플릿] 저장 실패 — 이전 템플릿 유지: {e}")
+                    return None
+                self.current, self.load_error = template, None
+                self._sent_sha = None       # 로컬을 확정했다 — 이제 서버 참조는 _local_sha 로 가린다.
+                self.generation += 1        # 다른 본문을 확정했다면 이전에 보낸 sha 도 더는 가릴 이유가 없다
+                self._write_seq += 1        # 확정이 곧 새 서버 쓰기다 — 앞선 예약은 여기서 만료된다
+                if self._want in (want, hashlib.sha256(body).hexdigest()):
+                    # 방금 쓴 것이 서버가 알린 바로 그것이다. 다른 참조를 기다리는 중이면 그 요청은 남겨 둔다 —
+                    # 지우면 확인과 저장 사이에 들어온 최신 요청이 알림 없이 사라진다
+                    self._want, self._queued = None, False
+                if bindable is not None:
+                    self._bind_pending = template if (bindable and not template.bound) else None
+                elif self._bind_pending is not None:
+                    # 같은 등록본의 새 객체로 연결 대기를 옮긴다.
+                    self._bind_pending = None if template.bound else template
+                done = (body, self.generation, self._write_seq)
+            print(f"[호출어 템플릿] {why} — 호출어 \"{template.wake_text}\", 기준 {template.base_n}개"
+                  f", 프로필 "
+                  + (str(template.profile_id) if template.bound else "미연결"))
+            return done
+        finally:
+            with self._lock:
+                # 실패·만료된 저장의 자기 알림 보호도 끝낸다 — 다음 서버 참조로 복구할 수 있어야 한다.
+                # 그 사이 다른 본문을 보내기 시작했다면 그 쓰기의 보호는 그대로 둔다.
+                if self._sent_sha is not None and self._sent_sha == hashlib.sha256(template.npz_bytes()).hexdigest():
+                    self._sent_sha = None
+
+    def _drop_temp(self, temp):
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[호출어 템플릿] 임시 파일 정리 실패: {e}")
+
+    def clear(self, why):
+        """서버가 '등록본 없음' 을 알렸다 — 로컬 파일·메모리·진행 중 작업을 함께 무효화한다.
+        파일 삭제도 저장과 같은 잠금 구간에서 한다 — 삭제 직후에 끝난 저장이 파일만 되살리지 못하게."""
+        with self._lock:
+            if self._closed:
+                return False
+            had = self.current is not None or self.path.exists()
+            self.current, self.load_error = None, None
+            self.generation += 1        # 진행 중인 다운로드·등록은 이 시점부터 전부 만료다
+            self._write_seq += 1        # 큐에 있던 업로드도 만료다 — 지운 등록본을 다시 올리지 않는다
+            self._want, self._queued, self._upload = None, False, None
+            self._bind_pending = None
+            try:
+                self.path.unlink(missing_ok=True)
+            except OSError as e:
+                print(f"[호출어 템플릿] 로컬 파일 삭제 실패: {e}")
+        if had:
+            print(f"[호출어 템플릿] {why} — 로컬 등록본을 지웠습니다. 다시 등록해야 세션이 열립니다")
+        return had
+
+    # ── 프로필 연결 (첫 온보딩: 호출어 등록이 문장 낭독보다 먼저다) ──
+    def bind_profile(self, profile_id):
+        """이번 온보딩의 호출어 템플릿에 보이스 프로필 ID를 연결하고 서버에도 저장한다.
+
+        이전 실행이나 서버에서 가져온 미연결 템플릿은 새 등록자의 프로필에 연결하지 않는다.
+        """
+        if not isinstance(profile_id, int) or profile_id < 0:
+            return False
+        with self._lock:
+            template, generation = self._bind_pending, self.generation
+            if template is None or self.current is not template or template.bound:
+                return False
+        done = self.commit(template.bound_to(profile_id), f"보이스 프로필 {profile_id} 에 연결",
+                           generation=generation)
+        if done is None:
+            return False
+        body, _, seq = done
+        self._queue_upload(body, seq)
+        return True
+
+    # ── BE 동기화 ──
+    def on_blob(self, sha256):
+        """BE의 blobs.wakeword 반영. null이면 로컬 등록본도 지운다.
+
+        직접 업로드한 파일의 알림은 해시로 구분해 건너뛴다. 업로드 중 받은 다른 해시는 완료 후 확인한다.
+        NOTE(한계): PUT은 If-Match를 지원하지 않아, 다른 클라이언트와 동시에 저장하면 최신 알림으로 다시 맞춘다.
+        """
+        if sha256 is None:
+            return self.clear("서버에 등록본이 없습니다")
+        if (not isinstance(sha256, str) or len(sha256) != 64
+                or any(c not in "0123456789abcdefABCDEF" for c in sha256)):
+            print("[호출어 템플릿] 잘못된 blob 참조 — 기존 템플릿 유지")
+            return False
+        want = sha256.lower()
+        if want == self._local_sha() and self.current is not None:
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+            if want == self._sent_sha:
+                return False        # 우리가 보낸 본문이 돌아온 것이다 — 내려받을 것이 없다
+            if self._writers or self._upload is not None:
+                # 서버에 쓰는 중이다. 버리지는 않고 참조만 적어 둔다 — 쓰기가 끝난 뒤에도 우리 것과
+                # 다르면 그때 내려받는다(_resume_fetch). 지금 받으면 우리가 쓰는 것과 뒤섞인다
+                self._want, self._queued = want, False
+                print("[호출어 템플릿] 서버에 쓰는 중 — 이 참조는 쓰기가 끝난 뒤에 봅니다")
+                return False
+            self._want, self._queued = want, True
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._run_fetch, daemon=True)
+                self._worker.start()
+            self._lock.notify_all()
+        return True
+
+    def _resume_fetch(self):
+        """서버 쓰기가 끝났다 — 쓰는 동안 미뤄 둔 참조가 아직 우리 것과 다르면 그때 내려받는다."""
+        with self._lock:
+            want = self._want
+            if (self._closed or want is None or self._queued or self._writers
+                    or self._upload is not None or want == self._sent_sha
+                    or want == self._local_sha()):
+                return
+            self._queued = True
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._run_fetch, daemon=True)
+                self._worker.start()
+            self._lock.notify_all()
+
+    def _local_sha(self):
+        try:
+            return hashlib.sha256(self.path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _run_fetch(self):
+        """받아야 할 참조가 생길 때마다 깨어난다 — 워커가 끝나는 순간 들어온 요청도 놓치지 않는다.
+        받는 사이 더 새 참조가 오면 받던 것을 버리고 그것부터 다시 받는다."""
+        from speaker import WakeTemplate
+
+        while True:
+            with self._lock:
+                self._lock.wait_for(lambda: self._closed or self._queued)
+                if self._closed:
+                    return
+                want, generation = self._want, self.generation
+                self._queued = False
+            try:
+                body = self.link.get_blob_npz("wakeword")
+                if hashlib.sha256(body).hexdigest().lower() != want:
+                    raise ValueError("내려받은 호출어 템플릿의 sha256 이 수신 참조와 다릅니다")
+                template = WakeTemplate.read(io.BytesIO(body))   # 적용 전에 검증한다
+            except Exception as e:
+                print(f"[호출어 템플릿] 내려받기 실패 — 기존 템플릿 유지: {e}")
+                continue
+            if self.commit(template, "서버 템플릿 적용", bindable=False,
+                           generation=generation, want=want) is None:
+                print("[호출어 템플릿] 내려받는 사이 상태가 바뀌어 폐기합니다")
+                with self._lock:
+                    if generation != self.generation:
+                        # 설정 등이 바뀌어 무른 다운로드는 최신 참조로 다시 받는다.
+                        # 파일 오류만 난 경우에는 반복하지 않고 다음 서버 알림을 기다린다.
+                        self._resume_fetch()
+
+    # ── 서버 쓰기 (등록·연결이 모두 이 길로 나간다) ──
+    def reserve_write(self):
+        """서버 쓰기 순번을 예약한다 → (순번, 지금 generation). 확정 전 등록본을 먼저 올릴 때 쓴다 —
+        예약하는 순간 큐에 있던 이전 등록본 업로드는 만료된다."""
+        with self._lock:
+            self._write_seq += 1
+            return self._write_seq, self.generation
+
+    def write_blob(self, body, seq):
+        """서버에 쓴다 → 보냈으면 True, 그 사이 더 새 쓰기가 예약돼 만료면 False. 예외는 호출자가 본다.
+        쓸 서버가 없는 로컬 모드도 True 다 — 보낼 곳이 없는 것이지 실패가 아니다.
+        모든 서버 쓰기가 이 한 곳을 하나씩 지난다 — 늦게 끝난 이전 본문이 새 본문을 덮지 못한다.
+        같은 본문을 다시 보내도 BE 가 sha256 이 같으면 저장·통지를 생략하므로 재시도는 안전하다.
+        어떻게 끝나든(보냄·만료·예외) 미뤄 둔 서버 참조를 다시 본다 — 예외로 빠져나가며 보류를 남기면
+        그 참조는 다음 알림이 올 때까지 영영 처리되지 않는다."""
+        sha = hashlib.sha256(body).hexdigest()
+        try:
+            with self._put_lock:
+                with self._lock:
+                    if self._closed or seq != self._write_seq:
+                        self.dropped += 1
+                        return False
+                    if self.link is None or not getattr(self.link, "rt", None):
+                        return True
+                    # 보내기 전에 적어 둔다 — 이 PUT 이 부른 알림이 PUT 응답보다 먼저 올 수 있다
+                    self._sent_sha = sha
+                    self._writers += 1
+                try:
+                    self.put(f"http://127.0.0.1:{self.link.rt['port']}/api/agent/blobs/wakeword",
+                             body, "application/octet-stream")
+                except Exception:
+                    with self._lock:
+                        if self._sent_sha == sha:
+                            self._sent_sha = None   # 못 보냈다 — 이 sha 로 서버 알림을 가리면 복구가 막힌다
+                    raise
+                finally:
+                    with self._lock:
+                        self._writers -= 1
+            return True
+        finally:
+            self._resume_fetch()
+
+    def _queue_upload(self, body, seq):
+        """저장할 때 받은 순번으로 업로드를 예약한다. 이전 작업이 최신 대기 작업을 덮지 않도록 먼저 확인한다."""
+        if self.link is None or not getattr(self.link, "rt", None):
+            return False
+        with self._lock:
+            if self._closed:
+                return False
+            if seq != self._write_seq:
+                self.dropped += 1
+                print("[호출어 템플릿] 업로드 폐기 — 그 사이 더 새 등록·연결이 생겼습니다")
+                return False
+            self._upload = (seq, body, 0)   # 최신 한 건만 — 최신만 의미가 있다
+            if self._uploader is None:
+                self._uploader = threading.Thread(target=self._run_upload, daemon=True)
+                self._uploader.start()
+            self._lock.notify_all()
+        return True
+
+    def _run_upload(self):
+        while True:
+            with self._lock:
+                self._lock.wait_for(lambda: self._closed or self._upload is not None)
+                if self._closed:
+                    return
+                seq, body, tries = self._upload
+                self._upload = None
+                self._writers += 1          # 서버 참조를 따라가지 않는 구간이 여기서부터다
+            failed = None
+            try:
+                if not self.write_blob(body, seq):
+                    print("[호출어 템플릿] 업로드 폐기 — 그 사이 더 새 등록·연결이 생겼습니다")
+            except Exception as e:
+                failed = e
+                print(f"[호출어 템플릿] 업로드 실패(로컬에는 저장됨): {e}")
+            with self._lock:
+                self._writers -= 1
+                # 보냈거나, 더 새 작업이 있거나, 만료된 본문이면 다시 보내지 않는다
+                retry = (failed is not None and not self._closed and self._upload is None
+                         and seq == self._write_seq)
+                if retry and tries + 1 >= WAKE_UPLOAD_TRIES:
+                    print(f"[호출어 템플릿] 업로드를 {tries + 1}회 실패해 그만둡니다 — 서버 등록본은 이전 상태입니다."
+                          " 다음 서버 동기화에서 로컬이 그쪽으로 되돌려질 수 있습니다")
+                    retry = False
+                if retry:
+                    self._upload = (seq, body, tries + 1)
+            # 재시도 상태까지 정한 뒤에 본다 — 다시 보낼 것이 남아 있으면 _resume_fetch 가 보류를 유지한다
+            self._resume_fetch()
+            if retry:
+                with self._lock:
+                    self._lock.wait(WAKE_UPLOAD_RETRY_S)   # 그 사이 새 작업이 오면 그것부터 (최신만 남는다)
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            self._queued, self._upload = False, None
+            self._lock.notify_all()
+
+
 class WakeEnroll:
     """온보딩 "이름 불러보기" 의 AI 측 핸들러 — BE wakeword_enroll_start 로 시작 (206).
 
-    FE 가 "시아야" 를 WAKE_TOTAL(5)번 부르게 하고, 부를 때마다 AI 가 wakeword_sample{n, total} 을 보내 진행바를 채운다.
-    다 모이면 샘플 원본을 npz 하나로 묶어 PUT /api/agent/blobs/wakeword 로 올리고 wakeword_done 을 보낸다.
-    FE 는 wakeword_done 이 와야 "다음" 버튼을 연다. 호출어 모델(고정 파일)은 여기서 바꾸지 않고 BE 도 npz 를 저장만 한다.
-    길이·소음·화자 유사도 기준을 통과하지 못하면 wakeword_rejected{n, total, reason, code} 로 사유를 보내고 같은 순번을 계속 기다린다.
-    NOTE(한계): 실제로 "시아야" 라고 했는지는 확인하지 않는다.
+    호출어·음질·화자 일치를 확인한 샘플 5개로 WakeTemplate을 만든다.
+    샘플마다 wakeword_sample을 보내고, 서버와 로컬 저장이 끝나면 wakeword_done을 보낸다.
+    검사를 통과하지 못하면 wakeword_rejected로 사유를 알리고 같은 순번을 다시 받는다.
+    저장 완료 전에는 기존 템플릿을 유지한다. 고정 시동어 모델은 학습하지 않는다.
     """
 
-    def __init__(self, link, speaker=None):
+    def __init__(self, link, speaker=None, store=None, wake_model=None):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
         self.speaker = speaker
+        self.store = store                  # WakeTemplateStore — 확정된 템플릿을 여기에 맡긴다
+        self.wake_model = wake_model        # 고정 시동어 모델 — 실행 때와 같은 것으로 발음을 확인한다
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
+        self.wake_text = WAKE_DEFAULT_WORD  # 이번 등록이 대상으로 삼은 호출어 (시작할 때 설정에서 읽는다)
+        self.epoch = 0                      # 등록 회차 — 늦게 끝난 이전 회차가 확정하지 못하게 한다
         self._samples = []
         self._embs = []
-        self._rejects = 0
-        self._noisy = 0
+        self._scores = []                   # 샘플별 시동어 점수 — 실측 기록용(판정에는 쓰지 않는다)
+        self._fails = 0                     # 연속 실패 횟수 (안내용, 기준을 느슨하게 하지는 않는다)
         self._preload = None
-        self._put = VoiceSession._put       # REST 업로드 — 테스트에서 바꿔 끼운다
+        self._saving = False                # 5개를 다 모았고 저장만 남았다 — 다음 발화는 새 샘플이 아니라 저장 재시도다
+        self._saved = None                  # (회차, 서버에 저장한 본문) — 이 짝이 맞을 때만 서버 쓰기를 건너뛴다
 
     def _tx(self, type_, data):
         print(f"[BE→] {type_} {json.dumps(data, ensure_ascii=False)}")
@@ -465,76 +854,148 @@ class WakeEnroll:
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
     def on_start(self):
         log_rx("wakeword_enroll_start", {})
-        self.active, self._samples, self._embs, self.started_at = True, [], [], time.monotonic()
-        self._rejects = self._noisy = 0
+        self.active, self._samples, self._embs, self._scores = True, [], [], []
+        self.started_at, self._fails = time.monotonic(), 0
+        self._saving, self._saved = False, None
+        self.epoch += 1                     # 앞 회차가 뒤늦게 끝나도 확정하지 못한다
+        # 이번 등록이 대상으로 삼는 호출어는 지금 설정값이다 — 설정만 바꾸고 옛 템플릿을 재사용하는 길을 막는다.
+        self.wake_text = self.store.wake_word() if self.store else WAKE_DEFAULT_WORD
         if self.speaker is not None:
             self._preload = threading.Thread(target=self.speaker._model, daemon=True)
             self._preload.start()
-        print(f"[호출어 수집] 시작 — \"시아야\" {WAKE_TOTAL}번")
+        print(f"[호출어 수집] 시작({self.epoch}회차) — \"{self.wake_text}\" {WAKE_TOTAL}번")
+
+    def cancel(self):
+        """수집 중인 샘플을 지우고 기존 등록본은 유지한다. BE의 호출어 취소 이벤트는 아직 연동되지 않았다."""
+        if not self.active:
+            return False
+        self.active, self._saving, self._saved = False, False, None
+        self.epoch += 1
+        self._samples, self._embs, self._scores = [], [], []
+        print("[호출어 수집] 중단 — 이전 호출어 설정과 템플릿을 유지합니다")
+        return True
 
     # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──
     def on_utter(self, audio_i16, t_utter=None):
         if not self.active:
             return                          # t_utter 는 안 쓴다 — 호출어 수집엔 무를 문장이 없다. 호출부를 하나로 두려고 받아만 둔다
-        from brain import speech_s
+        if self._saving:
+            # 유효한 5개는 이미 모였고 저장만 실패한 상태다 — 여섯 번째 샘플로 받지 않고 저장을 다시 시도한다
+            print("[호출어 수집] 저장 재시도 — 모은 샘플은 그대로 쓴다")
+            self._finish(self.epoch)
+            return
+        from brain import WAKE_THRESHOLD, speech_s, wake_clip, wake_clip_is_clean, wake_score_of
 
-        spoken = speech_s(audio_i16)
-        if spoken < WAKE_MIN_S or spoken > WAKE_MAX_S:
-            code, reason = (("TOO_SHORT", "너무 짧게 들렸어요. \"시아야\"를 끝까지 불러주세요.")
-                            if spoken < WAKE_MIN_S else
-                            ("TOO_LONG", "너무 길게 들렸어요. \"시아야\"만 불러주세요."))
-            print(f"[호출어 수집] 말소리 {spoken:.1f} s — 이름 부르기로 안 봄, 다시 기다린다")
-            self._tx("wakeword_rejected", {
-                "n": len(self._samples) + 1, "total": WAKE_TOTAL, "reason": reason, "code": code})
+        epoch = self.epoch
+        audio = np.asarray(audio_i16, dtype=np.int16)
+        if self.wake_model is None:
+            self._reject("호출어 모델이 없어 등록할 수 없어요.", "시동어 모델 없음")
             return
-        if noise_level(audio_i16) == "높음" and self._noisy < REJECT_BUDGET:
-            self._noisy += 1
-            print(f"[호출어 수집] 소음 높음 — 거절 {self._noisy}/{REJECT_BUDGET}, 다시 기다린다")
-            self._tx("wakeword_rejected", {
-                "n": len(self._samples) + 1, "total": WAKE_TOTAL,
-                "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"})
+        # 발음 확인은 실행 때와 같은 고정 모델로 한다 — 등록에서 받아 준 발음이 실행에서 안 걸리는 모순을 없앤다.
+        score, i_max, lead = wake_score_of(self.wake_model, audio)
+        if i_max is None:
+            self._reject(f"\"{self.wake_text}\" 로 들리지 않았어요. 또박또박 다시 불러주세요.",
+                         f"시동어 점수 {score:.2f} < {WAKE_THRESHOLD}", "MISMATCH")
             return
-        emb = None
-        if self.speaker is not None:
-            if self._preload is not None:
-                self._preload.join()
-                self._preload = None
-            try:
-                emb = self.speaker.embed(audio_i16)
-                if not np.isfinite(emb).all():
-                    raise ValueError("임베딩에 NaN")
-                if self._embs:
-                    centroid, _ = self.speaker.centroid_of_embs(self._embs)
-                    sim = float(emb @ centroid)
-                    if sim < WAKE_MIN_SIM and self._rejects < REJECT_BUDGET:
-                        self._rejects += 1
-                        print(f"[호출어 수집] 앞 샘플들과 유사도 {sim:.2f} < {WAKE_MIN_SIM} — "
-                              f"거절 {self._rejects}/{REJECT_BUDGET}, 다시 기다린다")
-                        self._tx("wakeword_rejected", {
-                            "n": len(self._samples) + 1, "total": WAKE_TOTAL,
-                            "reason": "앞서 부른 목소리와 다르게 들려요. 같은 분이 다시 불러주세요.",
-                            "code": "INCONSISTENT"})
-                        return
-            except Exception as e:
-                emb = None
-                print(f"[호출어 수집] 화자 유사도 판정 실패, 길이·소음 기준으로 진행: {e}")
-        self._samples.append(np.asarray(audio_i16, dtype=np.int16))
-        if emb is not None:
-            self._embs.append(emb)
+        clip, _, clip_end, certain = wake_clip(audio, i_max, lead)   # 자르는 규칙도 실행과 같다
+        ok, why, code = wake_clip_is_clean(audio, clip, clip_end, certain)
+        if not ok:
+            self._reject(REJECT_REASONS.get(code, "또렷하게 다시 불러주세요."), why, code)
+            return
+        if self.speaker is None:
+            self._reject("목소리 분석을 쓸 수 없어 등록할 수 없어요.", "화자 모델 없음")
+            return
+        if self._preload is not None:
+            self._preload.join()            # 첫 샘플이면 모델 로드(첫 12 s)를 여기서 기다린다
+            self._preload = None
+        try:
+            emb = self.speaker.embed(clip)
+            if not np.isfinite(emb).all():
+                raise ValueError("임베딩에 NaN")
+        except Exception as e:
+            self._reject("목소리 분석에 실패했어요. 잠시 후 다시 불러주세요.", f"임베딩 실패 {e}")
+            return
+        if self._embs:
+            centroid, _ = self.speaker.centroid_of_embs(self._embs)
+            sim = float(emb @ centroid)
+            if sim < WAKE_MIN_SIM:
+                self._reject("앞서 부른 목소리와 다르게 들려요. 같은 분이 다시 불러주세요.",
+                             f"앞 샘플들과 유사도 {sim:.2f} < {WAKE_MIN_SIM}", "INCONSISTENT")
+                return
+        if epoch != self.epoch or not self.active:
+            return                          # 판정하는 사이 등록이 다시 시작됐다
+        self._samples.append(clip)
+        self._embs.append(emb)
+        self._scores.append(score)
+        self._fails = 0
         n = len(self._samples)
-        print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} ({spoken:.1f} s)")
+        print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} (말소리 {speech_s(clip):.2f} s, 시동어 점수 {score:.2f})")
         self._tx("wakeword_sample", {"n": n, "total": WAKE_TOTAL})
         if n >= WAKE_TOTAL:
-            self._finish()
+            self._finish(epoch)
 
     # ── 내부 ──
-    def _finish(self):
-        self.active = False                 # 업로드 중 들어온 발화는 세지 않는다
-        buf = io.BytesIO()
-        np.savez(buf, sr=SR, **{f"sample{i:02d}": a for i, a in enumerate(self._samples, 1)})
-        try:
-            self._put(f"http://127.0.0.1:{self.link.rt['port']}/api/agent/blobs/wakeword",
-                      buf.getvalue(), "application/octet-stream")
-        except Exception as e:
-            print(f"[호출어 수집] 업로드 실패: {e}")  # wakeword_done 은 보낸다 — FE 가 멈추지 않게. BE 는 저장만 하는 데이터다
+    def _reject(self, reason, why, code=None):
+        """샘플 거절이나 저장 실패를 알린다. 반복 실패해도 검사 기준은 유지한다.
+
+        지원하는 거절 코드가 없으면 reason만 보낸다. 저장 실패도 같은 이벤트로 알리며 순번은 5를 넘기지 않는다.
+        """
+        self._fails += 1
+        n = min(len(self._samples) + 1, WAKE_TOTAL)
+        print(f"[호출어 수집] {'저장' if self._saving else f'샘플 {n}'} 실패({code or why}) — {why}, "
+              f"다시 기다린다 (연속 {self._fails}회)")
+        if self._fails >= REJECT_BUDGET + 1 and not self._saving:
+            reason += " 계속 안 되면 조용한 곳에서 마이크에 조금 더 가까이 불러주세요."   # 저장 실패는 말하는 법과 무관하다
+        data = {"n": n, "total": WAKE_TOTAL, "reason": reason}
+        if code in WAKE_REJECT_CODES:
+            data["code"] = code
+        self._tx("wakeword_rejected", data)
+
+    def _finish(self, epoch):
+        """5개로 템플릿을 만들어 서버·로컬에 저장한 뒤에야 확정한다.
+
+        서버를 먼저 저장해 로컬 저장 실패 시 다운로드로 복구할 수 있게 한다.
+        실패하면 같은 5개로 다시 시도하고, 모두 저장된 뒤 wakeword_done을 보낸다.
+        """
+        from speaker import WakeTemplate
+
+        if epoch != self.epoch or not self.active:
+            print("[호출어 수집] 이전 회차의 마무리 — 적용하지 않습니다")
+            return
+        if self.store is None:
+            self._saving = True
+            self._reject("등록본을 저장하지 못했어요. 잠시 후 다시 불러주세요.", "템플릿 저장소 없음")
+            return
+        self._saving = True                 # 여기부터 들어오는 발화는 샘플이 아니라 저장 재시도다
+        profile_id = self.speaker.profile_id if self.speaker is not None else None
+        template = WakeTemplate(self.wake_text, self._scores, np.asarray(self._embs, dtype=np.float32),
+                                len(self._embs), -1 if profile_id is None else profile_id)
+        # 쓰기 순번을 먼저 예약한다 — 큐에서 기다리던 이전 업로드가 이 등록본을 덮지 못하게.
+        seq, generation = self.store.reserve_write()
+        body = template.npz_bytes()
+        if self._saved != (epoch, body):    # 이 회차의 이 본문만 다시 보내지 않는다
+            try:
+                sent = self.store.write_blob(body, seq)
+            except Exception as e:
+                if epoch != self.epoch:
+                    print("[호출어 수집] 이전 회차의 업로드 실패 — 새 회차에 반영하지 않습니다")
+                    return
+                self._reject("등록본을 서버에 저장하지 못했어요. 잠시 후 다시 불러주세요.", f"업로드 실패 {e}")
+                return
+            if epoch != self.epoch:         # 응답을 기다리는 사이 등록이 다시 시작됐다
+                print("[호출어 수집] 이전 회차의 업로드 완료 — 새 회차에 반영하지 않습니다")
+                return
+            if not sent:
+                print("[호출어 수집] 더 새 작업이 생겨 이번 확정을 접습니다")
+                return
+            self._saved = (epoch, body)     # 로컬 저장이 실패해도 서버에는 남아 있다
+        if epoch != self.epoch or not self.store.commit(template, "등록 확정", bindable=True,
+                                                        generation=generation):
+            self._reject("등록본을 이 PC 에 저장하지 못했어요. 잠시 후 다시 불러주세요.",
+                         "로컬 저장 실패 — 서버에는 저장됨")
+            return
+        self.active = self._saving = False  # 확정 뒤 들어온 발화는 세지 않는다
+        print(f"[호출어 수집] 확정 — 호출어 \"{self.wake_text}\", 기준 {template.base_n}개, "
+              f"시동어 점수 {[round(s, 2) for s in template.scores]}, 보이스 프로필 "
+              + (str(template.profile_id) if template.bound else "미연결 — 문장 낭독 뒤 연결"))
         self._tx("wakeword_done", {})
