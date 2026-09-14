@@ -49,6 +49,10 @@ def assistant(profile=PROFILE, act=True):
         speaker = None if profile is None else SimpleNamespace(
             snapshot=Mock(return_value=profile), verify=Mock(return_value=(True, 0.87654)))
         brain = Brain(Mock(), act=act, speaker=speaker, link=link)
+        # 호출어 개인화 판정은 test_wake_template 이 따로 본다. 여기서는 "시동어 후보가 나오면 통과"로 고정해
+        # 통계·실행 경로만 남긴다 — 실제 판정은 STT·임베딩 모델을 부른다.
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (
+            (True, "ok", 0.9, 0.0, 1.4) if oww_pass else (False, "no_candidate", None, None, None))
         brain._client = object()
         brain.router = Router("시아야")
         brain.router.transcribe = Mock(return_value=("시아야 계산기 열어줘", 0.5))
@@ -390,6 +394,7 @@ def test_unexecuted_actions_and_local_mode():
         assert not events(link, "command")
     with assistant() as (brain, link, _):
         brain.link = None
+        brain.session_until = 100.0  # BE 없이 도는 경우 — 세션은 로컬 미러가 들고 있다
         utter(brain, command("answer"))
         assert not events(link)
         assert brain.overlay.toast.call_args.args[0] == "완료"

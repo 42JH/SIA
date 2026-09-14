@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """카메라 없이 도는 핵심 로직 스모크 테스트:  python test_core.py"""
 import numpy as np
+from types import SimpleNamespace
 
 from gaze import FEATURE_DIM, Calibrator, ClickRecal, GazeBuffer
 from hands import GestureStable, HoldToggle, OneEuro, PinchFSM
@@ -748,10 +749,10 @@ def test_voice_bridge():
     vs.on_finalize("empty")
     assert not link.sent and not uploads and not vs.active
 
-
 def test_wake_enroll():
-    """온보딩 이름 불러보기(206) — wakeword_enroll_start 뒤 "시아야" 길이 발화 WAKE_TOTAL(5)개 → wakeword_sample 5건 → npz PUT → wakeword_done.
-    너무 짧거나(헛기침) 긴(문장) 발화는 사유를 보내되 세지 않고, 끝난 뒤 다시 시작하면 처음부터 다시 센다."""
+    """온보딩 이름 불러보기(206) — 기준을 모두 넘긴 발화 WAKE_TOTAL(5)개 → wakeword_sample 5건 →
+    개인화 템플릿 npz PUT → wakeword_done. 기준을 못 넘은 발화는 사유만 보내고 세지 않으며,
+    다 모여 업로드까지 끝나야 저장소의 템플릿이 교체된다. 세부 규칙은 test_wake_template.py 가 본다."""
     from voice_bridge import WAKE_TOTAL, WakeEnroll
 
     class FakeLink:
@@ -759,63 +760,121 @@ def test_wake_enroll():
         def __init__(self): self.sent = []
         def _send(self, o): self.sent.append((o["type"], o["data"]))
 
+    class FakeStore:
+        """등록이 쓰는 저장소 면만 흉내낸다 — 서버 쓰기도 저장소를 지난다(차례표로 순서를 지킨다)."""
+        def __init__(self): self.committed, self.seq, self.broken, self.hold = [], 0, False, None
+        def wake_word(self): return "시아야"
+        def reserve_write(self):
+            self.seq += 1
+            return self.seq, 0
+        def write_blob(self, body, seq):
+            if self.hold:                    # 응답을 붙잡아 그 사이 재시작을 재현한다
+                self.hold[0].set()
+                assert self.hold[1].wait(3)
+                self.hold = None
+            puts.append(("http://x/api/agent/blobs/wakeword", len(body), "application/octet-stream"))
+            return seq == self.seq
+        def commit(self, template, why, bindable=None, generation=None):
+            if self.broken:
+                return None
+            self.committed.append(template)
+            return template.npz_bytes(), 0, self.seq
+
     class FakeSpeaker:
+        profile_id = 3
         def _model(self): pass
         def embed(self, a):
-            return np.array([-1.0, 0.0]) if int(a[0]) == 6 else np.array([1.0, 0.0])
+            v = np.zeros(192, np.float32)
+            v[0] = 1.0
+            return v
         def centroid_of_embs(self, embs):
             c = np.asarray(embs).mean(axis=0)
-            c /= np.linalg.norm(c) + 1e-9
-            return c, float((np.asarray(embs) @ c).min())
+            return c / (np.linalg.norm(c) + 1e-9), 1.0
 
-    rng = np.random.default_rng(1)
-    def loud(s):
-        return (rng.standard_normal(int(s * 16000)) * 2000).astype(np.int16)
-    def clean(s, marker=7):
-        a = np.concatenate([np.zeros(4800, np.int16), loud(s)])
-        a[0] = marker
-        return a
+    def clip(speech=0.8):
+        """앞뒤가 조용하고 가운데만 말소리 — 호출어 한 마디."""
+        return np.concatenate([np.zeros(6400, np.int16),
+                               np.full(int(speech * 16000), 1000, np.int16),
+                               np.zeros(9600, np.int16)])
 
-    link, puts = FakeLink(), []
-    we = WakeEnroll(link, FakeSpeaker())
-    we._put = lambda url, body, ctype: puts.append((url, len(body), ctype))
-    we.on_utter(loud(0.7))                                     # 시작 전 발화는 무시
+    from brain import WAKE_FRAME_S, WAKE_MODEL, WAKE_PAD_S, speech_span
+
+    scores = {"hit": 0.99}
+
+    def predict_clip(audio):
+        """실제 모델처럼 말소리가 끝나는 지점에 최고점을 찍는다 (호출어 끝)."""
+        span = speech_span(audio)
+        peak = max(0, int(round(((span[1] if span else 1.0) + WAKE_PAD_S) / WAKE_FRAME_S)))
+        return [{WAKE_MODEL.stem: scores["hit"] if i == peak else 0.0} for i in range(peak + 1)]
+
+    model = SimpleNamespace(predict_clip=predict_clip)
+    link, puts, store = FakeLink(), [], FakeStore()
+    we = WakeEnroll(link, FakeSpeaker(), store, model)
+    we.on_utter(clip())                              # 시작 전 발화는 무시
     assert not we.active and link.sent == []
     we.on_start()
-    we.on_utter(loud(0.1))                                     # 0.1 s — 헛기침, 안 센다
-    we.on_utter(loud(3.0))                                     # 3 s — 문장, 안 센다
-    we.on_utter(loud(0.7))                                     # 지속 소음은 등록당 두 번만 거절한다
-    we.on_utter(loud(0.7))
-    assert link.sent == [
-        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
-                               "reason": "너무 짧게 들렸어요. \"시아야\"를 끝까지 불러주세요.", "code": "TOO_SHORT"}),
-        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
-                               "reason": "너무 길게 들렸어요. \"시아야\"만 불러주세요.", "code": "TOO_LONG"}),
-        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
-                               "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"}),
-        ("wakeword_rejected", {"n": 1, "total": WAKE_TOTAL,
-                               "reason": "주변이 시끄러워요. 조용한 곳에서 다시 불러주세요.", "code": "NOISY"}),
-    ]
-    we.on_utter(clean(0.7))                                    # 첫 샘플은 비교 기준
-    we.on_utter(clean(0.7, 6))                                 # 불일치는 등록당 두 번만 거절한다
-    we.on_utter(clean(0.7, 6))
-    assert [d.get("code") for t, d in link.sent if t == "wakeword_rejected"][-2:] == ["INCONSISTENT", "INCONSISTENT"]
-    we.on_utter(clean(0.7, 6))                                 # 불일치 거절 예산 소진 — 수집 진행
-    for _ in range(WAKE_TOTAL - 2):
-        we.on_utter(clean(0.7))
+    we.on_utter(clip(0.1))                           # 헛기침 — 안 센다
+    we.on_utter(clip(3.0))                           # 문장 — 안 센다
+    scores["hit"] = 0.1
+    we.on_utter(clip())                              # 고정 모델이 호출어로 안 들었다 — 안 센다
+    scores["hit"] = 0.99
+    assert [d["code"] for t, d in link.sent] == ["TOO_SHORT", "TOO_LONG", "MISMATCH"]
+    assert all(d["n"] == 1 for _, d in link.sent)    # 순번은 그대로 1 이다
+    for _ in range(WAKE_TOTAL):
+        we.on_utter(clip())
     types = [t for t, _ in link.sent]
-    samples = [event for event in link.sent if event[0] == "wakeword_sample"]
     assert types.count("wakeword_sample") == WAKE_TOTAL and types[-1] == "wakeword_done" and not we.active
-    assert samples[0][1] == {"n": 1, "total": WAKE_TOTAL} and samples[-1][1] == {"n": WAKE_TOTAL, "total": WAKE_TOTAL}
-    assert types.count("wakeword_rejected") == 6
+    assert types.count("wakeword_rejected") == 3
     assert len(puts) == 1 and puts[0][0].endswith("/api/agent/blobs/wakeword") and puts[0][1] > 0
     assert puts[0][2] == "application/octet-stream"
-    we.on_utter(loud(0.7))                                     # 끝난 뒤 발화는 안 센다
-    assert len(link.sent) == WAKE_TOTAL + 7
+    assert len(store.committed) == 1                 # 업로드까지 끝난 뒤에야 확정된다
+    template = store.committed[0]
+    assert template.wake_text == "시아야" and template.base_n == WAKE_TOTAL
+    assert len(template.embs) == WAKE_TOTAL and template.profile_id == 3
+    assert len(template.scores) == WAKE_TOTAL         # 시동어 점수 기록 (판정에는 쓰지 않는다)
+    we.on_utter(clip())                              # 끝난 뒤 발화는 안 센다
+    assert len(link.sent) == WAKE_TOTAL + 4
     link.sent.clear()
-    we.on_start()                                              # 두 번째 회차 — 처음부터
-    we.on_utter(clean(0.7))
+    we.on_start()                                    # 두 번째 회차 — 처음부터
+    we.on_utter(clip())
     assert link.sent == [("wakeword_sample", {"n": 1, "total": WAKE_TOTAL})]
+    # 로컬 저장만 실패한 경우 — 모은 5개를 그대로 두고, 다음 발화를 여섯 번째 샘플이 아니라 저장 재시도로 쓴다
+    link.sent.clear()
+    puts.clear()
+    store.broken = True
+    we.on_start()
+    for _ in range(WAKE_TOTAL):
+        we.on_utter(clip())
+    rejected = [d for t, d in link.sent if t == "wakeword_rejected"]
+    assert rejected[-1]["n"] == WAKE_TOTAL and rejected[-1]["total"] == WAKE_TOTAL  # total 을 넘는 순번은 안 보낸다
+    assert not any(t == "wakeword_done" for t, _ in link.sent)
+    assert len(we._samples) == WAKE_TOTAL and we.active and len(puts) == 1   # 서버에는 이미 저장됐다
+    store.broken = False
+    we.on_utter(clip())                              # 저장 재시도 — 샘플도 서버 쓰기도 되풀이하지 않는다
+    assert len(we._samples) == WAKE_TOTAL and len(puts) == 1
+    assert [t for t, _ in link.sent][-1] == "wakeword_done" and not we.active
+    # 이전 회차의 PUT 응답을 기다리는 사이 등록을 다시 시작하면, 그 성공이 새 회차에 섞이지 않는다
+    import threading
+    link.sent.clear()
+    puts.clear()
+    store.committed.clear()
+    we.on_start()
+    for _ in range(WAKE_TOTAL - 1):
+        we.on_utter(clip())
+    store.hold = (threading.Event(), threading.Event())
+    stale = threading.Thread(target=lambda: we.on_utter(clip()))   # 5번째 → 확정 → PUT 에 매달린다
+    stale.start()
+    assert store.hold[0].wait(3)
+    we.on_start()                                    # 매달린 사이 재시작 (회차가 올라간다)
+    store.hold[1].set()
+    stale.join(5)
+    assert not stale.is_alive() and not store.committed
+    assert not any(t == "wakeword_done" for t, _ in link.sent)
+    puts.clear()
+    for _ in range(WAKE_TOTAL):                      # 새 회차의 5개
+        we.on_utter(clip())
+    assert len(puts) == 1                            # 새 본문이 실제로 서버에 저장된 뒤에 확정된다
+    assert len(store.committed) == 1 and [t for t, _ in link.sent][-1] == "wakeword_done"
 
 
 def test_notice_data():

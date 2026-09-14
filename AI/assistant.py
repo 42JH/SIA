@@ -219,7 +219,7 @@ def main():
     overlay = Overlay()
     overlay.set_state("IDLE")
 
-    from brain import Brain
+    from brain import WAKE_TEMPLATE_MIN_SIM, Brain
     from voice import VoiceListener
 
     speaker = None
@@ -233,6 +233,17 @@ def main():
         else:
             print("화자 미등록 → 아무 목소리나 허용. 내 목소리만 반응시키려면: 앱의 보이스 등록 또는 python voice_enroll.py")
 
+    # 온보딩 5회로 만든 호출어 기준을 읽는다. BE 연결 뒤 활성 보이스 프로필과 함께 사용한다.
+    from voice_bridge import WakeTemplateStore
+
+    wake_store = WakeTemplateStore(HERE / "models" / "wake.npz")
+    if wake_store.current is None:
+        print("호출어 템플릿 없음 → 세션이 열리지 않습니다. 앱의 이름 불러보기로 호출어를 5번 등록하세요."
+              + (f" (등록본 손상: {wake_store.load_error})" if wake_store.load_error else ""))
+    else:
+        print(f"호출어 개인화 켜짐 — \"{wake_store.current.wake_text}\", 기준 {wake_store.current.base_n}개"
+              f" (임계 {WAKE_TEMPLATE_MIN_SIM})")
+
     # BE 연결 계층 — runtime.json 있으면 WS/MCP 접속(백그라운드), 없거나 SIA_NO_BE 면
     # link=None 으로 오늘처럼 로컬 단독 동작. 실행/세션은 연결됐을 때만 BE 로 넘어간다.
     link = None
@@ -242,14 +253,14 @@ def main():
             from voice_bridge import VoiceProfileSync
 
             voice_sync = VoiceProfileSync(speaker, HERE / "models" / "speaker.npz") if speaker else None
-            link = AgentLink(voice_sync=voice_sync)
+            link = AgentLink(voice_sync=voice_sync, wake_store=wake_store)
             print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
             from calib_bridge import CalibSession
 
             link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
             from voice_bridge import WakeEnroll
 
-            link.wake = WakeEnroll(link, speaker)  # 온보딩 이름 불러보기(206) — 화자 인증을 꺼도 FE 진행바는 채워야 한다
+            link.wake = WakeEnroll(link, speaker, wake_store)  # 온보딩 이름 불러보기(206) — 5회 녹음으로 개인화 템플릿을 만든다
             if speaker is not None:
                 from voice_bridge import VoiceSession
 
@@ -257,7 +268,10 @@ def main():
         except Exception as e:
             print(f"BE 연결 계층 비활성: {e}")
 
-    brain = Brain(overlay, act=not args.no_actions, speaker=speaker, link=link)
+    brain = Brain(overlay, act=not args.no_actions, speaker=speaker, link=link,
+                  wake_template=wake_store)
+    if link and link.wake:
+        link.wake.wake_model = brain.wake  # 등록의 발음 확인도 실행과 같은 고정 모델로
     brain.start()
 
     voice_events = collections.deque(maxlen=16)
@@ -397,6 +411,8 @@ def main():
                         link.voice.on_cancel(data.get("tempId"))
                     elif event_type == "voice_registered" and link.voice:
                         link.voice.on_registered(data.get("id"), data.get("active"))
+                        # 호출어를 먼저 등록했으므로, 이번 온보딩의 템플릿을 방금 생성된 보이스 프로필에 연결한다.
+                        wake_store.bind_profile(data.get("id"))
                     elif event_type == "model_load":
                         model_name = data.get("name", "")
                         model_path = Path(data.get("path", ""))

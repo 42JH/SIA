@@ -365,7 +365,9 @@ def test_inflight_audio_is_not_executed_after_switch():
         brain._client = object()
         brain.queue, brain.busy = [], 0
         brain._pending = brain.speaker = brain.wake = brain.link = None
-        brain._accum, brain.session_until = SpeakerAccum(), 0
+        brain.wake_template = None
+        # 이 검사의 주제는 입력 전환이다 — 호출어 판정을 타지 않도록 활성 세션 안에서 돌린다.
+        brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
         brain._try_router = lambda *_: None
         executed = []
         brain._execute = lambda *args: executed.append(args)
@@ -397,7 +399,8 @@ def test_slow_execution_does_not_block_audio():
     brain._client = object()
     brain.queue, brain.busy = [], 0
     brain._pending = brain.speaker = brain.wake = brain.link = None
-    brain._accum, brain.session_until = SpeakerAccum(), 0
+    brain.wake_template = None
+    brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
     brain._try_router = lambda *_: {"action": "test"}
     listener = VoiceListener(collections.deque(), on_reset=brain.reset_audio)
     started, release, completed = threading.Event(), threading.Event(), threading.Event()

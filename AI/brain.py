@@ -33,7 +33,9 @@ LOG_DIR = HERE / "logs"
 EVAL_DIR = HERE / "eval" / "cases"
 EVAL_CAPTURE = os.environ.get("EVAL_CAPTURE", "") == "1"  # 회귀 케이스 수집 스위치
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5 Flash / 3.1 Flash-Lite
-WAKE_WORD = os.environ.get("WAKE_WORD", "시아야")  # 호출어 — 웨이크워드 모델과 동일 표기(음성 파트 확정)
+WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v1.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
+                          # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
+WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
@@ -49,6 +51,20 @@ WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수
                         # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
                           # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
+WAKE_MIN_S = 0.4          # NOTE(튜닝): 호출어 말소리 하한. 헛기침·"어"·클릭음을 거른다 (voice_bridge.MIN_SPEECH_S 와 같은 근거)
+WAKE_MAX_S = 2.0          # NOTE(튜닝): 호출어 말소리 상한. 이보다 길면 이름 부르기가 아니라 문장이다
+NOISE_RMS = 350.0         # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
+WAKE_CLIP_MAX_S = 2.5     # NOTE(튜닝): 호출어 구간으로 잘라낼 수 있는 최대 길이. WAKE_MAX_S(말소리 2.0 s)에
+                          # 단어 사이 틈을 더한 값 — 등록에서 받아 주는 길이는 실행에서도 잘리지 않아야 한다.
+WAKE_CLIP_PAD_S = 0.15    # 말소리 앞뒤로 남기는 여유. 첫 음절이 깎이면 임베딩이 흔들린다
+WAKE_CLIP_TAIL_JOIN_S = 0.05  # 최고점 뒤로 말소리가 쉬지 않고 이어질 때만 쓰는 더 짧은 꼬리 — 그 뒤는
+                          # 호출어가 아니라 이어진 명령(다른 사람일 수도 있다)이므로 여유를 거의 두지 않는다
+WAKE_CLIP_TAIL_S = 0.15   # 시동어 최고점(호출어가 끝난 지점) 뒤로 더 보는 시간. 짧게 두는 게 요점이다 —
+                          # "시아야 크롬 열어줘" 에서 뒤에 이어진 명령까지 넣으면 그 명령을 말한 사람
+                          # (다른 사람일 수 있다)으로 호출자의 신원을 판정하게 된다.
+                          # 명령 오디오가 버려지는 것은 아니다: 판정에만 이 구간을 쓰고 LLM 에는 발화 전체가 그대로 간다.
+WAKE_TEMPLATE_MIN_SIM = 0.35  # NOTE(튜닝): 호출어 구간의 화자 유사도 하한 (세션 개시 기준). 아직 안 잰 초기값이다.
+                          # 문장 화자인증보다 입력이 짧아 별도 임계값을 쓴다. 등록자·타인 녹음으로 조정한다.
 SPEAKER_JUDGE_SPEECH_S = 1.0  # NOTE(튜닝): 말소리가 이보다 짧으면 화자 판정을 못 믿는다 — 실측에서 말소리 1 s 이하 구간은
                               # 본인의 가장 낮은 유사도가 타인의 가장 높은 유사도보다 낮아, 어떤 값으로도 둘을 가를 수 없었다.
                               # 거부해도 BE 이벤트(voice_rejected)는 안 보낸다 — 단독 "시아야"(말소리 0.5~0.7 s)가 조용해도 85% 거부라 쏘면 본인 호출마다 문구가 뜬다.
@@ -466,6 +482,107 @@ def speaker_input(audio, i_max, lead=0, sr=16000):
     return audio[lo:lo + win], round(lo / sr, 2), round((lo + win) / sr, 2)
 
 
+def wake_score_of(model, audio):
+    """시동어 모델 채점 → (최고 점수, 최고점 프레임 또는 None, 앞에서 잘라 낸 샘플 수).
+    점수가 임계 미만이면 앞 WAKE_LEAD_TRIM_S 를 떼고 한 번 더 본다 — 호출어 앞에 배경이 길게 붙으면
+    점수가 무너진다. 등록(voice_bridge)과 실행(run)이 같이 쓴다."""
+    scores = [float(p[WAKE_MODEL.stem]) for p in model.predict_clip(audio)]  # np.float32는 json 불가
+    lead = 0
+    n_lead = int(WAKE_LEAD_TRIM_S * 16000)
+    if max(scores) < WAKE_THRESHOLD and len(audio) > n_lead + 16000:  # 앞 자르고 재채점 — 통과한 발화엔 비용 0
+        s2 = [float(p[WAKE_MODEL.stem]) for p in model.predict_clip(audio[n_lead:])]
+        if max(s2) > max(scores):
+            scores, lead = s2, n_lead
+    top = round(max(scores), 3)
+    # 시동어를 넘은 발화만 최고점 프레임을 돌려준다 — 못 넘은 발화는 최고점 위치가 무의미하다
+    return top, (int(np.argmax(scores)) if top >= WAKE_THRESHOLD else None), lead
+
+
+def noise_level(audio_i16, block=480):
+    """주변 소음 표기(낮음/높음) — 말소리 블록은 빼고 조용한 블록(하위 20%)의 rms 바닥만 본다. 한 블록 미만이면 None."""
+    n = len(audio_i16) // block
+    if n == 0:
+        return None
+    rms = np.sqrt(np.mean(np.asarray(audio_i16[:n * block], dtype=np.float32).reshape(n, block) ** 2, axis=1))
+    return "높음" if np.percentile(rms, 20) > NOISE_RMS else "낮음"
+
+
+def speech_span(audio_i16, sr=16000, floor=350.0, block=480):
+    """말소리가 있는 구간의 (시작 s, 끝 s). 말소리가 없으면 None. 기준은 speech_s 와 같다."""
+    n = len(audio_i16) // block
+    if n == 0:
+        return None
+    rms = np.sqrt(np.mean(np.asarray(audio_i16[:n * block], dtype=np.float32).reshape(n, block) ** 2, axis=1))
+    loud = np.flatnonzero(rms > floor)
+    if not len(loud):
+        return None
+    return float(loud[0]) * block / sr, float(loud[-1] + 1) * block / sr
+
+
+def wake_clip(audio, i_max, lead=0, sr=16000):
+    """호출어 구간 → (오디오, 시작 s, 끝 s, 경계 확실함). 등록과 실행이 같이 쓰는 전처리다.
+
+    시동어 최고점(i_max)이 호출어가 끝난 지점이다. 거기서 짧은 꼬리만 더 보고 끊고, 앞으로는 말소리를
+    따라 WAKE_CLIP_MAX_S 까지만 잡는다. 쉬지 않고 말이 이어지면 꼬리를 더 줄인다 — 그 뒤는 호출어가
+    아니라 이어진 명령이고 다른 사람일 수도 있다. 최고점이 말소리보다 앞에 찍혀 구간이 무너지면
+    경계를 못 믿는 것으로 본다. 원본 오디오는 그대로 남는다.
+    NOTE(한계): 최고점에 오차가 있고 화자를 가르지는 않는다 — 늦게 찍히고 곧바로 다른 사람이 말하면
+    꼬리만큼 섞인다. 실제 연속 발화로 구간 분리의 정확도를 확인해야 한다."""
+    span = speech_span(audio, sr)
+    if span is None:
+        return audio[:int(WAKE_CLIP_MAX_S * sr)], 0.0, round(min(len(audio) / sr, WAKE_CLIP_MAX_S), 2), False
+    start, end = span
+    peak = i_max * WAKE_FRAME_S - WAKE_PAD_S + lead / sr           # 호출어가 끝난 시각
+    tail = WAKE_CLIP_TAIL_S if end <= peak + WAKE_CLIP_TAIL_S else WAKE_CLIP_TAIL_JOIN_S
+    end = hi = min(end, peak + tail)                               # 최고점 뒤로는 더 보지 않는다 —
+    lo = max(0.0, max(start - WAKE_CLIP_PAD_S, end - WAKE_CLIP_MAX_S))  # 여유를 더하면 이어진 명령이 다시 들어온다
+    if hi - lo < 0.1:
+        lo, hi = max(0.0, start - WAKE_CLIP_PAD_S), min(len(audio) / sr, start + WAKE_CLIP_MAX_S)
+        return audio[int(lo * sr):int(hi * sr)], round(lo, 2), round(hi, 2), False
+    return audio[int(lo * sr):int(hi * sr)], round(lo, 2), round(hi, 2), True
+
+
+def wake_clip_is_clean(audio, clip, clip_end_s, certain=False, sr=16000, *, min_s=WAKE_MIN_S):
+    """호출어 구간의 품질 검사 → (통과 여부, 사유, 거절 코드).
+
+    길이·소음·클리핑·잘린 경계·뒤이은 말소리를 확인한다. 거절 코드는 wakeword_rejected에 사용한다.
+    """
+    spoken = speech_s(clip)
+    if spoken < min_s:
+        return False, f"말소리 {spoken:.2f} s < {min_s}", "TOO_SHORT"
+    if spoken > WAKE_MAX_S:
+        return False, f"말소리 {spoken:.2f} s > {WAKE_MAX_S}", "TOO_LONG"
+    if noise_level(audio) != "낮음":
+        return False, "주변 소음 높음", "NOISY"
+    if float(np.mean(np.abs(np.asarray(clip, dtype=np.int32)) >= 32000)) > 0.005:
+        return False, "입력이 포화됨(클리핑)", "LOW_QUALITY"
+    span = speech_span(clip, sr)
+    if span is None or span[0] < 0.02 or (not certain and span[1] > len(clip) / sr - 0.02):
+        return False, "구간 경계에 말소리가 붙음(잘린 녹음)", "LOW_QUALITY"
+    if speech_s(audio[int(clip_end_s * sr):]) >= 0.3:
+        return False, "호출어 뒤에 다른 말이 이어짐", "LOW_QUALITY"
+    return True, "ok", None
+
+
+def wake_only(audio, i_max, lead=0, sr=16000):
+    """호출어 구간만 있고 앞뒤에 다른 말소리가 없으면 단독 호출 후보로 본다.
+
+    화자 일치는 별도로 확인한다. 뒤에 짧은 명령이 붙거나 경계·품질이 불확실하면 기존 명령 처리로 넘긴다.
+    NOTE(한계): 시동어 최고점으로 경계를 추정하므로, 호출어와 명령이 이어진 녹음으로 확인해야 한다.
+    """
+    if i_max is None:
+        return False
+    clip, start, end, certain = wake_clip(audio, i_max, lead, sr)
+    span = speech_span(audio, sr)
+    # 임베딩용 꼬리(0.15초)를 단독 호출 판정에 쓰면 짧게 붙인 명령까지 삼킨다.
+    # 여기서는 최고점의 프레임 반 칸 오차까지만 허용한다.
+    boundary = i_max * WAKE_FRAME_S - WAKE_PAD_S + lead / sr + WAKE_FRAME_S / 2
+    if not certain or span is None or span[0] < start or span[1] > min(end, boundary):
+        return False
+    # 단독 호출 판정에는 등록용 길이 하한을 적용하지 않는다. 짧아도 모델·개인화 인증은 필수다.
+    return wake_clip_is_clean(audio, clip, end, certain, sr, min_s=0.0)[0]
+
+
 def wake_rejects(score, in_session, shadow=False):
     """게이트 판정 — True면 LLM에 보내지 않는다. 세션 안(호출어 불필요)과 섀도(로그만)는 항상 통과."""
     return score < WAKE_THRESHOLD and not in_session and not shadow
@@ -518,11 +635,13 @@ def jpeg_bytes(pil_img, max_w=1400, quality=75):
 class Brain(threading.Thread):
     """요청 큐를 소비하는 워커 — 메인 루프(영상 처리)를 API 지연으로 막지 않는다."""
 
-    def __init__(self, overlay, act=True, speaker=None, link=None):
+    def __init__(self, overlay, act=True, speaker=None, link=None, wake_template=None):
         super().__init__(daemon=True)
         self.overlay = overlay
         self.act = act  # False면 실행 없이 로그만 (--no-actions)
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
+        self.wake_template = wake_template  # WakeTemplateStore 또는 None (호출어 개인화 판정)
+        self._wake_notified = None  # 같은 사유의 안내를 발화마다 반복하지 않으려고 마지막 사유를 들고 있는다
         self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
         self.queue = []
         self._audio_lock = threading.RLock()
@@ -615,6 +734,75 @@ class Brain(threading.Thread):
             return (generation == self._audio_generation and current is not None
                     and current[0] is not None and current[2:] == profile_ref)
 
+    def _wake_word(self):
+        """지금 적용 중인 호출어 — BE 설정(settings.wakeWord)이 왔으면 그 값, 아니면 WAKE_WORD.
+        고정 모델의 문구(WAKE_MODEL_WORD)와는 다른 값일 수 있다."""
+        store = self.wake_template
+        return store.wake_word() if store is not None else WAKE_WORD
+
+    def _wake_notice(self, key, message):
+        """같은 사유는 한 번만 안내한다 — 호출할 때마다 문구가 뜨면 안 읽는다."""
+        if self._wake_notified != key:
+            self._wake_notified = key
+            self._say(message)
+
+    def _wake_ok(self, audio, i_max, lead, oww_pass):
+        """호출어 인증 → (통과 여부, 사유, 유사도, 구간 시작 s, 구간 끝 s).
+
+        시동어 모델과 등록자 유사도를 모두 통과해야 세션을 연다.
+        템플릿이 없거나 손상됐거나 판정 중 바뀌면 거절한다.
+        NOTE(한계): 본인이 말한 비슷한 발음을 시동어 모델이 잘못 검출할 수 있다. 지원 호출어는 '시아야'다.
+        """
+        store = self.wake_template
+        if store is None:
+            self._wake_notice("no_store", "호출어 등록본을 읽을 수 없어 세션을 열 수 없습니다.")
+            return False, "no_store", None, None, None
+        word, template, generation = store.snapshot()
+        if word != WAKE_MODEL_WORD:
+            self._wake_notice("unsupported_word",
+                              f'호출어 "{word}" 는 아직 지원하지 않습니다 — 설정을 "{WAKE_MODEL_WORD}" 로 바꿔 주세요.')
+            return False, "unsupported_word", None, None, None
+        if self.wake is None:
+            self._wake_notice("no_model", "호출어 모델이 없어 세션을 열 수 없습니다 — openwakeword 설치가 필요합니다")
+            return False, "no_wake_model", None, None, None
+        if not oww_pass:
+            return False, "no_candidate", None, None, None
+        if template is None:
+            broken = store.load_error
+            self._wake_notice("no_template",
+                              "호출어 등록본이 손상됐습니다 — 앱에서 호출어를 다시 등록해 주세요." if broken
+                              else "호출어를 먼저 등록해 주세요 — 앱의 이름 불러보기에서 5번 부르면 됩니다.")
+            return False, "template_broken" if broken else "template_missing", None, None, None
+        if not template.matches_setting(word):
+            self._wake_notice("stale_template",
+                              f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
+            return False, "template_stale", None, None, None
+        profile_id = self.speaker.profile_id if self.speaker is not None else None
+        if not template.usable_by(profile_id):
+            # BE 의 호출어 blob 은 전역 한 개라 프로필별로 나뉘지 않는다 — 템플릿에 적어 둔 등록 당시
+            # 보이스 프로필과 지금 활성 프로필이 다르면 다른 사람의 등록본이다.
+            self._wake_notice("other_profile",
+                              "이 호출어 등록본은 다른 보이스 프로필의 것입니다 — 지금 프로필로 다시 등록해 주세요.")
+            return False, "other_profile", None, None, None
+        clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max, lead)
+        if self.speaker is None:
+            return True, "content_only", None, clip_t0, clip_t1  # --no-speaker로 화자 인증을 끈 상태
+        try:
+            emb = self.speaker.embed(clip)
+        except Exception as e:
+            print(f"[호출어 목소리 판정 실패] {e}")
+            return False, "embed_failed", None, clip_t0, clip_t1
+        sim = template.similarity(emb)
+        if sim is None or sim < WAKE_TEMPLATE_MIN_SIM:
+            print(f"[호출어 목소리 불일치] 유사도 {sim} < {WAKE_TEMPLATE_MIN_SIM}")
+            return False, "speaker", sim, clip_t0, clip_t1
+        if not store.still_current(generation):
+            # 판정하는 사이 템플릿이 교체·삭제됐다 (재등록·서버 삭제·프로필 전환).
+            print("[호출어 판정 폐기] 판정 도중 템플릿이 바뀌었습니다 — 세션을 열지 않습니다")
+            return False, "template_changed", sim, clip_t0, clip_t1
+        self._wake_notified = None
+        return True, "ok", sim, clip_t0, clip_t1
+
     def run(self):
         while True:
             if not self.queue:
@@ -634,33 +822,46 @@ class Brain(threading.Thread):
                 # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
                 # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
                 # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
-                wake_score, i_max, lead = None, None, 0
+                wake_score, i_max, lead, oww_pass = None, None, 0, False
+                wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
                 if self.wake is not None:
-                    scores = [float(p[WAKE_MODEL.stem]) for p in self.wake.predict_clip(audio)]  # np.float32는 json 불가
-                    n_lead = int(WAKE_LEAD_TRIM_S * 16000)
-                    if max(scores) < WAKE_THRESHOLD and len(audio) > n_lead + 16000:  # 앞 자르고 재채점 — 통과한 발화엔 비용 0
-                        s2 = [float(p[WAKE_MODEL.stem]) for p in self.wake.predict_clip(audio[n_lead:])]
-                        if max(s2) > max(scores):
-                            scores, lead = s2, n_lead
-                    wake_score = round(max(scores), 3)
-                    if wake_score >= WAKE_THRESHOLD:  # 시동어를 넘은 발화만 최고점 프레임을 기준점으로 — 못 넘은 발화(세션 안 명령)는 최고점 위치가 무의미
-                        i_max = int(np.argmax(scores))
-                        if t_utter >= self._session_until():
-                            accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
-                        # 63: 감지 즉시 BE 에 알린다(FE "듣고 있어요" + 세션 개시). 화자 게이트보다 앞 — 호출어 발화는
-                        # 짧아서 아직 미인증인 게 정상(다음 발화와 이어붙여 판정). 섀도는 로그만이라 안 보냄.
-                        # LLM 뒤 _execute 의 발신은 시동어 모델이 없을 때의 폴백으로 남긴다.
+                    wake_score, i_max, lead = wake_score_of(self.wake, audio)
+                    oww_pass = i_max is not None
+                in_session = t_utter < self._session_until()
+                confirming = bool(self._pending and t_utter < self._pending[2])
+                only_wake = (oww_pass and not WAKE_SHADOW
+                             and not confirming
+                             and wake_only(audio, i_max, lead))
+                # 활성 세션의 명령은 기존 화자 게이트로 보낸다. 단독 호출 후보는 세션 안에서도
+                # 개인화를 확인해야 타인의 호출에 곧바로 응답하는 우회가 생기지 않는다.
+                if in_session and not only_wake:
+                    wake_ok, wake_why = True, "in_session"
+                else:
+                    wake_ok, wake_why, wake_sim, seg_t0, seg_t1 = self._wake_ok(audio, i_max, lead, oww_pass)
+                    if wake_ok:
+                        accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
                         be = self._be()
                         with self._audio_lock:
                             stale = generation != self._audio_generation
                         if stale:
                             continue
-                        if be and not WAKE_SHADOW:
-                            be.wake_detected()
-                    if wake_rejects(wake_score, t_utter < self._session_until(), WAKE_SHADOW):
-                        print(f"[시동어 없음 무시] 점수 {wake_score:.2f} < {WAKE_THRESHOLD}")
-                        log_utterance(gate="wake_reject", wake_score=wake_score,
-                                      session=False, **audio_stats(audio))
+                        if be and not WAKE_SHADOW and not in_session:
+                            be.wake_detected()  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
+                        if only_wake:
+                            if be is None and not in_session:
+                                self.session_until = time.monotonic() + SESSION_S
+                            self._say("네, 듣고 있어요")
+                            log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
+                                          wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                          seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
+                            continue  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
+                    elif not WAKE_SHADOW:
+                        print(f"[호출어 아님 무시] {wake_why}"
+                              + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
+                        log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
+                                      wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                      seg_t0=seg_t0, seg_t1=seg_t1,
+                                      session=in_session, **audio_stats(audio))
                         continue
                 # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
                 # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
@@ -720,6 +921,9 @@ class Brain(threading.Thread):
                     dom = dom or be_dom_text(self._be())
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
+                              wake_why=wake_why,  # 세션 개시 판정 경로 (in_session / ok / content_only)
+                              wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                              seg_t0=seg_t0, seg_t1=seg_t1,  # 개인화 판정에 쓴 호출어 구간
                               speaker_sim=round(sim, 3) if sim is not None else None,
                               accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0
                               accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
