@@ -436,15 +436,26 @@ class GestureRegistration:
         self.link.put_gesture_npz(self.temp_id, payload)
 
     def _upload_motion(self, hand_count):
-        """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다."""
+        """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다.
+
+        정적은 궤적이 아니라 자세 하나다. 0.4초간 모은 여러 프레임을 그대로
+        궤적처럼 저장하면, 실시간 인식은 항상 "완벽히 정지한" 값(현재 프레임
+        1장을 복제)과 비교하므로 등록 당시의 자연스러운 손떨림이 매 프레임
+        오차로 그대로 남아 — 실사용 때 완벽히 일치하는 자세조차 페널티를
+        받는다. 그래서 모은 프레임을 평균해 떨림을 지운 대표 자세 하나로
+        만든 뒤, 인식 때와 똑같은 형태(그 자세를 2점으로 복제)로 저장한다.
+        """
         sequences = []
         for take in range(1, self.takes + 1):
             frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
             frames = [(t, pts) for t, pts in frames if pts is not None]
             if len(frames) < 2:
                 raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
-            seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
-            if self.motion == self.DYNAMIC:
+            if self.motion == self.STATIC:
+                avg_pts = np.mean([pts for _, pts in frames], axis=0)
+                seq = encode_sequence([0, 1], [avg_pts, avg_pts])
+            else:
+                seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
                 movement = distance(seq, np.repeat(seq[:1], FRAMES, axis=0), hand_count)
                 if movement < PREFIX_MIN_MOTION:
                     raise ValueError(f"{take}회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요")
