@@ -928,6 +928,42 @@ def test_be_dom_text():
     assert be_dom_text(None) is None                                                       # 링크 없음
 
 
+def test_wake_model_load():
+    """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
+    온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
+    모델 자체가 없거나 로드에 실패하면 그대로 None 이고, 그 사유는 키 없음과 따로 로그에 남는다."""
+    from unittest.mock import Mock, patch
+
+    import brain as brain_mod
+    from brain import WAKE_MODEL_WORD, Brain
+    from voice_bridge import WakeEnroll
+
+    model, loads = object(), []
+
+    def fake_loader():
+        loads.append(model)
+        return model
+
+    with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=[]):
+        no_key = Brain(Mock())
+    assert no_key.wake is model and not no_key.enabled and len(loads) == 1  # 키 없이도 모델은 올라온다
+
+    enroll = WakeEnroll(Mock(), None, None)
+    enroll.wake_model = no_key.wake                    # assistant.py 가 하는 것과 같은 전달
+    assert enroll.wake_model is model and len(loads) == 1   # 등록도 같은 인스턴스 — 다시 로드하지 않는다
+
+    with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()) as client:
+        with_key = Brain(Mock())
+    assert with_key.wake is model and with_key.enabled and client.call_count == 1  # 키가 있는 흐름은 그대로
+    assert len(loads) == 2                                                          # Brain 하나당 한 번
+
+    store = SimpleNamespace(snapshot=lambda: (WAKE_MODEL_WORD, None, 0))
+    with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=[]):
+        broken = Brain(Mock(), wake_template=store)
+    assert broken.wake is None                                                      # 로드 실패는 숨기지 않는다
+    assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
+
+
 if __name__ == "__main__":
     import sys
     try:
@@ -955,6 +991,7 @@ if __name__ == "__main__":
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
+    test_wake_model_load()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 24/24 통과")
+    print("OK - 25/25 통과")

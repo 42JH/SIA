@@ -437,7 +437,7 @@ def load_api_key():
 
 
 def load_wake_model():
-    """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (게이트 없이 LLM 판정만).
+    """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (호출어 인식·등록 비활성).
 
     siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
     (melspectrogram·embedding)는 패키지에 없고 별도 다운로드다 — 신규 클론에서 없으면
@@ -445,7 +445,7 @@ def load_wake_model():
     향상 켜짐 — 헤드셋·다른 PC는 미검증.
     """
     if not WAKE_MODEL.exists():
-        print(f"시동어 모델 없음({WAKE_MODEL.name}) → 게이트 비활성, 호출어 판정은 LLM만")
+        print(f"시동어 모델 없음({WAKE_MODEL.name}) → 호출어 인식·등록 비활성 (Gemini 키와 무관)")
         return None
     try:
         from openwakeword.model import Model
@@ -463,7 +463,7 @@ def load_wake_model():
             download_models()
             return _load()
     except Exception as e:
-        print(f"시동어 모델 비활성({type(e).__name__}: {e}) → 호출어 판정은 LLM만:  pip install openwakeword")
+        print(f"시동어 모델 로드 실패({type(e).__name__}: {e}) → 호출어 인식·등록 비활성:  pip install openwakeword")
         return None
 
 
@@ -655,18 +655,19 @@ class Brain(threading.Thread):
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         self._keys = load_api_keys()
         self._key_i = 0
-        self.wake = None  # 시동어 모델 (openwakeword Model) 또는 None
         self._accum = SpeakerAccum()  # 화자 인증에서 거부된 짧은 조각 모음 (다음 발화와 이어붙여 재판정)
+        # 시동어 모델은 Gemini 키와 상관없이 올린다 — 온보딩 호출어 등록이 이 인스턴스를 그대로 쓰기 때문에,
+        # 키가 없다는 이유로 건너뛰면 등록 첫 발화가 "호출어 모델이 없어 등록할 수 없어요." 로 막힌다.
+        self.wake = load_wake_model()  # openwakeword Model 또는 None (모델 파일 없음·로드 실패)
+        if self.wake is not None:
+            print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
+                  + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         if self._keys:
             from google import genai
 
             self._client = genai.Client(api_key=self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
-            self.wake = load_wake_model()  # 시동어 게이트 — LLM을 안 쓰면 게이트도 의미 없음
-            if self.wake is not None:
-                print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
-                      + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         else:
             print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
