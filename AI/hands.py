@@ -267,6 +267,26 @@ class PalmControlMode:
         return None
 
 
+FINGERTIPS = (4, 8, 12, 16, 20)  # MediaPipe 손 랜드마크: 엄지·검지·중지·약지·소지 끝
+# 손모양을 구분짓는 정보는 대부분 손끝에 몰려 있고 손목·손바닥은 거의 안 움직인다.
+# 손끝에 2배 가중치를 줘 "손모양은 비슷한데 손가락만 다른" 케이스의 구분력을 올린다.
+LANDMARK_WEIGHTS = np.ones(21, dtype=np.float64)
+LANDMARK_WEIGHTS[list(FINGERTIPS)] = 2.0
+
+
+def weighted_distance(diff):
+    """diff: (..., 42) 정규화 특징 벡터 차이 → 손끝 가중 L2 거리.
+
+    가중치 평균이 1(균등 가중)일 때 np.linalg.norm(diff, axis=-1)과 정확히
+    같은 값이 나오도록 스케일을 보존한다 — 그래야 CustomGestures.thresh(0.35)
+    같은 기존 임계값을 재조정 없이 그대로 쓸 수 있다.
+    """
+    per_landmark = diff.reshape(diff.shape[:-1] + (21, 2))
+    sq = np.sum(per_landmark ** 2, axis=-1)  # (..., 21) 랜드마크별 제곱거리
+    weighted_sq_sum = 21 * np.average(sq, axis=-1, weights=LANDMARK_WEIGHTS)
+    return np.sqrt(weighted_sq_sum)
+
+
 def normalize_landmarks(lm_xy):
     """손 랜드마크(21개 x,y) → 위치·크기·회전 불변 특징 벡터(42,).
 
@@ -343,7 +363,7 @@ class CustomGestures:
         if self.n == 0:
             return None, float("inf")
         f = normalize_landmarks(lm_xy)
-        d = np.linalg.norm(self.X - f, axis=1)
+        d = weighted_distance(self.X - f)
         idx = np.argsort(d)[:k]
         nearest = float(d[idx[0]])
         if nearest > self.thresh:
@@ -362,7 +382,7 @@ class CustomGestures:
         if self.n == 0:
             return None
         f = normalize_landmarks(lm_xy)
-        d = np.linalg.norm(self.X - f, axis=1)
+        d = weighted_distance(self.X - f)
         idx = np.argsort(d)[:k]
         if float(d[idx[0]]) > self.thresh:  # 가장 가까운 샘플조차 멀면 기권
             return None
@@ -382,7 +402,7 @@ class CustomGestures:
         best_name, best_d = None, float("inf")
         for name in self.class_names():
             cls = self.X[[i for i, n in enumerate(self.names) if n == name]]
-            dd = float(min(np.linalg.norm(cls - f, axis=1).min() for f in feats))
+            dd = float(min(weighted_distance(cls - f).min() for f in feats))
             if dd < best_d:
                 best_name, best_d = name, dd
         return best_name, best_d

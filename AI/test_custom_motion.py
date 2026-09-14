@@ -88,6 +88,42 @@ class MotionTests(unittest.TestCase):
         self.assertIsNone(store.update([hand(), hand(0.65, "Right", -0.12)], 0.2)[0])
         self.assertIsNone(store.update([hand(), hand(0.9, "Right", 0.08)], 0.3)[0])
 
+    def tick_until_wait_finish(self, reg, make_hands, step=0.05):
+        """register()와 달리 _collect를 직접 부르지 않고 실제 tick() 타이밍으로 진행한다.
+
+        STATIC이 RECORDING 진입 즉시 1장만 모으고 넘어가던 옛 버그는 register()
+        헬퍼(수동으로 _collect를 여러 번 호출)로는 재현되지 않았다 — tick()을
+        실제로 구동해야만 회차당 몇 프레임이 실제로 모이는지 검증할 수 있다.
+        """
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        now = 0.0
+        while reg.active and reg.phase != "WAIT_FINISH":
+            now += step
+            reg.tick(frame, make_hands(), now=now)
+
+    def test_static_capture_collects_several_frames_per_take(self):
+        # gesture=None: 기본 hand()의 "Open_Palm" 라벨은 내장 제스처 유사도 검사에 걸린다 —
+        # 여기서는 그 검사가 아니라 프레임 수집 개수 자체를 검증한다.
+        make_hands = lambda: [dict(hand(), gesture=None)]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=3, countdownSec=0.01), now=0)
+        self.tick_until_wait_finish(reg, make_hands)
+        # 회차당 1장만 모였다면(옛 버그) 3회차 합쳐도 3장뿐 — 최소 기준(8)을 못 넘긴다.
+        self.assertGreaterEqual(len(reg.samples), GestureRegistration.MIN_STATIC_SAMPLES)
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
+    def test_two_hand_static_capture_succeeds_via_real_tick_timing(self):
+        pair = lambda: [hand(), hand(0.65, "Right", 0.08)]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=3, countdownSec=0.01), now=0)
+        self.tick_until_wait_finish(reg, pair)
+        reg.finish()
+        # 옛 버그는 회차당 프레임이 1장뿐이라 encode_sequence가 요구하는 2장을
+        # 못 채워 "회차 촬영이 충분하지 않습니다"로 항상 거부됐다.
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+        self.assertEqual(self.link.sent[-1][1]["hands"], 2)
+
     def test_two_hand_dynamic_tracks_second_hand(self):
         pair = lambda t: [hand(), hand(0.6 + t * 0.2, "Right")]
         store = self.register("DYNAMIC", pair)
