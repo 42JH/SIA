@@ -497,10 +497,10 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 
 ### 5.1 마이그레이션 시드 — `app_settings`
 
-V1 마이그레이션이 넣는 행은 설정 싱글턴 하나다. V1 이 넣는 키는 아래 6개다.
+마이그레이션이 넣는 행은 설정 싱글턴 하나다. 초기 문서의 키는 아래 6개다.
 
 ```json
-{"wakeWord":"시아","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null}
+{"wakeWord":"시아야","sessionSeconds":15,"autoStart":true,"gazeCursor":false,"micDevice":null,"cameraDevice":null}
 ```
 
 `micDeviceId` · `cameraDeviceId` 는 코드 시드(`resources/seed/default-settings.json`)에만 있다. 첫 `PUT /api/settings` 의 완전성 규칙이나 전체 삭제(`DELETE /api/data`)가 시드값 `null` 로 채운다.

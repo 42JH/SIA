@@ -160,7 +160,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
   "agentVersion": "0.4.2",
   "settingsPending": false,
   "settings": {
-    "wakeWord": "시아",
+    "wakeWord": "시아야",
     "sessionSeconds": 15,
     "autoStart": true,
     "gazeCursor": false,
@@ -176,7 +176,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 
 | 키 | 타입 | 기본값 | 읽는 쪽 · 의미 |
 |---|---|---|---|
-| `wakeWord` | 비어 있지 않은 문자열 | `"시아"` | AI (호출어 감지). 온보딩 문장은 FE · AI 의 고정 상수라 이 값과 무관하다 |
+| `wakeWord` | 비어 있지 않은 문자열 | `"시아야"` | AI (호출어 감지). 온보딩 문장은 FE · AI 의 고정 상수라 이 값과 무관하다 |
 | `sessionSeconds` | 1 이상 정수 | `15` | BE 세션 유지 시간. 변경은 다음 세션 개시 · 갱신부터 적용 |
 | `autoStart` | boolean | `true` | FE 가 집행한다. BE 는 저장 · 중계만 한다 |
 | `gazeCursor` | boolean | `false` | AI 가 `true` 일 때만 `gaze_cursor` 를 보낸다 |
@@ -200,7 +200,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 ```json
 {
   "settings": {
-    "wakeWord": "시아",
+    "wakeWord": "시아야",
     "sessionSeconds": 60,
     "autoStart": true,
     "gazeCursor": true,
@@ -2524,7 +2524,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `calib` | `{id: long, sha256: string, screenW: int \| null, screenH: int \| null}` \| null | 활성 보정 프로필 |
 
 ```json
-{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam", "micDeviceId": "{0.0.1.00000000}.{a53af75a…}", "cameraDeviceId": "\\?\usb#vid_046d…" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…", "hands": 2, "motion": "DYNAMIC" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
+{ "type": "recognition_start", "data": { "settingsVersion": 5, "settings": { "wakeWord": "시아야", "sessionSeconds": 15, "autoStart": true, "gazeCursor": false, "micDevice": "마이크(Realtek(R) Audio)", "cameraDevice": "HD Webcam", "micDeviceId": "{0.0.1.00000000}.{a53af75a…}", "cameraDeviceId": "\\?\usb#vid_046d…" }, "blobs": { "gestures": [{ "id": 14, "name": "손가락 하트", "sha256": "8c22b1de44a0…", "hands": 2, "motion": "DYNAMIC" }], "wakeword": "b02f11ac37d9…", "voice": { "id": 1, "sha256": "a17c04ff9b32…" }, "calib": { "id": 2, "sha256": "3f5a9c21e0b7…", "screenW": 1920, "screenH": 1080 } }, "disabledGestures": ["V_Sign"] } }
 ```
 
 #### 제스처

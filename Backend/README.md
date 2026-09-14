@@ -86,7 +86,7 @@ com.sia.assistant
 
 | 값 | 기본 | 출처 |
 |---|---|---|
-| 호출어 | `시아` | V1 시드 (`seed/default-settings.json` 과 동일 값) |
+| 호출어 | `시아야` | V1 시드를 V4 가 갱신 (`seed/default-settings.json` 과 동일 값). 온보딩 녹음 문장과 같다 |
 | 설정 키 | 6종 (`wakeWord`·`sessionSeconds`·`autoStart`·`gazeCursor`·`micDevice`·`cameraDevice`) | `settings/SettingsSchema` — 자유 JSON 이지만 이 키들은 유실·오타입이 막힌다. 옛 `screen` 은 삭제 |
 | 세션 유지 | 15초 (기본, 변경 가능) | `settings.sessionSeconds` — 개시·갱신마다 다시 읽어 다음 세션부터 적용 |
 | 도구 | 30개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region`, 2026-09-07 `volume.set`·`browser.search`, 2026-09-09 `browser.dom_text` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
