@@ -702,6 +702,12 @@ def main():
                     # 완성된 커스텀 동작이 최우선 — 같은 손 움직임이 우연히
                     # 스와이프/스크롤로도 읽혀 이중 발동하는 것을 막는다.
                     dynamic_event = custom_motion_event
+                elif custom_claimed:
+                    # 아직 완성 전이지만 커스텀 동작 후보를 추적 중이면(시작 궤적이
+                    # 등록된 커스텀 동작과 일치) 완성되거나 후보가 풀릴 때까지 다른
+                    # 해석(스와이프·스크롤·핀치)으로 새지 않는다 — 감지기 자체는
+                    # 위에서 계속 갱신되므로 후보가 풀리면 바로 이어서 판정한다.
+                    dynamic_event = None
                 elif pinch_event:
                     dynamic_event = pinch_event
                 elif motion_event == "Swipe_Right":
