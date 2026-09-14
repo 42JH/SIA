@@ -225,7 +225,8 @@ class AgentLink:
         if t in {"hello_ack", "recognition_start", "settings_changed", "gesture_toggled",
                  "gesture_registered", "gesture_renamed", "gesture_removed", "gesture_result",
                  "reg_mode_start", "reg_finish", "model_load",
-                 "voice_reg_start", "voice_collect", "voice_finalize", "voice_reg_cancel", "voice_registered"}:
+                 "voice_reg_start", "voice_collect", "voice_finalize", "voice_reg_cancel", "voice_registered",
+                 "cam_preview_start", "cam_preview_stop"}:
             with self._event_lock:
                 self._events.append((t, d))
 
