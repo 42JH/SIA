@@ -20,7 +20,7 @@ import numpy as np
 
 from hands import (CustomGestures, FingerSwipeDetector, GestureEngine, GestureStable,
                    PalmControlMode, PinchVolumeDetector, PointerControlDetector,
-                   SCREEN_SWIPE_CONFIG, SwipeDetector, normalize_landmarks)
+                   SCREEN_SWIPE_CONFIG, SwipeDetector, normalize_landmarks, weighted_distance)
 from main import open_camera
 
 HERE = Path(__file__).parent
@@ -130,7 +130,7 @@ def register(camera_idx):
         sys.exit(f"등록 거부: 기존 '{near}'와 너무 비슷합니다 (거리 {dist:.2f} < {CONFUSION_DIST}). "
                  "다른 모양을 쓰세요.")
     # 샘플 자체 일관성 (손이 흔들렸으면 재시도 권고)
-    spread = float(np.linalg.norm(feats - feats.mean(axis=0), axis=1).mean())
+    spread = float(weighted_distance(feats - feats.mean(axis=0)).mean())
     if spread > 0.25:
         sys.exit(f"샘플이 너무 흩어졌습니다(spread {spread:.2f}) — 손모양을 고정하고 다시 시도하세요.")
 

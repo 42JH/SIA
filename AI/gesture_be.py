@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hands import CustomGestures, normalize_landmarks
+from hands import CustomGestures, normalize_landmarks, weighted_distance
 from custom_motion import (
     CustomGestureStore, FRAMES, PREFIX_MIN_MOTION, distance, encode_sequence,
     ordered_landmarks, read_templates, template_bytes as encode_template_bytes,
@@ -196,6 +196,8 @@ class GestureRegistration:
     DEFAULT_TAKES = 3
     DEFAULT_COUNTDOWN_S = 3.0
     DEFAULT_TAKE_S = 2.0
+    STATIC_HOLD_S = 0.4
+    MIN_STATIC_SAMPLES = 8
     STATIC = "STATIC"
     DYNAMIC = "DYNAMIC"
     FRAME_INTERVAL_S = 0.10
@@ -260,20 +262,23 @@ class GestureRegistration:
         self.countdown_s = self._positive_number(
             data, "countdownSec", self.DEFAULT_COUNTDOWN_S
         )
-        # STATIC은 BE 계약상 한 장 캡처이므로 takeDurationSec 자체가 없다.
-        if self.motion == self.DYNAMIC:
-            self.take_s = self._positive_number(
-                data, "takeDurationSec", self.DEFAULT_TAKE_S
-            )
+        # STATIC은 BE 계약상 takeDurationSec을 안 보낸다 — FE/BE에는 "한 장 캡처"로
+        # 보이지만, 흔들린 프레임 한 장이 그대로 정답으로 박제되지 않도록 AI
+        # 내부적으로만 아주 짧게(STATIC_HOLD_S) 여러 프레임을 모아 학습 데이터로 쓴다.
+        self.take_s = (
+            self._positive_number(data, "takeDurationSec", self.DEFAULT_TAKE_S)
+            if self.motion == self.DYNAMIC else self.STATIC_HOLD_S
+        )
         self.take = 1
         self.phase = "COUNTDOWN"
         self.phase_at = time.monotonic() if now is None else now
         self.link.send_event("reg_started", {"tempId": self.temp_id})
         self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                            "phase": "COUNTDOWN"})
+        hold_label = "촬영" if self.motion == self.DYNAMIC else "캡처 유지"
         print(f"[제스처 등록] 시작 tempId={self.temp_id} "
-              f"({self.motion}, {self.takes}회, 카운트다운 {self.countdown_s:g}초"
-              + (f", 촬영 {self.take_s:g}초)" if self.motion == self.DYNAMIC else ", 회차당 캡처 1장)"))
+              f"({self.motion}, {self.takes}회, 카운트다운 {self.countdown_s:g}초, "
+              f"{hold_label} {self.take_s:g}초)")
 
     def _emit_frame(self, frame, now, force=False):
         if not force and now - self.last_frame_at < self.FRAME_INTERVAL_S:
@@ -330,10 +335,13 @@ class GestureRegistration:
             self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
                                                "phase": "RECORDING"})
         if self.phase == "RECORDING":
-            # 정적은 카운트다운 직후 한 장만 캡처한다. 동적만 시간 구간을 수집한다.
-            self._emit_frame(frame, now, force=self.motion == self.STATIC)
+            # 정적도 이제 take_s(STATIC_HOLD_S)만큼 짧게 여러 프레임을 모은다 —
+            # 흔들린 프레임 한 장이 그대로 등록되는 걸 막기 위함. FE에는 여전히
+            # 대표 프레임 하나면 충분하지만(BE가 마지막 프레임을 쓴다), 내부 학습
+            # 데이터는 이 구간에서 모인 여러 장을 그대로 쓴다.
+            self._emit_frame(frame, now)
             self._collect(hands, now)
-            if self.motion == self.STATIC or now - self.phase_at >= self.take_s:
+            if now - self.phase_at >= self.take_s:
                 if self.take < self.takes:
                     self.take += 1
                     self.phase = "COUNTDOWN"
@@ -401,10 +409,10 @@ class GestureRegistration:
             self._upload_motion(hand_count)
 
     def _upload_static(self):
-        if len(self.samples) < 30:
+        if len(self.samples) < self.MIN_STATIC_SAMPLES:
             raise ValueError("손 랜드마크가 충분히 수집되지 않았습니다")
         feats = np.asarray(self.samples, dtype=np.float32)
-        spread = float(np.linalg.norm(feats - feats.mean(axis=0), axis=1).mean())
+        spread = float(weighted_distance(feats - feats.mean(axis=0)).mean())
         if spread > self.MAX_SPREAD:
             raise ValueError("샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요")
         for label, count in self.builtin_hits.items():

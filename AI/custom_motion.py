@@ -9,7 +9,7 @@ from collections import deque
 
 import numpy as np
 
-from hands import CustomGestures
+from hands import CustomGestures, LANDMARK_WEIGHTS
 
 FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
@@ -57,7 +57,13 @@ def encode_sequence(times, points):
 
 
 def distance(a, b, count):
-    return float(np.sqrt(np.mean(np.sum((a[:, :count] - b[:, :count]) ** 2, axis=-1))))
+    """RMS 랜드마크 오차. 손끝(hands.LANDMARK_WEIGHTS)에 가중치를 둬 "구간 전체는
+    비슷한데 손끝 모양만 다른" 오인식을 줄인다. 가중치 평균이 1일 때는 기존
+    단순평균과 정확히 같은 값이 나와 MATCH_DISTANCE 등 기존 임계값을 그대로 쓴다.
+    """
+    sq = np.sum((a[:, :count] - b[:, :count]) ** 2, axis=-1)  # (FRAMES, count, 21)
+    weighted = np.average(sq, axis=-1, weights=LANDMARK_WEIGHTS)  # (FRAMES, count)
+    return float(np.sqrt(np.mean(weighted)))
 
 
 def prefix_sequence(sequence, fraction):
