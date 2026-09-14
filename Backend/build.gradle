@@ -1,0 +1,67 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.sia'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    springAiVersion = '2.0.1'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'   // DB 는 전부 JdbcTemplate — JPA 없음
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // ObjectMapper 직접 사용(runtime.json·WS 봉투 등)의 명시 의존성. Boot 4·MCP SDK 와 같은 Jackson 3 이다
+    // — 버전이 갈리면 응답 직렬화가 조용히 깨진다 (S15P21D106-197)
+    implementation 'tools.jackson.core:jackson-databind'
+
+    // MCP 서버 (LLM 도구 호출 경로)
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
+
+    // Boot 4 는 기술별 자동구성이 모듈로 분리됐다 — flyway-core 단독으로는 마이그레이션이 돌지 않는다
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    runtimeOnly 'org.xerial:sqlite-jdbc'
+
+    // Windows 제어 (User32/Kernel32)
+    implementation 'net.java.dev.jna:jna-platform:5.14.0'
+
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
+
+    // 미리보기 webm 인코딩 — ffmpeg 바이너리 번들 (+약 30MB, 배포 명세 합의 반영)
+    implementation 'ws.schild:jave-core:3.5.0'
+    runtimeOnly 'ws.schild:jave-nativebin-win64:3.5.0'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // 실 브라우저가 있어야 도는 UIA 스모크 테스트 스위치 — 기본 비활성이라 CI 는 영향받지 않는다
+    systemProperty 'sia.live.uia', System.getProperty('sia.live.uia') ?: 'false'
+    // 실제 마이크·카메라가 꽂혀 있어야 도는 장치 열거 스모크 테스트 스위치
+    systemProperty 'sia.live.devices', System.getProperty('sia.live.devices') ?: 'false'
+}
