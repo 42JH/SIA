@@ -38,7 +38,7 @@ public class SettingsService {
      * fillMissing 이 이 시드에서 채운다 (마이그레이션 없이 끝난다 · SettingsSchema 참고).
      */
     private static final String FALLBACK_SEED =
-            "{\"wakeWord\":\"시아\",\"sessionSeconds\":15,"
+            "{\"wakeWord\":\"시아야\",\"sessionSeconds\":15,"
                     + "\"autoStart\":true,\"gazeCursor\":false,\"micDevice\":null,\"cameraDevice\":null,"
                     + "\"micDeviceId\":null,\"cameraDeviceId\":null}";
 

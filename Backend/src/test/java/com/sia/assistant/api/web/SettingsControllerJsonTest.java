@@ -57,7 +57,7 @@ class SettingsControllerJsonTest {
     void getReturnsTheSettingsDocument() throws Exception {
         mvc.perform(get("/api/settings"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settings.wakeWord").value("시아"))
+                .andExpect(jsonPath("$.settings.wakeWord").value("시아야"))
                 .andExpect(jsonPath("$.settings.sessionSeconds").value(15))
                 .andExpect(jsonPath("$.settings.autoStart").value(true))
                 .andExpect(jsonPath("$.settings.gazeCursor").value(false))
@@ -71,7 +71,7 @@ class SettingsControllerJsonTest {
     @DisplayName("PUT 의 200 응답도 같은 형식이다 — FE 는 이 응답으로 저장 결과를 확인한다")
     void putReturnsTheSavedDocument() throws Exception {
         String body = """
-                {"settings": {"wakeWord": "시아", "sessionSeconds": 15, "autoStart": true,
+                {"settings": {"wakeWord": "시아야", "sessionSeconds": 15, "autoStart": true,
                  "gazeCursor": false, "micDevice": "USB Mic", "cameraDevice": "HD Webcam",
                  "micDeviceId": "{0.0.1.00000000}.{a53af75a}", "cameraDeviceId": "path",
                  "previewMirror": true}}""";

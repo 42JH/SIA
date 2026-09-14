@@ -117,7 +117,7 @@ class SettingsServiceTest {
         assertThat(newVersion).isEqualTo(4);
         // 미지의 키(a)는 그대로 저장되고, 알려진 키는 시드 값으로 채워진다 (SettingsSchema)
         verify(jdbc).update(startsWith("UPDATE app_settings SET settings_json"),
-                storedJson(s -> s.contains("\"a\":1") && s.contains("\"wakeWord\":\"시아\"")),
+                storedJson(s -> s.contains("\"a\":1") && s.contains("\"wakeWord\":\"시아야\"")),
                 eq(4), anyString());
         verify(notifier).notifySettingsChanged();
     }
