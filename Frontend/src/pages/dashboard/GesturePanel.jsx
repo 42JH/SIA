@@ -438,11 +438,11 @@ export function GestureRegistration({ onClose, onSaved }) {
   }, []);
 
   useEffect(() => subscribeGestures({
-    gesture_preview_state: (data) => {
+    cam_preview_state: (data) => {
       const ready = data.phase === 'READY';
       updateRegistration({ previewReady: ready, ...(data.message ? { error: data.message } : {}) });
     },
-    gesture_preview_frame: (data) => {
+    cam_preview_frame: (data) => {
       if (!data.jpegB64) return;
       updateRegistration({ previewFrame: `data:image/jpeg;base64,${data.jpegB64}`, previewReady: true });
     },
@@ -496,7 +496,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       updateRegistration({ stage: 'complete' });
     },
     error: (data) => {
-      if (['gesture_preview_start', 'gesture_preview_stop'].includes(data.of)) {
+      if (['cam_preview_start', 'cam_preview_stop'].includes(data.of)) {
         previewStarted.current = false;
         updateRegistration({ previewReady: false, error: data.message || '카메라 미리보기를 시작할 수 없습니다.' });
         return;

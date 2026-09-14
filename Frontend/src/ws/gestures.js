@@ -10,8 +10,8 @@ export const startGestureRegistration = (captureType) => send('reg_start', { cap
 export const finishGestureRecording = (tempId) => send('reg_stop', { tempId });
 export const assignGestureMacro = (data) => send('macro_assign', data);
 // TODO(BE): AI 카메라 대기 미리보기 시작·종료·프레임 중계 이벤트 구현 필요
-export const startGesturePreview = () => send('gesture_preview_start', {});
-export const stopGesturePreview = () => send('gesture_preview_stop', {});
+export const startGesturePreview = () => send('cam_preview_start', {});
+export const stopGesturePreview = () => send('cam_preview_stop', {});
 
 export function subscribeGestures(handlers) {
   const subscriptions = Object.entries(handlers).map(([type, handler]) => on(type, handler));
