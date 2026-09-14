@@ -250,19 +250,64 @@ def test_profile_snapshot_and_accumulated_similarity():
         assert not events(link, "voice-rejected")
 
 
-def test_measurement_failure_never_becomes_accuracy():
+def test_verification_error_blocks_but_unregistered_passes():
+    """등록된 목소리와 대조하지 못하면(예외·NaN·Inf) 통과시키지 않는다 — 유사도 없음이 오류 표시다.
+    화자를 등록하지 않은 상태는 게이트 자체가 없으므로 그대로 통과한다."""
     verifier = SpeakerVerifier.__new__(SpeakerVerifier)
     verifier._profile = PROFILE
     verifier.embed = Mock(side_effect=RuntimeError("embedding unavailable"))
-    assert verifier.verify(AUDIO) == (True, None)
+    assert verifier.verify(AUDIO) == (False, None)
+    for broken in (np.nan, np.inf, -np.inf):
+        verifier.embed = Mock(return_value=np.full(192, broken, dtype=np.float32))
+        assert verifier.verify(AUDIO) == (False, None)
+    verifier.embed = Mock(return_value=PROFILE[0])
+    ok, sim = verifier.verify(AUDIO)                             # 정상 대조는 그대로
+    assert ok and abs(sim - 1.0) < 1e-5
     verifier._profile = (None, 0.45, None, None)
-    assert verifier.verify(AUDIO) == (True, None)
+    verifier.embed = Mock(side_effect=RuntimeError("embedding unavailable"))
+    assert verifier.verify(AUDIO) == (True, None)                # 미등록 — 임베딩을 뽑지도 않는다
+
+
+def test_measurement_failure_never_becomes_accuracy():
     for replies in ([(True, None)], [(False, 0.3), (True, None)]):
         with assistant() as (brain, link, _):
             brain.speaker.verify.side_effect = replies
             utter(brain)
             assert "accuracy" not in events(link, "voice")[0]
             assert len(events(link, "command")) == 1
+
+
+def test_verification_error_blocks_utterance_and_next_one_runs():
+    """인증 오류 발화는 조각 누적·STT·LLM·실행·활성 샘플 어디로도 가지 않는다.
+    타인 거부로 기록하지 않고 안내만 보내며, 다음 정상 발화는 평소대로 처리된다."""
+    with assistant() as (brain, link, _):
+        link.rt = {"port": 1, "token": "secret"}
+        link.put_active_voice_sample = Mock(return_value=204)
+        brain._accum.offer(AUDIO, 0.3, 9.0)  # 앞서 쌓아 둔 조각이 있어도 오류를 덮어 주지 않는다
+        brain.speaker.verify.return_value = (False, None)
+        utter(brain)
+        assert brain.speaker.verify.call_count == 1  # 이어붙여 재판정하지 않는다
+        assert not events(link)                      # voice·command·voice-rejected 모두 없음
+        sent = [call.args[0]["type"] for call in link._send.call_args_list]
+        assert "voice_rejected" not in sent and "notice" in sent
+        brain.router.transcribe.assert_not_called()
+        brain._ask.assert_not_called()
+        link.put_active_voice_sample.assert_not_called()
+
+        brain.speaker.verify.return_value = (True, 0.87654)
+        utter(brain, started=11.0)
+        assert len(events(link, "command")) == 1
+        assert events(link, "voice")[0]["accuracy"] == 0.877
+
+        # 단독 불일치 뒤 재판정까지 오류로 끝나면(유사도 없음) 타인 거부가 아니라 오류 안내로 끝난다
+        before = len(link._send.call_args_list)
+        brain.speaker.verify.side_effect = [(False, 0.3), (False, None)]
+        utter(brain, started=12.0)
+        assert brain.speaker.verify.call_count == 4
+        after = [call.args[0]["type"] for call in link._send.call_args_list[before:]]
+        assert after == ["notice"]                   # voice_rejected 없음
+        assert not events(link, "voice-rejected")
+        assert len(events(link, "command")) == 1
 
 
 def test_only_long_fresh_final_rejection_emits_ws_and_rest():

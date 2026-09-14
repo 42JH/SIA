@@ -642,6 +642,7 @@ class Brain(threading.Thread):
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
         self.wake_template = wake_template  # WakeTemplateStore 또는 None (호출어 개인화 판정)
         self._wake_notified = None  # 같은 사유의 안내를 발화마다 반복하지 않으려고 마지막 사유를 들고 있는다
+        self._speaker_error_notified = False  # 화자 인증 오류 안내도 같은 이유로 한 번만 (인증에 성공하면 다시 켠다)
         self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
         self.queue = []
         self._audio_lock = threading.RLock()
@@ -871,16 +872,21 @@ class Brain(threading.Thread):
                 if profile is not None and profile[0] is not None:
                     spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
                     ok, sim = self.speaker.verify(spk_audio, profile)
-                    if not ok:
+                    if not ok and sim is not None:
                         # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
                         # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
+                        # 유사도를 아예 재지 못한 인증 오류(sim None)는 이 재판정에 넣지 않는다 — 목소리를
+                        # 확인하지 못한 발화를 조각에 업혀 통과시키면 게이트를 우회하는 길이 된다.
                         combined = accum.offer(speech_part(spk_audio), sim, t_utter)
                         if combined is not None:
                             accum_n = accum.n_joined
                             ok, accum_sim = self.speaker.verify(combined, profile)
                             if ok:
-                                sim = accum_sim  # 재판정에서 측정 실패로 통과했다면 정확도도 생략한다.
+                                sim = accum_sim  # 이어붙여 통과했으니 기록도 재판정 유사도로 남긴다.
+                            elif accum_sim is None:
+                                sim = None  # 재판정이 오류로 끝났다 — 타인이라는 근거가 아니므로 아래 오류 분기로.
                     if ok:
+                        self._speaker_error_notified = False
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                         be = self._be()
                         with self._audio_lock:
@@ -888,6 +894,18 @@ class Brain(threading.Thread):
                         if fresh and be and be.rt and sim is not None:
                             be.queue_active_voice_sample(wav_bytes(audio), profile[2:], generation,
                                                          self._active_voice_sample_is_current)
+                    elif sim is None:
+                        # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
+                        # 그래서 거부(voice_rejected)로 기록하지 않고 이번 발화만 버린다. 예외 내용은
+                        # speaker.verify 가 콘솔에 남기고, 사용자에게는 안내 문구만 보낸다.
+                        if not self._speaker_error_notified:
+                            self._speaker_error_notified = True
+                            self._say("목소리를 확인하지 못했습니다 — 다시 한 번 말씀해 주세요.")
+                        log_utterance(gate="speaker_error", accum_n=accum_n,
+                                      wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
+                                      speech_s=round(speech_s(audio), 2),
+                                      session=t_utter < self._session_until(), **audio_stats(audio))
+                        continue
                     else:
                         print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
                               + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
