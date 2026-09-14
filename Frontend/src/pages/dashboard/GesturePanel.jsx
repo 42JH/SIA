@@ -444,8 +444,12 @@ export function GestureRegistration({ onClose, onSaved }) {
 
   useEffect(() => subscribeGestures({
     cam_preview_state: (data) => {
+      if (useGestureStore.getState().registration?.stage !== 'intro') return;
       const ready = data.phase === 'READY';
-      if (ready) previewSeq.current = -1;
+      if (ready) {
+        previewStarted.current = true;
+        previewSeq.current = -1;
+      }
       if (data.phase === 'ERROR' || data.phase === 'STOPPED') {
         previewStarted.current = false;
         previewSeq.current = -1;
@@ -458,9 +462,10 @@ export function GestureRegistration({ onClose, onSaved }) {
       });
     },
     cam_preview_frame: (data) => {
-      if (!previewStarted.current || !data.jpegB64) return;
+      if (useGestureStore.getState().registration?.stage !== 'intro' || !data.jpegB64) return;
       const seq = Number(data.seq);
       if (!Number.isInteger(seq) || seq < 0 || seq <= previewSeq.current) return;
+      previewStarted.current = true;
       previewSeq.current = seq;
       updateRegistration({ previewFrame: `data:image/jpeg;base64,${data.jpegB64}`, previewReady: true });
     },
