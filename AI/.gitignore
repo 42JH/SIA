@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+models/*.npz
+models/*.pth
+custom_gestures.npz
+be_custom_gestures.npz
+.gesture_cache/
+dombridge_token.txt
+models/speaker.npz
+logs/
+eval/
+gemini_api_key.txt
