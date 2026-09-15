@@ -74,4 +74,8 @@
   --dashboard-border: #999999;
   --dashboard-radius: 8px;
   --dashboard-bar: #bdbdbd;
+  --gesture-result-width: 900px;
+  --gesture-result-single-width: 640px;
+  --gesture-result-title-size: 24px;
+  --gesture-result-icon-size: 88px;
 }
