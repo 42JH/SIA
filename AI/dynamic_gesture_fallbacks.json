@@ -1,34 +1,25 @@
 {
   "default": {
-    "Victory": {"run": "explorer", "label": "파일 탐색기 열기"},
     "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
     "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
     "Hands_Spread": {"key": "win+up", "label": "창 최대화"},
     "Hands_Close": {"key": "win+down", "label": "창 최소화"}
   },
   "youtube": {
-    "Screen_Next": {"key": "l", "label": "10초 앞으로"},
-    "Screen_Prev": {"key": "j", "label": "10초 뒤로"},
     "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
     "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
     "Volume_Up": {"key": "up", "label": "볼륨 5% 올리기"},
     "Volume_Down": {"key": "down", "label": "볼륨 5% 내리기"},
-    "ILoveYou": {"key": "f", "label": "전체화면 켜기/끄기"},
     "Hands_Spread": {"key": "f", "label": "전체화면 켜기/끄기"},
     "Hands_Close": {"key": "f", "label": "전체화면 켜기/끄기"}
   },
   "powerpoint": {
-    "Screen_Next": {"key": "right", "label": "다음 슬라이드"},
-    "Screen_Prev": {"key": "left", "label": "이전 슬라이드"},
     "Scroll_Up": {"key": "up", "label": "위로 이동"},
     "Scroll_Down": {"key": "down", "label": "아래로 이동"},
-    "ILoveYou": {"key": "f5", "label": "슬라이드쇼 시작"},
     "Hands_Spread": {"key": "f5", "label": "슬라이드쇼 시작"},
     "Hands_Close": {"key": "esc", "label": "슬라이드쇼 종료"}
   },
   "ebook": {
-    "Screen_Next": {"key": "pagedown", "label": "다음 페이지"},
-    "Screen_Prev": {"key": "pageup", "label": "이전 페이지"},
     "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
     "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"},
     "Volume_Up": {"key": ["ctrl", "+"], "label": "확대"},
@@ -37,8 +28,6 @@
     "Hands_Close": {"key": ["ctrl", "-"], "label": "축소"}
   },
   "browser": {
-    "Screen_Next": {"key": "alt+right", "label": "앞으로"},
-    "Screen_Prev": {"key": "alt+left", "label": "뒤로"},
     "Scroll_Up": {"wheel": 1, "label": "위로 스크롤"},
     "Scroll_Down": {"wheel": -1, "label": "아래로 스크롤"}
   }

@@ -87,7 +87,8 @@ AI_ENABLED_GESTURES = {
 }
 ENABLE_DYNAMIC_GESTURES = True
 
-BE_DEFAULT_GESTURES = {"Open_Palm", "Thumb_Up", "Thumb_Down", "Closed_Fist"}
+BE_DEFAULT_GESTURES = {"Open_Palm", "Thumb_Up", "Thumb_Down", "Closed_Fist",
+                       "Swipe_Left", "Swipe_Right"}
 BE_VIDEO_GESTURES = {"Open_Palm", "Victory", "Thumb_Up", "Thumb_Down"}
 BE_YOUTUBE_ONLY_GESTURES = {"Pointing_Up"}
 BUILTIN_STATIC_GESTURES = {
@@ -719,10 +720,13 @@ def main():
                     dynamic_event = None
                 elif pinch_event:
                     dynamic_event = pinch_event
-                elif motion_event == "Swipe_Right":
-                    dynamic_event = "Screen_Next"
-                elif motion_event == "Swipe_Left":
-                    dynamic_event = "Screen_Prev"
+                elif motion_event in ("Swipe_Right", "Swipe_Left"):
+                    # BE가 이제 Swipe_Left/Right를 그대로 소유한다(DefaultGestures) —
+                    # be_gesture_target에 물어보기 전에 Screen_Next/Prev로 미리 바꿔치기
+                    # 하면 BE가 절대 모르는 이름이 되어 항상 로컬 폴백으로 샌다. 원래
+                    # 이름을 그대로 두고, BE가 모를 때만(로컬 단독 모드 등) 아래에서
+                    # 컨텍스트별 로컬 매핑(mapping.get)으로 대체한다.
+                    dynamic_event = motion_event
                 elif scroll_steps > 0:
                     dynamic_event = "Scroll_Up"
                 elif scroll_steps < 0:
