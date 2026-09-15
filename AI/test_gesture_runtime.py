@@ -190,6 +190,10 @@ class GestureRuntimeTests(unittest.TestCase):
                 event, payload = link.send_event.call_args.args
                 self.assertEqual(event, 'reg_rejected')
                 self.assertEqual(payload['tempId'], 'failed-upload')
+                # 원본 예외 문구(예: "<urlopen error offline>")가 아니라 사용자가
+                # 알아볼 수 있는 안내 문구여야 한다.
+                self.assertNotIn(str(error), payload['reason'])
+                self.assertIn('네트워크', payload['reason'])
 
 
 if __name__ == '__main__':
