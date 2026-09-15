@@ -644,6 +644,10 @@ class Brain(threading.Thread):
         self._wake_notified = None  # 같은 사유의 안내를 발화마다 반복하지 않으려고 마지막 사유를 들고 있는다
         self._speaker_error_notified = False  # 화자 인증 오류 안내도 같은 이유로 한 번만 (인증에 성공하면 다시 켠다)
         self.link = link  # AgentLink 또는 None — 연결되면 실행·세션을 BE로 이관, 아니면 로컬
+        # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 —
+        # 카메라 프리뷰·제스처 실행이 등록 중 멈추는 것과 같은 이유. 등록 중 우연히
+        # 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
+        self.paused = False
         self.queue = []
         self._audio_lock = threading.RLock()
         self._audio_generation = 0
@@ -708,7 +712,7 @@ class Brain(threading.Thread):
         """t_utter = 발화 시작 시각, target_hwnd = 그 순간의 포커스 창, dom = 브라우저
         컨텍스트(크롬 확장 실측, 없으면 None). 세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
-        if self.enabled:
+        if self.enabled and not self.paused:
             with self._audio_lock:
                 t_utter = time.monotonic() if t_utter is None else t_utter
                 if t_utter < self._audio_since:
