@@ -5,6 +5,7 @@ import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
 import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
+import com.sia.assistant.relay.MicPreviewRelay;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.WsEvents;
 import java.util.Map;
@@ -29,17 +30,19 @@ public class FeWsRoutes {
     private final CalibrationOrchestrator calibration;
     private final EnrollmentRelay enrollment;
     private final CameraPreviewRelay cameraPreview;
+    private final MicPreviewRelay micPreview;
 
     public FeWsRoutes(AgentHub agentHub, RegistrationOrchestrator registration,
                       VoiceRegistrationOrchestrator voiceRegistration,
                       CalibrationOrchestrator calibration, EnrollmentRelay enrollment,
-                      CameraPreviewRelay cameraPreview) {
+                      CameraPreviewRelay cameraPreview, MicPreviewRelay micPreview) {
         this.agentHub = agentHub;
         this.registration = registration;
         this.voiceRegistration = voiceRegistration;
         this.calibration = calibration;
         this.enrollment = enrollment;
         this.cameraPreview = cameraPreview;
+        this.micPreview = micPreview;
     }
 
     @EventListener
@@ -49,6 +52,10 @@ public class FeWsRoutes {
             // ---- 촬영 전 카메라 미리보기 (등록 흐름과 독립 — 설정 화면 등에서도 쓴다)
             case "cam_preview_start" -> cameraPreview.start();
             case "cam_preview_stop" -> cameraPreview.stop();
+            // ---- 마이크 입력 레벨 미리보기 (등록 흐름과 독립 — 호출어 · 보이스 등록 화면의 파형)
+            //      카메라와 달리 등록이 시작돼도 끊지 않는다 — 말하는 동안 파형이 움직여야 하는 게 목적이다
+            case "mic_preview_start" -> micPreview.start();
+            case "mic_preview_stop" -> micPreview.stop();
             // ---- 커스텀 제스처 (3회 촬영 · motion 은 정적/동적 등록 창 · replaceGestureId 면 동작 재촬영)
             //      실제 촬영이 시작되면 미리보기는 끝이다 — 같은 카메라가 reg_frame 으로 이중 송출되지 않게
             case "reg_start" -> {

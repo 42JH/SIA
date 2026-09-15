@@ -8,6 +8,7 @@ import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
 import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
+import com.sia.assistant.relay.MicPreviewRelay;
 import com.sia.assistant.session.SessionService;
 import com.sia.assistant.ws.FeHub;
 import com.sia.assistant.ws.WsEvents;
@@ -37,12 +38,14 @@ public class AgentWsRoutes {
     private final ModelManager modelManager;
     private final AgentBootstrapper bootstrapper;
     private final CameraPreviewRelay cameraPreview;
+    private final MicPreviewRelay micPreview;
 
     public AgentWsRoutes(FeHub feHub, SessionService sessionService,
                          GestureExecutor gestureExecutor, RegistrationOrchestrator registration,
                          VoiceRegistrationOrchestrator voiceRegistration, CalibrationOrchestrator calibration,
                          EnrollmentRelay enrollment, ModelManager modelManager,
-                         AgentBootstrapper bootstrapper, CameraPreviewRelay cameraPreview) {
+                         AgentBootstrapper bootstrapper, CameraPreviewRelay cameraPreview,
+                         MicPreviewRelay micPreview) {
         this.feHub = feHub;
         this.sessionService = sessionService;
         this.gestureExecutor = gestureExecutor;
@@ -53,6 +56,7 @@ public class AgentWsRoutes {
         this.modelManager = modelManager;
         this.bootstrapper = bootstrapper;
         this.cameraPreview = cameraPreview;
+        this.micPreview = micPreview;
     }
 
     @EventListener
@@ -81,6 +85,9 @@ public class AgentWsRoutes {
             // ---- 촬영 전 카메라 미리보기 — 저장 없이 그대로 FE 로 흘린다
             case "cam_preview_state" -> cameraPreview.onState(d);
             case "cam_preview_frame" -> cameraPreview.onFrame(d);
+            // ---- 마이크 입력 레벨 미리보기 — 등록 화면의 파형. 저장 없이 그대로 FE 로 흘린다
+            case "mic_preview_state" -> micPreview.onState(d);
+            case "mic_preview_level" -> micPreview.onLevel(d);
             case "reg_started" -> registration.onRegStarted(d.path("tempId").asText());
             case "reg_take" -> registration.onTake(d.path("tempId").asText(), d);
             case "reg_frame" -> registration.onFrame(d.path("tempId").asText(),

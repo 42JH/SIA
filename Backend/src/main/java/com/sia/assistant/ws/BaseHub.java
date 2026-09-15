@@ -30,7 +30,7 @@ public abstract class BaseHub extends TextWebSocketHandler {
      * 콘솔이 잠기는 type — 이것들만 DEBUG 로 내린다. 나머지 송수신은 전부 INFO 다.
      */
     private static final Set<String> NOISY =
-            Set.of("gaze_cursor", "reg_frame", "cam_preview_frame", "ping", "pong");
+            Set.of("gaze_cursor", "reg_frame", "cam_preview_frame", "mic_preview_level", "ping", "pong");
 
     /** 원본 세션 id → 동시 전송 안전 데코레이터 */
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();

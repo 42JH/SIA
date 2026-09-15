@@ -13,6 +13,7 @@ import com.sia.assistant.registration.RegistrationOrchestrator;
 import com.sia.assistant.registration.VoiceRegistrationOrchestrator;
 import com.sia.assistant.relay.CameraPreviewRelay;
 import com.sia.assistant.relay.EnrollmentRelay;
+import com.sia.assistant.relay.MicPreviewRelay;
 import com.sia.assistant.ws.AgentHub;
 import com.sia.assistant.ws.WsEvents;
 import java.util.Map;
@@ -33,6 +34,8 @@ class FeWsRoutesTest {
     private RegistrationOrchestrator registration;
     private CalibrationOrchestrator calibration;
     private CameraPreviewRelay cameraPreview;
+    private MicPreviewRelay micPreview;
+    private VoiceRegistrationOrchestrator voiceRegistration;
     private FeWsRoutes routes;
 
     @BeforeEach
@@ -41,9 +44,10 @@ class FeWsRoutesTest {
         registration = mock(RegistrationOrchestrator.class);
         calibration = mock(CalibrationOrchestrator.class);
         cameraPreview = mock(CameraPreviewRelay.class);
-        routes = new FeWsRoutes(agentHub, registration,
-                mock(VoiceRegistrationOrchestrator.class), calibration,
-                mock(EnrollmentRelay.class), cameraPreview);
+        micPreview = mock(MicPreviewRelay.class);
+        voiceRegistration = mock(VoiceRegistrationOrchestrator.class);
+        routes = new FeWsRoutes(agentHub, registration, voiceRegistration, calibration,
+                mock(EnrollmentRelay.class), cameraPreview, micPreview);
     }
 
     @Test
@@ -64,6 +68,17 @@ class FeWsRoutesTest {
         InOrder order = inOrder(cameraPreview, calibration);
         order.verify(cameraPreview).stopFor(anyString());
         order.verify(calibration).start();
+    }
+
+    @Test
+    @DisplayName("등록이 시작돼도 마이크 미리보기는 끊지 않는다 — 말하는 동안 파형이 움직여야 한다")
+    void registrationDoesNotStopMicPreview() throws Exception {
+        routes.on(new WsEvents.FeMessage("voice_reg_start", om.readTree("{}")));
+        routes.on(new WsEvents.FeMessage("reg_start", om.readTree("{}")));
+        routes.on(new WsEvents.FeMessage("calib_start", om.readTree("{}")));
+
+        verify(voiceRegistration).start();
+        verifyNoInteractions(micPreview);
     }
 
     @Test

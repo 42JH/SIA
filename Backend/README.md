@@ -66,7 +66,7 @@ com.sia.assistant
 ├── bootstrap/     AgentBootstrapper — hello→모델 로드→recognition_start→PASSIVE (01 다이어그램)
 ├── registration/  제스처 3회 촬영·보이스 5문장·시선 보정(재측정 3회 카운트) 오케스트레이터 (03·04)
 ├── gestureexec/   BE 매크로 실행자 — 매핑 조회→enabled·컨텍스트 판별→스텝 실행 (03 실행부)
-├── relay/         온보딩 이름 불러보기(호출어 샘플) 중계 + AI 동기화 페이로드 조립(AgentSyncNotifier)
+├── relay/         온보딩 이름 불러보기(호출어 샘플) 중계 + 카메라/마이크 미리보기(수명은 BE 관리) + AI 동기화 페이로드 조립(AgentSyncNotifier)
 ├── profile/       ★보이스·시선 보정 프로필 (각 최대 4개 — 사용 1·스톡 3, 장비 맵핑, 프로필별 정확도)
 ├── model/         HuggingFace 다운로드·sha256 검증·진행률 (01) — 목록 models.json 은 아직 빈 배열
 ├── mcp/           ToolCatalog(29)·ToolGate·RefResolver·ToolInvoker + tools/
