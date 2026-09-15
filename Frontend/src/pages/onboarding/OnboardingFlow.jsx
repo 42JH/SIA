@@ -21,7 +21,7 @@ export default function OnboardingFlow() {
   const connected = useSessionStore((s) => s.wsConnected);
   const [config, setConfig] = useState(null);
   const [devices, setDevices] = useState({ mics: [], cameras: [] });
-  const name = '시아';
+  const name = '시아야';
   const [mic, setMic] = useState('');
   const [camera, setCamera] = useState('');
   const [cameraSettingsOnly, setCameraSettingsOnly] = useState(false);
