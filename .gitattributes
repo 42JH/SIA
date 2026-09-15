@@ -1,0 +1,12 @@
+# core.autocrlf=true 환경에서 이미지·영상이 줄끝 변환을 타지 않게 못 박는다.
+# git 의 이진 판정은 앞부분의 NUL 바이트를 보는 추정이라, 그 추정이 빗나가면 커밋된 파일이 깨진다.
+# 기본 제공 제스처 예시 그림(Backend/src/main/resources/seed/gestures/)이 이 경로로 들어온다.
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.gif  binary
+*.webp binary
+*.webm binary
+*.mp4  binary
+*.ico  binary
+*.npz  binary

@@ -7,6 +7,7 @@ import com.sia.assistant.config.DataDirs;
 import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.ws.AgentHub;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +17,8 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +50,10 @@ public class GestureService {
 
     /** 템플릿 npz 메타 — GET /api/agent/gestures/{id}/npz 의 ETag 재료. */
     public record NpzMeta(long id, String name, String sha256, long bytes) {
+    }
+
+    /** 미리보기 원본 — 파일명이 Content-Type 을 정하므로(RegistrationMedia) 리소스와 함께 돌려준다. */
+    public record Preview(Resource resource, String fileName) {
     }
 
     /** 매크로 단계 상한 — 와이어프레임 등록 화면 "최대 5개". */
@@ -124,7 +131,8 @@ public class GestureService {
                     g.put("enabled", rs.getInt("enabled") == 1);
                     g.put("custom", rs.getInt("custom") == 1);
                     g.put("createdAt", rs.getString("created_at"));
-                    g.put("videoUrl", rs.getString("video_path") == null ? null : "/api/gestures/" + id + "/video");
+                    g.put("videoUrl", previewUrl(id, rs.getInt("custom") == 1, rs.getString("video_path"),
+                            rs.getString("name")));
                     return g;
                 }, params.toArray());
 
@@ -181,8 +189,8 @@ public class GestureService {
                     g.put("enabled", rs.getInt("enabled") == 1);
                     g.put("custom", rs.getInt("custom") == 1);
                     g.put("createdAt", rs.getString("created_at"));
-                    g.put("videoUrl", rs.getString("video_path") == null
-                            ? null : "/api/gestures/" + rs.getLong("id") + "/video");
+                    g.put("videoUrl", previewUrl(rs.getLong("id"), rs.getInt("custom") == 1,
+                            rs.getString("video_path"), rs.getString("name")));
                     return g;
                 }, id);
         if (rows.isEmpty()) {
@@ -349,13 +357,47 @@ public class GestureService {
         jdbc.update("UPDATE gesture SET video_path = ? WHERE id = ?", fileName, id);
     }
 
-    public String videoPath(long id) {
-        List<String> rows = jdbc.query("SELECT video_path FROM gesture WHERE id = ?",
-                (rs, i) -> rs.getString(1), id);
+    /**
+     * GET /api/gestures/{id}/video 가 내려줄 원본 — 커스텀은 gestures/ 의 촬영 보관본, 기본 제공은
+     * jar 에 실린 예시 애셋(DefaultGestureImages)이다. 둘 다 없으면 null(=본문 없는 404).
+     * 없는 id 는 GESTURE_NOT_FOUND 로 끊는다 — "제스처가 없다"와 "미리보기가 없다"는 다른 상태다.
+     */
+    public Preview preview(long id) {
+        List<Preview> rows = jdbc.query("SELECT custom, name, video_path FROM gesture WHERE id = ?",
+                (rs, i) -> resolvePreview(rs.getInt("custom") == 1, rs.getString("name"),
+                        rs.getString("video_path")), id);
         if (rows.isEmpty()) {
             throw new ApiException(ErrorCode.GESTURE_NOT_FOUND, "해당 제스처가 없습니다: " + id);
         }
         return rows.get(0);
+    }
+
+    private Preview resolvePreview(boolean custom, String name, String videoPath) {
+        if (videoPath != null && !videoPath.isBlank()) {
+            // 보관본 경로는 gestures/ 안으로 가둔다 — 파일명이 DB 에서 오기 때문이다
+            Path base = dataDirs.gestures().toAbsolutePath().normalize();
+            Path target = base.resolve(videoPath).normalize();
+            if (target.startsWith(base) && Files.isRegularFile(target)) {
+                return new Preview(new FileSystemResource(target), videoPath);
+            }
+            // 보관본이 사라졌다 — 기본 제공이면 아래 예시 애셋으로 대신한다(커스텀은 자기 촬영본이라 대체가 없다)
+        }
+        if (custom) {
+            return null;
+        }
+        String seed = DefaultGestureImages.fileName(name);
+        return seed == null ? null : new Preview(DefaultGestureImages.resource(seed), seed);
+    }
+
+    /**
+     * 미리보기 URL — 사용자 촬영본이 있으면 그것, 없으면 기본 제공의 예시 애셋을 가리킨다.
+     * 경로는 둘 다 하나다(GET /api/gestures/{id}/video): FE 는 출처를 구분하지 않고 motion 으로
+     * {@code <img>} / {@code <video>} 만 고른다.
+     */
+    private static String previewUrl(long id, boolean custom, String videoPath, String name) {
+        boolean has = (videoPath != null && !videoPath.isBlank())
+                || (!custom && DefaultGestureImages.fileName(name) != null);
+        return has ? "/api/gestures/" + id + "/video" : null;
     }
 
     /**

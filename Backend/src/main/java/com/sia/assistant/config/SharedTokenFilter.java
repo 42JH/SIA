@@ -47,6 +47,21 @@ public class SharedTokenFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
+    /**
+     * ★ 비동기 디스패치에서도 돈다 (OncePerRequestFilter 기본값은 건너뛰기다).
+     *
+     * <p>MCP 도구 호출은 응답을 SSE 로 이어 가므로 요청 한 건이 최초 디스패치와 비동기 디스패치로 나뉜다.
+     * 인가(AuthorizationFilter)는 디스패치 종류를 가리지 않고 매번 판정하는데, 세션을 안 쓰므로
+     * (STATELESS) 최초 디스패치에 심은 인증은 그때 남아 있지 않다. 건너뛰면 이미 200 + text/event-stream
+     * 으로 커밋된 응답이 비동기 디스패치에서 deny-by-default 에 걸려 그대로 끊긴다 — 클라이언트에는
+     * 도구 결과 대신 EOF 가 가고, 도구를 부를 때마다 MCP 세션을 새로 여는 것으로 보인다.
+     * 토큰은 헤더로 매 디스패치마다 다시 제시되므로 여기서 다시 심는 것이 맞다.
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     private String extract(HttpServletRequest request) {
         String auth = request.getHeader("Authorization");
         if (auth != null && auth.startsWith("Bearer ")) {
