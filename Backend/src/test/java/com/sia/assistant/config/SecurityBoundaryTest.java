@@ -50,6 +50,12 @@ class SecurityBoundaryTest {
             "protocolVersion":"2024-11-05","capabilities":{},\
             "clientInfo":{"name":"probe","version":"1.0"}}}""";
 
+    private static final String INITIALIZED_BODY = """
+            {"jsonrpc":"2.0","method":"notifications/initialized"}""";
+
+    private static final String LIST_BODY = """
+            {"jsonrpc":"2.0","id":2,"method":"tools/list"}""";
+
     @LocalServerPort
     private int port;
 
@@ -91,6 +97,21 @@ class SecurityBoundaryTest {
 
         assertThat(r.statusCode()).isEqualTo(200);
         assertThat(r.headers().firstValue("mcp-session-id")).isPresent();
+    }
+
+    @Test
+    @DisplayName("① 응답을 비동기(SSE)로 이어 가는 요청도 인증이 이어진다")
+    void 비동기_디스패치도_인증된다() throws Exception {
+        String token = RuntimeTokenManager.DEFAULT_TOKEN;
+        String session = post("/mcp", token).headers().firstValue("mcp-session-id").orElseThrow();
+        post("/mcp", token, session, INITIALIZED_BODY);
+
+        // 도구 목록·도구 호출은 SSE 로 답이 나간다. 그 비동기 디스패치에서 인증이 끊기면
+        // 인가(deny-by-default)가 다시 걸려 이미 커밋된 스트림이 500 으로 끊긴다.
+        HttpResponse<String> list = post("/mcp", token, session, LIST_BODY);
+
+        assertThat(list.statusCode()).as("비동기 디스패치가 인가에 걸렸다").isEqualTo(200);
+        assertThat(list.body()).as("도구 목록이 스트림 끝까지 왔다").contains("\"id\":2");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -195,13 +216,20 @@ class SecurityBoundaryTest {
     }
 
     private HttpResponse<String> post(String rawPath, String token) throws Exception {
+        return post(rawPath, token, null, INIT_BODY);
+    }
+
+    private HttpResponse<String> post(String rawPath, String token, String session, String body) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + rawPath))
                 .timeout(Duration.ofSeconds(15))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
-                .POST(HttpRequest.BodyPublishers.ofString(INIT_BODY));
+                .POST(HttpRequest.BodyPublishers.ofString(body));
         if (token != null) {
             b.header("Authorization", "Bearer " + token);
+        }
+        if (session != null) {
+            b.header("Mcp-Session-Id", session);
         }
         return HttpClient.newHttpClient().send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
