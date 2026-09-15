@@ -668,7 +668,7 @@ function RegistrationRejected({ registration, onRetry }) {
     ? [...defaults, ...items.filter((item) => item.custom)].find((item) => item.name === registration.similarTo || displayName(item) === registration.similarTo)
     : null;
   const currentPreview = registration.previews[0];
-  return <>
+  return <section className={styles.rejectedResult}>
     <div className={styles.alertIcon}>!</div>
     <h3>{registration.error}</h3>
     <div className={`${styles.similarityGrid} ${hasSimilarGesture ? '' : styles.singlePreview}`}>
@@ -676,5 +676,5 @@ function RegistrationRejected({ registration, onRetry }) {
       {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{registration.similarTo}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
     </div>
     <button className={styles.primary} onClick={onRetry}>다시 촬영</button>
-  </>;
+  </section>;
 }
