@@ -591,6 +591,11 @@ def main():
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
             registration_active = registration_blocks_gesture_execution(registration)
+            # 카메라 프리뷰·제스처 실행이 등록 중 멈추는 것과 같은 이유로, 음성 명령도
+            # 등록 중엔 큐에 안 쌓는다 — 등록 중 우연히 호출어 비슷한 소리가 잡혀
+            # 세션이 열리고 엉뚱한 명령이 실행되는 걸 막는다. 촬영 시작 전 카메라
+            # 미리보기 단계도 같은 화면 흐름이라 같이 막는다.
+            brain.paused = registration_active or bool(gesture_preview and gesture_preview.active)
             # 양손 정적/동적 커스텀 — 시작 궤적이 일치하는 후보가 있으면(claimed)
             # 완성 전까지 내장·1손 정적 제스처 실행을 보류한다(정지한 손모양만으로는
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.

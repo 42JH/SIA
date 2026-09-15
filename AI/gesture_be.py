@@ -397,7 +397,17 @@ class GestureRegistration:
             self._validate_and_upload(hand_count)
             self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hand_count})
             print("[제스처 등록] 품질 검사 통과. 기능 지정 대기")
-        except (ValueError, OSError, RuntimeError) as exc:
+        except (OSError, TimeoutError, RuntimeError) as exc:
+            # put_gesture_npz(서버 업로드) 실패 — URLError·TimeoutError·(runtime.json
+            # 없음 등) RuntimeError는 검증 실패가 아니라 인프라 문제라 str(exc)가
+            # "<urlopen error offline>" 같은 개발자용 문구다. 사용자에게는 원인
+            # 대신 조치를 안내한다.
+            print(f"[제스처 등록] 업로드 실패: {exc}")
+            self.link.send_event("reg_rejected", {
+                "tempId": temp_id,
+                "reason": "서버에 업로드하지 못했습니다. 네트워크 연결을 확인하고 다시 시도해주세요",
+            })
+        except ValueError as exc:
             payload = {"tempId": temp_id, "reason": str(exc)}
             if isinstance(exc, GestureRegistrationRejected) and exc.similar_to:
                 payload["similarTo"] = exc.similar_to
