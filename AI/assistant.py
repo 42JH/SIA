@@ -615,7 +615,14 @@ def main():
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
                 custom_score = None
-            gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
+            if len(hands) == 2:
+                # 손 2개가 잡힌 프레임에서는 hands[0] 하나만 본 1손 판정(내장·
+                # 레거시 1손 커스텀 모두 포함)을 아예 신뢰하지 않는다 — 2손 커스텀
+                # 인식이 그 프레임에 실패해도(핸드니스 오판 등) 1손 판정이 새어
+                # 들어와 엉뚱하게 발동하는 것을 막는다.
+                gesture = stable.update(custom_pose or "None", now)
+            else:
+                gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
                 registration.tick(frame, hands, now)
             elif gesture_preview:
