@@ -16,7 +16,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hands import CustomGestures, normalize_landmarks, weighted_distance
+from hands import (CustomGestures, PalmScrollDetector, PinchVolumeDetector,
+                   SCREEN_SWIPE_CONFIG, SwipeDetector, normalize_landmarks,
+                   weighted_distance)
 from custom_motion import (
     CustomGestureStore, FRAMES, PREFIX_MIN_MOTION, distance, encode_sequence,
     ordered_landmarks, read_templates, template_bytes as encode_template_bytes,
@@ -198,13 +200,14 @@ class GestureRegistration:
     DEFAULT_TAKE_S = 2.0
     STATIC_HOLD_S = 0.4
     MIN_STATIC_SAMPLES = 8
+    MIN_STATIC_MOTION_FRAMES = 4  # 2손 정적: 회차당 평균낼 프레임이 너무 적으면 떨림이 안 지워진다
+    FRAME_MARGIN = 0.02  # 정규화 좌표가 이만큼 넘게 [0,1]을 벗어나면 화면 밖으로 본다
+    MAX_GAP_FRACTION = 0.3  # 회차 구간 대비 이 비율 넘게 손을 놓치면 거부
     STATIC = "STATIC"
     DYNAMIC = "DYNAMIC"
     FRAME_INTERVAL_S = 0.10
     BUILTIN_OVERLAP = 0.20
     MIN_PALM_SIZE = 0.055
-    MAX_SIZE_CV = 0.20
-    MAX_ANGLE_STD_DEG = 20.0
     MAX_SPREAD = 0.25
     COLLISION_DIST = 0.45
 
@@ -228,7 +231,8 @@ class GestureRegistration:
         self.seq = 0
         self.samples = []
         self.sizes = []
-        self.angles = []
+        self.sizes2 = []   # 양손일 때 두 번째 손(핸디드니스 정렬상 뒤쪽) 최소 크기 —
+                           # 한쪽만 보면 다른 손이 너무 멀리 잡혀도 못 걸러낸다.
         self.builtin_hits = {}
         self.hand_counts = []
         self.take_frames = {}
@@ -299,6 +303,11 @@ class GestureRegistration:
         dx, dy = middle[0] - wrist[0], middle[1] - wrist[1]
         return float(np.hypot(dx, dy)), float(np.arctan2(dy, dx))
 
+    @classmethod
+    def _hand_out_of_frame(cls, landmarks):
+        lm = np.asarray(landmarks)
+        return bool(np.any(lm < -cls.FRAME_MARGIN) or np.any(lm > 1 + cls.FRAME_MARGIN))
+
     @staticmethod
     def _as_hands(hands):
         if hands is None:
@@ -306,17 +315,27 @@ class GestureRegistration:
         return [hands] if isinstance(hands, dict) else list(hands)
 
     def _collect(self, hands, now):
-        """현재 프레임의 손 관측을 기록한다. 품질검사는 첫 손을 사용한다."""
+        """현재 프레임의 손 관측을 기록한다. 크기 측정은 handedness로 정렬해 같은 손을 본다.
+
+        hands는 MediaPipe가 그 프레임에 감지한 순서 그대로라 왼손/오른손이 프레임마다
+        뒤바뀔 수 있다(ordered_landmarks도 이 이유로 감지 순서를 안 믿는다). 정렬 없이
+        첫 번째 손만 보면 서로 다른 손을 오가며 측정해, 두 손 다 실제로는 안정적이어도
+        크기가 인위적으로 흔들리는 것처럼 기록된다.
+        """
         self.hand_counts.append(len(hands))
         self.take_frames.setdefault(self.take, []).append((now, hands))
         if not hands:
             return
-        lm = hands[0]["landmarks"]
+        ordered = sorted(hands, key=lambda h: h.get("handedness") or "")
+        primary = ordered[0]
+        lm = primary["landmarks"]
         self.samples.append(normalize_landmarks(lm))
-        size, angle = self._hand_quality(lm)
+        size, _ = self._hand_quality(lm)
         self.sizes.append(size)
-        self.angles.append(angle)
-        label = hands[0].get("gesture")
+        if len(ordered) > 1:
+            size2, _ = self._hand_quality(ordered[1]["landmarks"])
+            self.sizes2.append(size2)
+        label = primary.get("gesture")
         if label and label != "None":
             self.builtin_hits[label] = self.builtin_hits.get(label, 0) + 1
 
@@ -391,16 +410,28 @@ class GestureRegistration:
     def _validate_and_upload(self, hand_count):
         if not self.samples:
             raise ValueError("손이 감지되지 않았습니다. 카메라에 손을 보여주세요")
-        sizes = np.asarray(self.sizes)
-        angles = np.asarray(self.angles)
-        if sizes.min() < self.MIN_PALM_SIZE:
+        # 손 최소 크기(카메라와의 거리)는 두 번째 손도 같이 본다 — 한쪽만 보면 다른
+        # 손이 너무 멀리/작게 잡혀도 못 걸러낸다. 크기 변화(MAX_SIZE_CV)는 뺐다 —
+        # 저장 형식(normalize_landmarks·encode_sequence) 둘 다 스케일을 지우고
+        # 저장하므로, 등록 중 카메라와의 거리가 바뀌어도 최종 결과엔 영향이 없다.
+        if min(self.sizes) < self.MIN_PALM_SIZE:
             raise ValueError("손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요")
-        if sizes.std() / max(sizes.mean(), 1e-6) > self.MAX_SIZE_CV:
-            raise ValueError("등록 중 손 크기 변화가 큽니다")
-        mean = np.arctan2(np.sin(angles).mean(), np.cos(angles).mean())
-        delta = np.arctan2(np.sin(angles - mean), np.cos(angles - mean))
-        if np.degrees(delta.std()) > self.MAX_ANGLE_STD_DEG:
-            raise ValueError("등록 중 손 방향 변화가 큽니다")
+        if self.sizes2 and min(self.sizes2) < self.MIN_PALM_SIZE:
+            raise ValueError("손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요")
+        # 손이 화면 밖으로 나가면(카메라에 너무 가까이 대는 등) MediaPipe가 보이지
+        # 않는 부분의 랜드마크를 정규화 좌표 [0,1] 밖으로 추정해 내보낸다 — 크기로는
+        # 못 잡는다(화면 중앙에서 크게 잡히는 것 자체는 문제가 아니므로). 좌표
+        # 범위를 직접 보고 잘렸는지 확인한다.
+        for frames in self.take_frames.values():
+            for _, hands in frames:
+                for h in hands:
+                    if self._hand_out_of_frame(h["landmarks"]):
+                        raise ValueError("손이 화면 밖으로 벗어났습니다. 카메라에서 조금 떨어져 주세요")
+        # "손모양이 실제로 안정적이었는지"는 1손 정적은 _upload_static의 MAX_SPREAD가,
+        # 2손 정적은 _upload_motion의 회차별 spread 검사가 담당한다 — 둘 다 저장에
+        # 실제로 쓰이는 정규화된 손모양 전체를 비교하므로, 여기 손목 각도 하나만 보던
+        # 거친 사전 검사보다 정확하다(손가락 모양 변화까지 잡아내면서, 저장 시 지워지는
+        # 손목 회전만으로는 안 걸리게 한다).
         # 정적 한 손만 기존 42차원 kNN 경로를 쓴다. 양손이거나 동적이면 NPZ v2
         # 시퀀스 경로로 간다 — 두 경로는 저장 형식과 충돌검사 대상이 다르다.
         if hand_count == 1 and self.motion == self.STATIC:
@@ -435,6 +466,35 @@ class GestureRegistration:
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
 
+    # 1손 동적 등록이 겹쳐선 안 되는 내장 동적 감지기 목록 — (표시 이름, 실행 때와
+    # 같은 설정으로 새 인스턴스를 만드는 함수, 손 랜드마크에서 그 감지기가 원하는
+    # 입력을 뽑는 함수). 새 내장 동적 동작이 생기면 여기 한 줄만 추가하면 된다.
+    # 지금 기본으로 꺼져 있는 것(스크롤·핀치볼륨)도 나중에 켜질 걸 대비해 항상
+    # 켠 채로 재생한다 — 등록 시점에만 걸러지고 실제 라이브 동작에는 영향 없다.
+    BUILTIN_DYNAMIC_DETECTORS = (
+        ("스와이프", lambda: SwipeDetector(**SCREEN_SWIPE_CONFIG), lambda lm: tuple(lm[9])),
+        ("스크롤", lambda: PalmScrollDetector(enabled=True), lambda lm: tuple(lm[9])),
+        ("핀치 볼륨 조절", lambda: PinchVolumeDetector(enabled=True), lambda lm: lm),
+    )
+
+    def _builtin_dynamic_collision(self):
+        """1손 동적 등록이 내장 동적 감지기와 겹치는지, 실제 감지기로 그대로 재생해 확인한다.
+
+        실행 때와 같은 감지기·같은 설정을 써서 "이 촬영이 실제로 라이브였다면
+        내장 동작이 발동했을까"를 그대로 재현한다 — 근사치 규칙을 따로 만드는
+        것보다 실제 판정 로직과 항상 일치하고, 목록에 등록만 해두면 다른 내장
+        동적 감지기도 자동으로 같이 확인된다. 겹치면 이름을, 안 겹치면 None을
+        돌려준다.
+        """
+        for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
+            for take in range(1, self.takes + 1):
+                detector = make_detector()
+                for t, hands in self.take_frames.get(take, []):
+                    probe = extract(hands[0]["landmarks"]) if hands else None
+                    if detector.update(probe, t):
+                        return name
+        return None
+
     def _upload_motion(self, hand_count):
         """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다.
 
@@ -451,15 +511,53 @@ class GestureRegistration:
             frames = [(t, pts) for t, pts in frames if pts is not None]
             if len(frames) < 2:
                 raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+            # 2손 정적은 모은 프레임을 평균내 떨림을 지우는 방식이라(아래), 딱 2장으론
+            # 평균의 의미가 없다 — encode_sequence가 요구하는 수학적 최소(2)와는 별개로,
+            # 노이즈를 실제로 줄이려면 이만큼은 있어야 한다.
+            if self.motion == self.STATIC and len(frames) < self.MIN_STATIC_MOTION_FRAMES:
+                raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+            # ordered_landmarks는 프레임별로 유효하면 통과시키므로(1손·2손 각각
+            # 정상 모양), 회차 중간에 손 개수가 바뀌어도(가려짐 등) 여기까진
+            # 안 걸러진다 — 그대로 두면 다음 encode_sequence가 raw numpy 오류로
+            # 죽어 사용자에게 알아볼 수 없는 문구가 그대로 노출된다.
+            if len({pts.shape[0] for _, pts in frames}) > 1:
+                raise ValueError(f"{take}회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요")
+            # 중간을 오래 놓치면 encode_sequence가 그 구간을 직선으로 채워
+            # 실제로 없었던 움직임을 있었던 것처럼 만들어낸다 — 앞뒤 몇 프레임만
+            # 살아남아도 조용히 통과하므로 최대 공백을 명시적으로 거부한다.
+            gaps = [b - a for (a, _), (b, _) in zip(frames, frames[1:])]
+            if gaps and max(gaps) > self.take_s * self.MAX_GAP_FRACTION:
+                raise ValueError(f"{take}회차 촬영 중 손을 오래 놓쳤습니다. 손을 계속 화면에 보여주세요")
             if self.motion == self.STATIC:
                 avg_pts = np.mean([pts for _, pts in frames], axis=0)
                 seq = encode_sequence([0, 1], [avg_pts, avg_pts])
+                # 손목 각도 하나가 아니라 정규화된 손모양 전체가 평균 자세에서 얼마나
+                # 벗어났는지를 본다 — 1손 정적의 MAX_SPREAD와 같은 기준·같은 개념.
+                # 손 전체가 살짝 돌아간 것(저장 시 지워짐)은 안 걸리고, 손가락이
+                # 실제로 흔들린 경우만 잡힌다.
+                spread = max(
+                    distance(encode_sequence([0, 1], [pts, pts]), seq, hand_count)
+                    for _, pts in frames
+                )
+                if spread > self.MAX_SPREAD:
+                    raise ValueError(f"{take}회차 촬영 중 손모양이 흔들렸습니다. 자세를 고정해 다시 촬영하세요")
             else:
                 seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
                 movement = distance(seq, np.repeat(seq[:1], FRAMES, axis=0), hand_count)
                 if movement < PREFIX_MIN_MOTION:
                     raise ValueError(f"{take}회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요")
             sequences.append(seq)
+        # 내장 동적 감지기(스와이프 등)는 NPZ 템플릿이 아니라 별도 상태기계라
+        # nearest_sequence 충돌검사 대상에 없다. 그대로 두면 내장 동작과 똑같이
+        # 움직이는 동작을 커스텀으로 등록해도 경고 없이 통과하는데, 실행 시에는
+        # 커스텀 동작 추적이 우선순위를 가져가(앞서 고친 우선순위 가드) 내장 동작이
+        # 조용히 가려져 버린다 — 등록 시점에 미리 알려주는 게 낫다.
+        if hand_count == 1 and self.motion == self.DYNAMIC:
+            collided = self._builtin_dynamic_collision()
+            if collided:
+                raise GestureRegistrationRejected(
+                    f"내장 {collided} 동작과 너무 비슷합니다", similar_to=collided
+                )
         dist, near = min(
             (self.custom_store.nearest_sequence(seq, self.motion, hand_count) for seq in sequences),
             key=lambda item: item[0],
