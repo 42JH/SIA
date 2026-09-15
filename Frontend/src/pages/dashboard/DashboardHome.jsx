@@ -41,7 +41,7 @@ export default function DashboardHome() {
       useGestureStore.getState().closeRegistration();
       return;
     }
-    if (view !== 'home') navigate(-1);
+    if (view !== 'home') open('home');
   };
   return <main className={styles.page}><header className={styles.header}><button className={styles.back} onClick={back} aria-label="뒤로">{view === 'home' ? '' : '‹'}</button><h1>{title}</h1><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴">☰</button></header>
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}><button onClick={() => open('gestures')}>제스처<span>›</span></button><button onClick={() => open('voice')}>보이스<span>›</span></button><button onClick={() => open('gaze')}>시선<span>›</span></button><button onClick={() => open('settings')}>설정<span>›</span></button></nav></>}
