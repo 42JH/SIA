@@ -24,8 +24,12 @@ public final class RegistrationMedia {
 
     private static final MediaType WEBM_TYPE = MediaType.parseMediaType("video/webm");
 
-    /** 이 motion 으로 찍은 촬영본의 확장자. motion 이 없으면(옛 등록) 동적으로 본다. */
-    static String extensionFor(String motion) {
+    /**
+     * 이 motion 으로 찍은 촬영본의 확장자. motion 이 없으면(옛 등록) 동적으로 본다.
+     * 기본 제공 제스처의 예시 애셋(DefaultGestureImages)도 같은 규칙으로 이름을 짓는다 — 확장자를
+     * 아는 자리를 여기 하나로 두려고 공개했다.
+     */
+    public static String extensionFor(String motion) {
         return isStatic(motion) ? JPG : WEBM;
     }
 

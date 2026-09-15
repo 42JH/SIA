@@ -217,6 +217,29 @@ class GestureServiceTest {
     }
 
     @Test
+    @DisplayName("기본 제공 제스처의 미리보기는 jar 의 예시 애셋이다 — 촬영본 없는 커스텀은 그대로 빈칸")
+    void builtinPreviewComesFromClasspath() {
+        long builtin = jdbc.queryForObject("SELECT id FROM gesture WHERE name = 'Open_Palm'", Long.class);
+        long custom = save("손가락 하트", NPZ_A);
+
+        assertThat(service.getOne(builtin))
+                .containsEntry("videoUrl", "/api/gestures/" + builtin + "/video");
+        assertThat(service.list(null, null, null, null, false, 0, 20).items())
+                .filteredOn(g -> g.get("id").equals(builtin))
+                .allSatisfy(g -> assertThat(g.get("videoUrl")).isNotNull());
+        GestureService.Preview preview = service.preview(builtin);
+        assertThat(preview).isNotNull();
+        assertThat(preview.fileName()).isEqualTo("Open_Palm.jpg");
+        assertThat(preview.resource().exists()).isTrue();
+
+        // 커스텀은 등록 때 찍은 자기 촬영본만 미리보기다 — 대신 내줄 예시 애셋이 없다
+        assertThat(service.getOne(custom)).containsEntry("videoUrl", null);
+        assertThat(service.preview(custom)).isNull();
+        assertThatThrownBy(() -> service.preview(9999L))
+                .isInstanceOf(ApiException.class).hasMessageContaining("제스처가 없습니다");
+    }
+
+    @Test
     @DisplayName("hands·motion 은 1·2 와 STATIC·DYNAMIC 만 받는다 — SQLite CHECK 를 못 걸어 서비스가 문지기다")
     void shapeValuesAreValidated() {
         assertThatThrownBy(() -> save("셋손", NPZ_A, 3, "STATIC"))

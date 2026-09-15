@@ -3,16 +3,12 @@ package com.sia.assistant.api.web;
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
 import com.sia.assistant.common.JsonBody;
-import com.sia.assistant.config.DataDirs;
 import com.sia.assistant.registration.RegistrationMedia;
 import com.sia.assistant.settings.GestureService;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -41,12 +37,10 @@ import tools.jackson.databind.ObjectMapper;
 public class GestureMappingController {
 
     private final GestureService gestureService;
-    private final DataDirs dataDirs;
     private final ObjectMapper om;
 
-    public GestureMappingController(GestureService gestureService, DataDirs dataDirs, ObjectMapper om) {
+    public GestureMappingController(GestureService gestureService, ObjectMapper om) {
         this.gestureService = gestureService;
-        this.dataDirs = dataDirs;
         this.om = om;
     }
 
@@ -74,24 +68,20 @@ public class GestureMappingController {
     }
 
     /**
-     * 등록 때 촬영한 영상(동적, webm) 또는 사진(정적, jpg) — 목록·상세의 미리보기.
-     * 경로는 motion 과 무관하게 하나다. Content-Type 은 보관본의 확장자가 정한다.
-     * ★ 사용자 카메라 영상·사진, PC 밖 반출 금지.
+     * 목록·상세의 미리보기 — 커스텀은 등록 때 촬영한 영상(동적, webm)·사진(정적, jpg)이고,
+     * 기본 제공 제스처는 촬영 단계가 없어 jar 에 실린 예시 애셋(DefaultGestureImages)이다.
+     * 경로는 motion 과 무관하게 하나이고 Content-Type 은 원본의 확장자가 정한다.
+     * ★ 커스텀 쪽은 사용자 카메라 영상·사진이다 — PC 밖 반출 금지.
      */
     @GetMapping("/{id}/video")
     public ResponseEntity<Resource> video(@PathVariable long id) {
-        String fileName = gestureService.videoPath(id);
-        if (fileName == null || fileName.isBlank()) {
-            return ResponseEntity.notFound().build();
-        }
-        Path base = dataDirs.gestures().toAbsolutePath().normalize();
-        Path target = base.resolve(fileName).normalize();
-        if (!target.startsWith(base) || !Files.isRegularFile(target)) {
+        GestureService.Preview preview = gestureService.preview(id);
+        if (preview == null) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok()
-                .contentType(RegistrationMedia.contentTypeOf(fileName))
-                .body(new FileSystemResource(target));
+                .contentType(RegistrationMedia.contentTypeOf(preview.fileName()))
+                .body(preview.resource());
     }
 
     /** 템플릿 npz 백업 다운로드 — 프로필 백업(GET /api/voices/{id}/npz)과 같은 역할. 기본 제공 제스처는 404. */
