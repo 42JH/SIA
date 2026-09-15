@@ -1,5 +1,6 @@
 package com.sia.assistant.api.web;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -29,7 +30,7 @@ import tools.jackson.databind.ObjectMapper;
  * 나가고 Content-Type 은 그 파일의 확장자가 정한다. 서비스 단위 테스트는 파일명까지만 보므로
  * 클래스패스 리소스가 본문으로 제대로 나가는 층은 여기서만 지켜진다.
  *
- * <p>애셋은 테스트 리소스의 Open_Palm.jpg 다 (DefaultGestureImagesTest 참고).
+ * <p>배포에 실린 실물 애셋(seed/gestures/Open_Palm.jpg)을 그대로 내보낸다.
  */
 class GesturePreviewControllerTest {
 
@@ -56,10 +57,14 @@ class GesturePreviewControllerTest {
     @Test
     @DisplayName("기본 제공 제스처는 배포에 실린 예시 그림이 image/jpeg 로 나간다")
     void builtinServesSeedImage() throws Exception {
-        mvc.perform(get("/api/gestures/" + builtinId + "/video"))
+        byte[] body = mvc.perform(get("/api/gestures/" + builtinId + "/video"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.IMAGE_JPEG))
-                .andExpect(content().bytes(new byte[] {(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xd9}));
+                .andReturn().getResponse().getContentAsByteArray();
+
+        // 본문이 진짜 그 파일인지 — 길이와 JPEG 매직으로 본다 (빈 응답·엉뚱한 리소스를 가른다)
+        assertThat(body).hasSizeGreaterThan(1000)
+                .startsWith((byte) 0xff, (byte) 0xd8, (byte) 0xff);
     }
 
     @Test
