@@ -928,6 +928,7 @@ class Brain(threading.Thread):
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
                 result, stt_draft, tier = None, None, 2
                 if not (self._pending and t_utter < self._pending[2]):
+                    self._last_stt_s = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연(utterances.jsonl stt_s/llm_s)
                     r1 = self._try_router(audio, t_utter)
                     if isinstance(r1, dict):
                         result, tier = r1, 1
@@ -940,6 +941,9 @@ class Brain(threading.Thread):
                     dom = dom or be_dom_text(self._be())
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
+                              stt_s=getattr(self, "_last_stt_s", None), stt_lp=getattr(self, "_last_stt_lp", None),
+                              llm_s=getattr(self, "_last_llm_s", None),
+                              llm_tries=getattr(self, "_last_llm_tries", None),  # 지연 분해: 6~15초가 STT·LLM·키회전 중 어디서 나는지
                               wake_why=wake_why,  # 세션 개시 판정 경로 (in_session / ok / content_only)
                               wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
                               seg_t0=seg_t0, seg_t1=seg_t1,  # 개인화 판정에 쓴 호출어 구간
@@ -994,7 +998,9 @@ class Brain(threading.Thread):
                 return None
         try:
             text, sec = self.router.transcribe(audio)
-            hit = self.router.route(text, t_utter < self._session_until())
+            hit = self.router.route(text, True)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
+            self._last_stt_s = round(sec, 2)
+            self._last_stt_lp = self.router.last_logprob
             print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
             return hit or (text or None)
         except Exception as e:
@@ -1044,6 +1050,7 @@ class Brain(threading.Thread):
                 raise
         text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
         result = json.loads(text)
+        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), attempt + 1  # 키 회전 횟수 포함
         print(f"[{time.monotonic() - t0:.1f}s] {result.get('transcript', '')!r} → "
               f"{result.get('action')} (명령={result.get('is_command')})")
         return result
