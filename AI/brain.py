@@ -37,6 +37,10 @@ WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v1.onnx)이 학�
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
+# BE scroll.step 의 휠 노치 수(1~10). 로컬 PageDown 한 번(≈한 화면)에 맞춘 값 —
+# 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
+SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
+HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
 WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
@@ -81,14 +85,10 @@ SPEAKER_ACCUM_MIN_SPEECH_S = 0.3  # NOTE(튜닝): 말소리가 이보다 짧은 
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
         "explorer": "explorer", "paint": "mspaint"}
 
-# 미디어 제어: 유튜브가 활성 창이면 유튜브 단축키, 아니면 OS 전역 미디어 키
-YOUTUBE_KEYS = {"playpause": "k", "mute": "m", "forward": "l", "back": "j",
-                "next": ["shift", "n"], "prev": ["shift", "p"], "volup": "up", "voldown": "down"}
-GLOBAL_MEDIA_KEYS = {"playpause": "playpause", "mute": "volumemute",
-                     "next": "nexttrack", "prev": "prevtrack",
-                     "volup": "volumeup", "voldown": "volumedown"}
-# media_key → BE MCP 도구(+인자). BE 연결 시 이 표에 있는 키만 이관하고,
-# forward/back(유튜브 10초 이동)은 카탈로그에 없어 로컬 단축키로 남는다.
+# media_key → BE MCP 도구(+인자). BE 연결 시 이 표에 있는 키만 이관한다.
+# forward/back(10초 앞·뒤)만 로컬로 남는 이유: 윈도우 전역 미디어 키에 탐색이 없어
+# (VK_MEDIA_* 는 재생/다음/이전/음소거뿐) BE 도 쏠 수단이 없다 — 유튜브 단축키 l/j 뿐이다.
+# BE 에 media.seek 이 생기면 이 두 개도 이관한다 (S15P21D106-295).
 MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggle", None),
              "next": ("media.next", None), "prev": ("media.prev", None),
              "volup": ("volume.step", {"dir": "up"}), "voldown": ("volume.step", {"dir": "down"})}
@@ -206,59 +206,11 @@ def active_window_title():
     return window_title_of(foreground_hwnd())
 
 
-def show_window(hwnd, op):
-    """대상 창 직접 제어 — 포커스와 무관. op: 'maximize'|'minimize'"""
-    sw = {"maximize": 3, "minimize": 6}[op]  # SW_MAXIMIZE / SW_MINIMIZE
-    ctypes.windll.user32.ShowWindow(hwnd, sw)
+def pick_files_by_name(query, paths):
+    """말한/응시한 파일명(query)을 후보 경로와 매칭 — 정확일치 우선, 없으면 부분일치.
 
-
-def close_window(hwnd):
-    """WM_CLOSE를 대상 창에 직접 전송 — alt+f4와 달리 포커스가 어디 있든 그 창만 닫힌다."""
-    ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)
-
-
-def focus_window(hwnd):
-    try:
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
-        time.sleep(0.05)
-    except Exception:
-        pass
-
-
-def _explorer_windows(shell):
-    """(창, 포그라운드여부) 순회. 포그라운드 탐색기를 앞에 두고 정렬."""
-    fg = foreground_hwnd()
-    wins = list(shell.Windows())
-    wins.sort(key=lambda w: 0 if int(getattr(w, "HWND", 0)) == fg else 1)
-    return wins
-
-
-def explorer_selection():
-    """포그라운드(또는 열린) 파일 탐색기에서 선택된 파일 경로 목록. 없으면 []."""
-    try:
-        import pythoncom
-        import win32com.client
-
-        pythoncom.CoInitialize()
-        shell = win32com.client.Dispatch("Shell.Application")
-        for w in _explorer_windows(shell):
-            try:
-                items = [it.Path for it in w.Document.SelectedItems()]
-            except Exception:
-                continue
-            if items:
-                return items
-        return []
-    except Exception:
-        return []
-
-
-def resolve_files_by_name(query):
-    """말한/응시한 파일명(query)을 열린 탐색기 폴더의 실제 경로로 해석.
-
-    시선·음성 어느 쪽이든 Gemini가 파일명 문자열로 넘겨주면, 현재 탐색기가 보여주는
-    폴더의 항목들과 매칭한다. 정확일치 → 부분일치 순. 여러 폴더가 열려 있으면
-    포그라운드 우선. 매칭 실패 시 [].
+    목록(사실)은 BE explorer.items 가 주고, 어느 것이 그 파일인지 고르는 판정만 여기서 한다.
+    확장자 숨김 설정 때문에 표시명 대신 경로의 파일명으로 비교한다. 실패 시 [].
     """
     q = (query or "").strip().lower()
     if not q:
@@ -266,7 +218,6 @@ def resolve_files_by_name(query):
     qstem = q.rsplit(".", 1)[0]  # 확장자 떼고도 비교 (탐색기가 확장자 숨김 가능)
 
     def match(name):
-        # 실제 파일명은 확장자가 있고(경로 기준), 탐색기 표시명은 없을 수 있다.
         # 어간이 2글자 미만(예: 점파일 '.venv'의 어간 '')이면 부분일치에서 제외 —
         # 빈 문자열은 아무 이름에나 걸려 오탐을 낸다.
         n = name.lower()
@@ -277,29 +228,13 @@ def resolve_files_by_name(query):
             return qstem == nstem or qstem in nstem or nstem in qstem
         return False
 
-    try:
-        import pythoncom
-        import win32com.client
-
-        pythoncom.CoInitialize()
-        shell = win32com.client.Dispatch("Shell.Application")
-        for w in _explorer_windows(shell):
-            try:
-                # it.Name은 확장자 숨김 설정에 영향받으므로 실제 경로의 파일명으로 매칭
-                items = [Path(it.Path).name for it in w.Document.Folder.Items()], \
-                        [it.Path for it in w.Document.Folder.Items()]
-                names, paths = items
-            except Exception:
-                continue
-            hits = [p for n, p in zip(names, paths) if match(n)]
-            if hits:
-                # 정확일치가 있으면 그것만 (부분일치 여러 개보다 우선)
-                exact = [p for n, p in zip(names, paths)
-                         if n.lower() == q or n.lower().rsplit(".", 1)[0] == qstem]
-                return exact or hits
+    names = [Path(p).name for p in paths]
+    hits = [p for n, p in zip(names, paths) if match(n)]
+    if not hits:
         return []
-    except Exception:
-        return []
+    exact = [p for n, p in zip(names, paths)
+             if n.lower() == q or n.lower().rsplit(".", 1)[0] == qstem]
+    return exact or hits
 
 
 def is_youtube(title):
@@ -607,6 +542,20 @@ def wav_bytes(audio_i16, sr=16000):
     return buf.getvalue()
 
 
+def virtual_screen_offset(size):
+    """스크린샷 픽셀 좌표 → 가상 스크린 물리 픽셀 오프셋 (dx, dy). 스크린샷이 가상 스크린 전체를
+    담고 있을 때만 값을 주고, 아니면 None — 좌표를 보장 못 하면 BE 로 넘기지 않는다.
+
+    BE 는 가상 스크린 물리 픽셀로 BitBlt 한다(GdiScreenGrabber, PER_MONITOR_AWARE_V2).
+    단일 모니터(원점 0,0)면 오프셋 0 이라 그대로 맞고, 왼쪽·위에 모니터가 붙으면 원점이 음수라
+    그만큼 더해야 한다. pyautogui 스크린샷이 주 모니터만 담는 구성에선 크기가 달라 None 이 된다.
+    """
+    u = ctypes.windll.user32
+    vx, vy = u.GetSystemMetrics(76), u.GetSystemMetrics(77)   # SM_X/YVIRTUALSCREEN
+    vw, vh = u.GetSystemMetrics(78), u.GetSystemMetrics(79)   # SM_CX/CYVIRTUALSCREEN
+    return (vx, vy) if (vw, vh) == tuple(size) else None
+
+
 def bbox_to_box(size, bbox, pad=0.02):
     """LLM이 준 0~1000 정규화 bbox → 원본 픽셀 사각형 (좌상단x, 좌상단y,
     우하단x, 우하단y). BE에 영역을 넘길 때도 이 좌표를 쓴다.
@@ -642,6 +591,7 @@ class Brain(threading.Thread):
     # [지연] 출력·log_utterance·submit 이 AttributeError 없이 읽는다.
     _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
     _router_fails = 0
+    _last_be_payload = None  # 마지막 _be_ok 성공 payload
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
@@ -703,20 +653,77 @@ class Brain(threading.Thread):
         be = self._be()
         return be.session_until_mono if be else self.session_until
 
-    def _try_be(self, tool, args, ok_say):
-        """BE MCP 도구 시도 → 실제로 실행됐으면(ok True) 토스트 후 True.
+    def _be_ok(self, tool, args=None):
+        """BE MCP 도구 호출 → 실행됐으면 True, 결과는 _last_be_payload. 토스트 없음(중간 단계용).
         BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
         be = self._be()
+        self._last_be_payload = None
         if not be:
             return False
         ok, payload = be.call(tool, args or {})
         if ok is True:
-            msg = payload.get("message") if isinstance(payload, dict) else ""
-            self._say(ok_say or msg or "완료")
+            self._last_be_payload = payload
             return True
         if ok is False and isinstance(payload, dict):
             print(f"[BE {tool} → 로컬 폴백] {payload.get('code')}: {payload.get('message')}")
         return False
+
+    def _win_ref(self, hwnd):
+        """발화 시점 창(hwnd) → BE winRef("win:N"). BE 는 hwnd 를 내주지 않고 win:N 은 스냅샷
+        인덱스라(RefResolver) 제목으로 맞춘다. context.get 이 호출 시점에 스냅샷을 새로 뜨므로
+        바로 뒤따르는 window.* 호출에서 그 ref 가 유효하다.
+
+        같은 제목 창이 여럿이면 포그라운드와 일치할 때만 인정하고, 아니면 None → 로컬 폴백.
+        엉뚱한 창을 최대화·닫는 것보다 로컬로 그 hwnd 를 직접 건드리는 편이 안전하다.
+        """
+        if not hwnd or not self._be():
+            return None
+        title = window_title_of(hwnd)
+        if not title or title == HUD_TITLE:  # 우리 HUD 창은 BE 목록에도 뜬다 — 대상으로 삼지 않는다
+            return None
+        if not self._be_ok("context.get"):
+            return None
+        ctx = self._last_be_payload
+        if not isinstance(ctx, dict):
+            return None
+        hits = [w.get("ref") for w in (ctx.get("windows") or []) if w.get("title") == title]
+        if len(hits) == 1:
+            return hits[0]
+        # 동명 창이 여럿 — '포그라운드 제목이 같다'가 아니라 '내 hwnd 가 포그라운드다' 여야 한다.
+        # 제목만 보면 뒤에 있는 같은 이름의 창을 최대화·닫는 사고가 난다.
+        fg = ctx.get("foreground") or {}
+        if hits and fg.get("title") == title and foreground_hwnd() == hwnd:
+            return fg.get("ref")
+        print(f"[BE 창 참조 실패] 제목 {title!r} 후보 {len(hits)}개 — 대상을 특정하지 못했다")
+        return None
+
+    def _be_down(self, what):
+        """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다."""
+        self._say(f"{what} — 백엔드에 연결되지 않아 실행하지 못했습니다")
+        return None
+
+    def _explorer_items(self):
+        """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
+        BE 가 못 주면 빈 목록이다. 로컬 win32com 으로 셸을 직접 읽지 않는다."""
+        if not self._be_ok("explorer.items"):
+            return []
+        data = self._last_be_payload
+        return (data.get("items") or []) if isinstance(data, dict) else []
+
+    def _explorer_selection(self):
+        """탐색기에서 선택된 파일 경로. BE 가 항목마다 selected 를 붙여 준다."""
+        return [it.get("path") for it in self._explorer_items()
+                if it.get("selected") and it.get("path")]
+
+    def _try_be(self, tool, args, ok_say):
+        """BE MCP 도구 시도 → 실제로 실행됐으면(ok True) 토스트 후 True.
+        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
+        if not self._be_ok(tool, args):
+            return False
+        payload = self._last_be_payload
+        msg = payload.get("message") if isinstance(payload, dict) else ""
+        self._say(ok_say or msg or "완료")
+        return True
 
     def session_left(self):
         return max(0.0, self._session_until() - time.monotonic())
@@ -1192,27 +1199,17 @@ class Brain(threading.Thread):
                 completed = (started + max(0.0, t_utter - self._pending[5]), fields)
                 self._pending = None
                 if kind == "window_close":
-                    close_window(target)  # 확인 요청 당시의 그 창만 닫힌다 (포커스 무관)
-                    self._say("창을 닫았습니다")
-                    return completed
+                    # 확인은 AI 가 이미 받았다 — BE 는 재확인 없이 닫는다(API명세 §3.8).
+                    ref = self._win_ref(target)
+                    if ref and self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다"):
+                        return completed
+                    return self._be_down("창 닫기")
                 elif kind == "delete_file":
-                    # BE 연결 시 files.delete(휴지통 이동)로 이관 — 확인은 AI 가 이미 받았고
-                    # BE 는 재확인 없이 실행(§1). 실패·미연결이면 로컬 send2trash 폴백.
+                    # 확인은 AI 가 이미 받았고 BE 는 재확인 없이 실행한다(§1).
                     if self._try_be("files.delete", {"paths": list(target)},
                                     f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
                         return completed
-                    import send2trash
-
-                    ok = 0
-                    for p in target:
-                        try:
-                            send2trash.send2trash(p)  # 완전삭제 아님 — 휴지통 (복구 가능)
-                            ok += 1
-                        except Exception as e:
-                            print(f"[삭제 실패] {p}: {e}")
-                    self._say(f"{ok}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
-                    if ok == len(target):
-                        return completed
+                    return self._be_down("파일 삭제")
             else:
                 self._say("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
@@ -1227,28 +1224,22 @@ class Brain(threading.Thread):
                 return
             # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
             elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
-                subprocess.Popen(["cmd", "/c", "start", "", app])
-                self._say(say or f"{app} 실행")
+                return self._be_down(f"{app} 실행")
             return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
-            # BE 가 막았거나(세션 전) 미접속이면 ok False/None → 기존 로컬 경로로 폴백(open_app 과 같은 패턴).
             if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
-                opened = webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(q))
-                if not opened:
-                    self._say("검색을 열지 못했습니다")
-                    return
-                self._say(say or f"'{q}' 검색")
+                return self._be_down(f"'{q}' 검색")
             if q:
                 return completed
         elif action == "find_file":
             q = (result.get("query") or "").strip()
-            if q:  # Windows 검색 인덱스 사용 — cmd dir /s보다 수십 배 빠름
-                os.startfile(f"search-ms:query={urllib.parse.quote(q)}"
-                             f"&crumb=location:{urllib.parse.quote(str(Path.home()))}")
-                self._say(say or f"'{q}' 파일 검색")
-                return completed
+            if q:
+                # BE 카탈로그(30개)에 파일 검색 도구가 없다 — 로컬 os.startfile(search-ms)로 대신하지
+                # 않는다. 동작은 BE 몫이라 도구가 생기기 전까지는 못 한다고 말한다(-295).
+                self._say(f"'{q}' 파일 검색 — 백엔드에 파일 검색 도구가 아직 없습니다")
+                return None
         elif action == "window":
             # 대상 = 발화 순간의 포커스 창(hwnd). 실행 시점 포커스를 쓰면 API 지연
             # 몇 초 사이에 다른 창(우리 HUD, 방금 연 탐색기)이 당한다.
@@ -1263,17 +1254,33 @@ class Brain(threading.Thread):
                 self._say(q + ' — "응, 닫아" / "취소"로 답하세요', "confirm", CONFIRM_TIMEOUT_S,
                           timeoutSec=int(CONFIRM_TIMEOUT_S))
             elif op in ("maximize", "minimize"):
-                show_window(hwnd, op)
-                self._say(say or ("창 최대화" if op == "maximize" else "창 최소화"))
-                return completed
+                msg = say or ("창 최대화" if op == "maximize" else "창 최소화")
+                ref = self._win_ref(hwnd)
+                if ref and self._try_be(f"window.{op}", {"winRef": ref}, msg):
+                    return completed
+                return self._be_down(msg)
             elif op in ("scroll_down", "scroll_up"):
-                focus_window(hwnd)  # 키 스크롤은 포커스가 필요 — 말하던 그 창으로 되돌린 뒤
-                press_keys("pagedown" if op == "scroll_down" else "pageup")
-                return completed
+                direction = "down" if op == "scroll_down" else "up"
+                ref = self._win_ref(hwnd)
+                # scroll.step 의 대상은 '포커스된 창'이라 말하던 그 창을 BE 로 먼저 잡는다 —
+                # 발화 뒤 사용자가 창을 옮겨도 의도한 창이 스크롤되게(로컬 경로와 같은 보장).
+                if ref:
+                    self._be_ok("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
+                # NOTE(한계): scroll.step 은 좌표 없는 휠 한 발이라(SendInputService.fillWheel)
+                # 실제 대상은 '커서 아래 창'이다 — window.focus 로도 보장되지 않는다.
+                # scroll.step 에 winRef 가 생겨야 '발화 시점 창' 보장이 돌아온다(-295).
+                if self._be_ok("scroll.step", {"dir": direction, "amount": SCROLL_AMOUNT}):
+                    if say:
+                        self._say(say)
+                    return completed
+                return self._be_down("스크롤")
         elif action == "delete_file":
             # 대상 결정: ① 말했거나 응시한 파일명(query) → 폴더에서 해석,
             # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
-            sel = resolve_files_by_name(result.get("query")) or explorer_selection()
+            items = self._explorer_items()  # BE 한 번으로 이름 해석·선택 둘 다 처리
+            paths = [it.get("path") for it in items if it.get("path")]
+            sel = pick_files_by_name(result.get("query"), paths) or [
+                it.get("path") for it in items if it.get("selected") and it.get("path")]
             if not sel:
                 self._say("삭제할 파일을 못 찾았습니다 — 이름을 다시 말하거나 탐색기에서 선택하세요")
             else:
@@ -1293,15 +1300,11 @@ class Brain(threading.Thread):
             text = (result.get("save_text") or "").strip()
             if len(text) >= 40:  # 줄글 대상 — 픽셀 크롭은 문맥이 잘리므로 내용 자체를 저장
                 name = f"저장_{ts}.txt"
-                # BE 연결 시 files.save(Documents/MotionControl)로 이관, 아니면 로컬 저장.
-                # 이미지 크롭은 화면 캡처 MCP 도구가 없어 항상 로컬로 남는다.
+                # 저장 위치는 BE 가 정한다(~/Documents/SIA).
                 if self._try_be("files.save", {"name": name, "content": text},
                                 f"글로 저장했습니다 → {name}"):
                     return completed
-                path = SAVE_DIR / name
-                path.write_text(text + "\n", encoding="utf-8")
-                self._say(f"글로 저장했습니다 → {path.name} (바탕화면\\비서_저장)")
-                return completed
+                return self._be_down("글 저장")
             box = bbox_to_box(full_img.size, result.get("bbox")) if full_img is not None else None
             if box:
                 img = full_img.crop(box)
@@ -1313,13 +1316,22 @@ class Brain(threading.Thread):
                     dbg = full_img.convert("RGB").copy()
                     ImageDraw.Draw(dbg).rectangle(box, outline=(255, 64, 64), width=4)
                     dbg.save(SAVE_DIR / f"저장_{ts}_영역.png")
-            else:  # bbox 없음·비정상 → 기존 응시 영역 크롭 폴백
-                img = crop_img if crop_img is not None else full_img
-                print("[bbox] 없음 → 응시 영역 크롭 폴백")
-            path = SAVE_DIR / f"저장_{ts}.png"
-            img.save(path)
-            self._say(f"저장했습니다 → {path.name} (바탕화면\\비서_저장)")
-            return completed
+                # 좌표는 그대로 넘어간다 — 실측상 스크린샷이 가상 스크린과 원점·크기가 같고
+                # BE 도 그 좌표로 BitBlt 한다. 원점이 어긋나는 다중 모니터면 오프셋을 더한다.
+                # NOTE(한계): BE 는 '호출 시점' 화면을 새로 찍는다. 우리가 고른 영역은 '발화 시작
+                # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
+                # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
+                off = virtual_screen_offset(full_img.size) or (0, 0)
+                if self._try_be("screen.capture_region",
+                                {"x1": box[0] + off[0], "y1": box[1] + off[1],
+                                 "x2": box[2] + off[0], "y2": box[3] + off[1]},
+                                say or "화면을 저장했습니다"):
+                    return completed
+                return self._be_down("화면 저장")
+            else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
+                print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
+                self._say("저장할 영역을 찾지 못했습니다")
+            return None
         elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
             self._say(say or "명령을 이해하지 못했습니다.", "unknown_command", transcript=result.get("transcript"))
         elif say:  # answer — 짧으면 토스트, 길면 플로팅 패널
@@ -1341,19 +1353,9 @@ class Brain(threading.Thread):
         if tool and self._try_be(tool[0], tool[1], say):
             return True
         # 판별 기준도 '발화 순간의 창' — 말한 뒤 알트탭해도 의도한 창이 제어된다
-        if hwnd and is_youtube(window_title_of(hwnd)):
-            spec = YOUTUBE_KEYS.get(key)
-            if spec:
-                focus_window(hwnd)  # 유튜브 단축키는 그 탭에 포커스가 있어야 먹는다
-                press_keys(spec)
-            else:
-                return False
-        else:
-            spec = GLOBAL_MEDIA_KEYS.get(key)
-            if spec is None:
-                self._say("10초 이동은 유튜브 창에서만 됩니다")
-                return False
-            press_keys(spec)  # OS 전역 미디어 키 — 포커스 무관
-        if say:
-            self._say(say)
-        return True
+        if key in ("forward", "back"):
+            # 10초 앞·뒤는 BE 카탈로그에 아직 없다(media.seek 추가 예정). 로컬 단축키로 대신하지 않는다.
+            self._say("10초 이동은 아직 지원하지 않습니다")
+            return False
+        self._be_down("미디어 제어")
+        return False

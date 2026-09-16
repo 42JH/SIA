@@ -45,7 +45,13 @@ def assistant(profile=PROFILE, act=True):
         link = new_link()
         link.connected, link.be_session_id, link.session_until_mono = True, 128, 100.0
         link._send = Mock(return_value=True)
-        link.call = Mock(return_value=(True, {}))
+        # 창 도구는 winRef 가 필요하고 ref 는 context.get 에서만 나온다 — 대역도 목록을 준다.
+        link.call = Mock(side_effect=lambda tool, args=None: (
+            (True, {"foreground": {"ref": "win:1", "title": "창"},
+                    "windows": [{"ref": "win:1", "title": "창"}]})
+            if tool == "context.get" else
+            (True, {"items": [{"name": "test.txt", "path": "test.txt", "selected": False}]})
+            if tool == "explorer.items" else (True, {})))
         speaker = None if profile is None else SimpleNamespace(
             snapshot=Mock(return_value=profile), verify=Mock(return_value=(True, 0.87654)))
         brain = Brain(Mock(), act=act, speaker=speaker, link=link)
@@ -369,33 +375,30 @@ def test_stale_inference_or_session_renewal_emits_nothing():
 
 def test_confirmation_records_original_task_only_after_approval():
     for action, fields in (("window", {"window_op": "close"}), ("delete_file", {"query": "test.txt"})):
-        with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"), patch(
-                "brain.close_window") as close, patch("brain.resolve_files_by_name", return_value=["test.txt"]):
+        with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"):
             utter(brain, command(action, **fields), hwnd=42)
             assert brain._pending and len(events(link, "voice")) == 1 and not events(link, "command")
-            close.assert_not_called()
-            assert not any(c.args[0] == "files.delete" for c in link.call.call_args_list)
+            assert not any(c.args[0] in ("window.close", "files.delete") for c in link.call.call_args_list)
             clock.now, link.be_session_id = 18.0, 256
             utter(brain, command("confirm_yes"), started=16.0, hwnd=99)
             assert brain._pending is None and len(events(link, "voice")) == 2
             assert events(link, "voice")[-1]["sessionId"] == 256
             assert events(link, "command") == [{"kind": "command", "action": action, "sessionId": 128,
                                                 "complexity": "COMPLEX", "latencyMs": 4000}]
-            if action == "window":
-                close.assert_called_once_with(42)
+            if action == "window":  # 동작은 BE 몫 — 로컬 close_window 는 이제 없다
+                link.call.assert_called_with("window.close", {"winRef": "win:1"})
             else:
                 link.call.assert_called_with("files.delete", {"paths": ["test.txt"]})
 
 
 def test_confirmation_cancel_expiry_and_no_pending():
     for reply in ("confirm_no", "expired", "no_pending"):
-        with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"), patch(
-                "brain.close_window") as close:
+        with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"):
             if reply != "no_pending":
                 utter(brain, command("window", window_op="close"), hwnd=42)
             clock.now = 30.0 if reply == "expired" else 18.0
             utter(brain, command("confirm_no" if reply == "confirm_no" else "confirm_yes"), started=clock.now)
-            close.assert_not_called()
+            assert not any(c.args[0] == "window.close" for c in link.call.call_args_list)
             assert all(e["action"] == "confirm_no" for e in events(link, "command"))
             assert len(events(link, "command")) == int(reply == "confirm_no")
 
@@ -432,10 +435,11 @@ def test_unexecuted_actions_and_local_mode():
         with assistant() as (brain, link, _):
             utter(brain, result)
             assert len(events(link, "voice")) == 1 and not events(link, "command")
-    with assistant() as (brain, link, _), patch("brain.webbrowser.open", return_value=False):
+    with assistant() as (brain, link, _):  # BE 가 막으면 로컬로 대신 열지 않고 사실대로 말한다
+        link.call.side_effect = None
         link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
         utter(brain, command("web_search", query="실패"))
-        assert brain.overlay.toast.call_args.args[0] == "검색을 열지 못했습니다"
+        assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 백엔드에 연결되지 않아 실행하지 못했습니다"
         assert not events(link, "command")
     with assistant() as (brain, link, _):
         brain.link = None
