@@ -81,6 +81,16 @@
   --dashboard-border: #999999;
   --dashboard-radius: 8px;
   --dashboard-bar: #bdbdbd;
+  --sia-page: #f7f9fc;
+  --sia-ink: #102342;
+  --sia-navy: #071a36;
+  --sia-blue: #5f88bc;
+  --sia-steel: #7795bb;
+  --sia-muted: #6f83a1;
+  --sia-pale: #cbd9ea;
+  --sia-line: #89a8cf;
+  --sia-soft-line: #d9e3ef;
+  --sia-soft: #e7edf5;
   --gesture-result-width: 900px;
   --gesture-result-single-width: 640px;
   --gesture-result-title-size: 24px;
