@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WindowEvent,
+    AppHandle, Listener, Manager, WindowEvent,
 };
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
@@ -42,6 +42,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(SidecarChildren::default())
+        .manage(notify_bridge::LastSessionState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -89,6 +90,16 @@ pub fn run() {
 
             // --- /ws/fe 알림 브릿지 (하나의 오버레이 창: 토스트 + 진행상태) ---
             notify_bridge::spawn(app.handle().clone());
+
+            // --- 오버레이 "준비 완료" 핸드셰이크 ---
+            // 오버레이 창의 JS가 리스너 등록을 마치고 나면 "sia://overlay-ready"를
+            // emit한다. 그 전에 notify_bridge가 이미 보낸(그래서 유실됐을 수 있는)
+            // 가장 최근 session_state를 이 시점에 한 번 더 보내준다 — 부팅 토스트
+            // ("시아가 시작되었습니다")가 항상 뜨도록 하기 위한 조치.
+            let app_handle_for_ready = app.handle().clone();
+            app.listen("sia://overlay-ready", move |_event| {
+                notify_bridge::resend_last_session_state(&app_handle_for_ready);
+            });
 
             Ok(())
         })

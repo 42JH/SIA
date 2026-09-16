@@ -6,12 +6,13 @@
 //! emit만 한다 — 실제 표시 로직(토스트 vs 진행상태, 자동 소멸 시간 등)은 전부
 //! overlay/index.html의 JS가 담당한다.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Frontend/src/ws/feSocket.js 의 WS_URL 과 동일. 포트 정책은 아직 TBD (Integration/Agents.md 참고) —
@@ -19,6 +20,21 @@ use tokio_tungstenite::tungstenite::Message;
 const WS_URL: &str = "ws://127.0.0.1:8080/ws/fe";
 /// feSocket.js 의 RECONNECT_DELAY_MS 와 동일.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+
+/// 가장 최근에 받은 `session_state` 이벤트의 data를 들고 있는 앱 상태.
+///
+/// 문제: 오버레이 창의 JS(`window.__TAURI__.event.listen("sia://notify", ...)`)가
+/// 웹뷰 로드를 마치고 리스너를 등록하기 전에, Rust 쪽은 이미 앱 시작과 동시에
+/// `/ws/fe`에 붙어서 가장 이른 `session_state`(PASSIVE, 부팅 토스트)를 emit해버릴 수
+/// 있다. Tauri의 이벤트는 리스너가 없을 때 emit되면 그냥 유실되고 나중에 재생되지
+/// 않는다 — 그래서 "시아가 시작되었습니다" 토스트가 안 뜨는 버그가 발생했다.
+///
+/// 해결(레디 핸드셰이크): 오버레이 JS가 리스너 등록을 마친 직후
+/// `"sia://overlay-ready"`를 emit하고, Rust는 그걸 받으면(`lib.rs`의 setup에서
+/// 리스닝) 여기 저장해둔 마지막 `session_state`를 한 번 더 오버레이로 보내준다
+/// (`resend_last_session_state`). 리스너 등록 이후에 emit되므로 이번엔 유실되지 않는다.
+#[derive(Default)]
+pub struct LastSessionState(Mutex<Option<Value>>);
 
 /// BE가 보내는 `{type, data}` 봉투. feSocket.js 의 파싱 규칙과 동일하게, data가
 /// 객체가 아니면(배열·누락 등) 무시한다.
@@ -78,10 +94,38 @@ struct OverlayPayload<'a> {
 /// BE에서 온 이벤트를 그대로 오버레이 창에 전달한다. kind별 분기·표시 로직은 전부
 /// overlay/index.html 쪽에 있다 (notificationStore.js·TopNotification.jsx·BootToast.jsx를
 /// 그대로 포팅함 — 알림/팝업 네이티브 전환 핸드오프 스펙 참고).
+///
+/// `session_state`는 부팅 직후 유실될 수 있으므로 `LastSessionState`에도 저장해둔다
+/// (레디 핸드셰이크용, 위 `LastSessionState` 문서 참고).
 fn handle_event(app: &AppHandle, kind: &str, data: &Value) {
     log::info!("[notify_bridge] 수신: {kind} {data}");
+
+    if kind == "session_state" {
+        if let Some(state) = app.try_state::<LastSessionState>() {
+            *state.0.lock().unwrap() = Some(data.clone());
+        }
+    }
+
+    emit_to_overlay(app, kind, data);
+}
+
+fn emit_to_overlay(app: &AppHandle, kind: &str, data: &Value) {
     let payload = OverlayPayload { kind, data };
     if let Err(err) = app.emit_to("overlay", "sia://notify", &payload) {
         log::warn!("[notify_bridge] 오버레이로 전달 실패: {err}");
+    }
+}
+
+/// 오버레이 창이 `"sia://overlay-ready"`로 리스너 등록 완료를 알려오면 호출된다.
+/// 저장해둔 마지막 `session_state`가 있으면 다시 한번 오버레이로 보낸다 — 이번엔
+/// 오버레이 쪽 리스너가 이미 등록된 뒤이므로 유실되지 않는다.
+pub fn resend_last_session_state(app: &AppHandle) {
+    let Some(state) = app.try_state::<LastSessionState>() else {
+        return;
+    };
+    let last = state.0.lock().unwrap().clone();
+    if let Some(data) = last {
+        log::info!("[notify_bridge] 오버레이 준비 완료 — 마지막 session_state 재전송");
+        emit_to_overlay(app, "session_state", &data);
     }
 }

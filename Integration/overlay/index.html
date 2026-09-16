@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <title>SIA Overlay</title>
 <style>
-  /* 디자인 토큰: Frontend/src/styles/tokens.css 중 팝업 관련 값만 그대로 가져옴 (agents.md 3장/6장 참고) */
+  /* 디자인 토큰: Frontend/src/styles/tokens.css 중 팝업 관련 값에서 출발했지만,
+     원본은 대시보드용 큰 사이즈라 오버레이 토스트에 맞게 축소함 (수정사항 반영). */
   :root {
     --popup-navy: #071a33;
     --popup-border-color: #17345c;
@@ -13,19 +14,19 @@
     --popup-muted: #6d859e;
     --popup-line: #d7e0e9;
     --popup-surface: #f4f7fa;
-    --popup-top: 24px;
-    --popup-width: min(736px, calc(100vw - 24px));
-    --popup-min-height: 104px;
-    --popup-padding: 22px 28px;
-    --popup-gap: 26px;
-    --popup-icon-size: 56px;
-    --popup-font-size: 22px;
-    --popup-radius: 18px;
-    --popup-border: 2px solid var(--popup-border-color);
+    --popup-top: 16px;
+    --popup-width: min(420px, calc(100vw - 24px));
+    --popup-min-height: 60px;
+    --popup-padding: 12px 16px;
+    --popup-gap: 12px;
+    --popup-icon-size: 34px;
+    --popup-font-size: 14px;
+    --popup-radius: 12px;
+    --popup-border: 1.5px solid var(--popup-border-color);
     --popup-background: #ffffff;
-    --popup-shadow: 0 8px 20px rgb(7 26 51 / 18%);
-    --popup-thumbnail-width: 160px;
-    --popup-thumbnail-height: 90px;
+    --popup-shadow: 0 6px 16px rgb(7 26 51 / 18%);
+    --popup-thumbnail-width: 96px;
+    --popup-thumbnail-height: 54px;
     --popup-layer: 1000;
     --color-danger: #b00020;
   }
@@ -76,54 +77,54 @@
 
   /* 하단 진행상태 영역(listening/session_countdown/boot) — BootToast.module.css .toast 위치를 그대로 가져옴 */
   #progress {
-    right: 24px;
-    bottom: 24px;
-    width: min(516px, calc(100vw - 24px));
+    right: 16px;
+    bottom: 16px;
+    width: min(300px, calc(100vw - 24px));
   }
 
   .row { display: flex; min-width: 0; align-items: center; gap: var(--popup-gap); width: 100%; }
   .message { min-width: 0; flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
-    font-size: var(--popup-font-size); font-weight: 620; line-height: 1.45; }
+    font-size: var(--popup-font-size); font-weight: 620; line-height: 1.4; }
 
   .icon { display: grid; width: var(--popup-icon-size); height: var(--popup-icon-size);
     flex: 0 0 var(--popup-icon-size); place-items: center; border: 1px solid var(--popup-steel);
     border-radius: 50%; background: var(--popup-surface); color: var(--popup-accent); }
-  .icon svg { width: 68%; height: 68%; }
+  .icon svg { width: 62%; height: 62%; }
 
-  .listeningIcon { display: flex; justify-content: center; gap: 5px; }
-  .listeningIcon i { width: 5px; height: 18px; border-radius: 3px; background: var(--popup-accent);
+  .listeningIcon { display: flex; justify-content: center; gap: 3px; }
+  .listeningIcon i { width: 3px; height: 11px; border-radius: 2px; background: var(--popup-accent);
     animation: wave 1s ease-in-out infinite; }
-  .listeningIcon i:nth-child(2) { height: 30px; animation-delay: -0.2s; }
-  .listeningIcon i:nth-child(3) { height: 22px; animation-delay: -0.4s; }
+  .listeningIcon i:nth-child(2) { height: 18px; animation-delay: -0.2s; }
+  .listeningIcon i:nth-child(3) { height: 13px; animation-delay: -0.4s; }
 
-  .timerRing { --timer-progress: 360deg; position: relative; display: grid; width: 54px; height: 54px;
-    flex: 0 0 54px; place-items: center; border-radius: 50%;
+  .timerRing { --timer-progress: 360deg; position: relative; display: grid; width: 32px; height: 32px;
+    flex: 0 0 32px; place-items: center; border-radius: 50%;
     background: conic-gradient(var(--popup-accent) var(--timer-progress), #d5dfe9 0); }
-  .timerRing::before { position: absolute; inset: 4px; border-radius: inherit; background: white; content: ""; }
-  .timerRing span { position: relative; font-size: 18px; font-weight: 700; }
+  .timerRing::before { position: absolute; inset: 3px; border-radius: inherit; background: white; content: ""; }
+  .timerRing span { position: relative; font-size: 11px; font-weight: 700; }
 
   .detailContent { width: 100%; }
-  .transcriptBlock, .summaryList { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--popup-line); }
-  .caption { color: var(--popup-muted); font-size: 15px; }
-  .transcript { margin: 10px 0 0; padding: 14px 22px; border: 1px solid #d1dce7; border-radius: 6px;
-    background: #f7f9fb; color: #304c69; font-size: 20px; line-height: 1.25; }
-  .summaryList { margin-bottom: 0; padding-left: 32px; color: #304c69; font-size: 17px; }
-  .summaryList li { padding: 8px 0 8px 4px; line-height: 1.4; }
+  .transcriptBlock, .summaryList { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--popup-line); }
+  .caption { color: var(--popup-muted); font-size: 11px; }
+  .transcript { margin: 6px 0 0; padding: 8px 12px; border: 1px solid #d1dce7; border-radius: 6px;
+    background: #f7f9fb; color: #304c69; font-size: 13px; line-height: 1.25; }
+  .summaryList { margin-bottom: 0; padding-left: 20px; color: #304c69; font-size: 12px; }
+  .summaryList li { padding: 4px 0 4px 2px; line-height: 1.35; }
 
   .captureContent { display: flex; align-items: center; gap: var(--popup-gap); width: 100%; }
   .captureImage { width: var(--popup-thumbnail-width); max-height: var(--popup-thumbnail-height);
-    border: 1px solid var(--popup-line); border-radius: 8px; object-fit: cover; }
+    border: 1px solid var(--popup-line); border-radius: 6px; object-fit: cover; }
   .captureMeta { min-width: 0; flex: 1; }
 
-  /* 하단 로고 펄스 — BootToast.module.css .logo 그대로 */
-  .logo { position: relative; display: grid; width: 56px; height: 56px; flex: 0 0 56px;
+  /* 하단 로고 펄스 — BootToast.module.css .logo 그대로 (크기만 축소) */
+  .logo { position: relative; display: grid; width: 34px; height: 34px; flex: 0 0 34px;
     place-items: center; border: 1px solid var(--popup-steel); border-radius: 50%; background: var(--popup-surface); }
-  .logo i { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--popup-accent); }
-  .logo i:first-child { width: 10px; height: 10px; animation: logoPulse 1.6s ease-in-out infinite; }
-  .logo i:nth-child(2) { transform: translateX(-13px); opacity: 0.7; }
-  .logo i:nth-child(3) { transform: translateX(13px); opacity: 0.7; }
-  .logo i:nth-child(4) { transform: translateY(-13px); opacity: 0.7; }
-  .logo i:nth-child(5) { transform: translateY(13px); opacity: 0.7; }
+  .logo i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--popup-accent); }
+  .logo i:first-child { width: 7px; height: 7px; animation: logoPulse 1.6s ease-in-out infinite; }
+  .logo i:nth-child(2) { transform: translateX(-8px); opacity: 0.7; }
+  .logo i:nth-child(3) { transform: translateX(8px); opacity: 0.7; }
+  .logo i:nth-child(4) { transform: translateY(-8px); opacity: 0.7; }
+  .logo i:nth-child(5) { transform: translateY(8px); opacity: 0.7; }
 
   @keyframes wave { 0%, 100% { transform: scaleY(0.65); } 50% { transform: scaleY(1.25); } }
   @keyframes logoPulse { 50% { transform: scale(1.6); } }
@@ -359,6 +360,10 @@
       const { kind, data } = event.payload || {};
       if (typeof kind === "string" && data && typeof data === "object") route(kind, data);
     });
+    // 부팅 직후(session_state PASSIVE 등) 이벤트가 이 리스너 등록보다 먼저 Rust 쪽에서
+    // emit됐을 수 있다 — Tauri 이벤트는 리스너 없을 때 유실되므로, 준비됐다고 알려서
+    // Rust가 마지막 session_state를 한 번 더 보내주게 한다 (notify_bridge::resend_last_session_state).
+    window.__TAURI__.event.emit("sia://overlay-ready", {});
   }
 
   boot();
