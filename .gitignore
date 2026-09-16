@@ -44,3 +44,7 @@ Integration/src-tauri/target/
 Integration/src-tauri/gen/
 Integration/src-tauri/binaries/*
 !Integration/src-tauri/binaries/README.md
+
+# Integration overlay 창 산출물 — Integration/overlay/ 가 원본이고, 빌드/개발 시
+# scripts/sync-overlay.cjs 가 여기로 복사한다 (Frontend 소스 아님)
+Frontend/public/overlay/
