@@ -51,6 +51,27 @@ def ordered_landmarks(hands):
     return points
 
 
+def trim_motion_frames(frames, threshold=0.04):
+    """손바닥 길이 기준 누적 변화를 보고 앞뒤 정지 구간만 제거한다.
+
+    중간 멈춤과 방향 전환은 보존한다. 끝점 주변의 작은 떨림은 threshold
+    이내로 허용하고, 움직임 경계 바로 바깥의 표본 하나는 남긴다.
+    """
+    if len(frames) < 3:
+        return frames
+    points = np.asarray([p for _, p in frames], dtype=np.float32)
+    scale = max(float(np.linalg.norm(points[0, :, 9] - points[0, :, 0], axis=-1).mean()), 1e-6)
+    def errors(reference):
+        sq = np.sum(((points - reference) / scale) ** 2, axis=-1)
+        return np.sqrt(np.mean(np.average(sq, axis=-1, weights=LANDMARK_WEIGHTS), axis=-1))
+    starts = np.flatnonzero(errors(points[0]) > threshold)
+    ends = np.flatnonzero(errors(points[-1]) > threshold)
+    if not len(starts) or not len(ends):
+        return frames
+    first, last = max(0, int(starts[0]) - 1), min(len(frames) - 1, int(ends[-1]) + 1)
+    return frames[first:last + 1] if last > first else frames
+
+
 def encode_sequence(times, points):
     times, points = np.asarray(times), np.asarray(points, dtype=np.float32)
     if len(times) < 2 or np.any(np.diff(times) <= 0):
@@ -88,6 +109,76 @@ def distance(a, b, count):
     sq = np.sum((a[:, :count] - b[:, :count]) ** 2, axis=-1)  # (FRAMES, count, 21)
     weighted = np.average(sq, axis=-1, weights=LANDMARK_WEIGHTS)  # (FRAMES, count)
     return float(np.sqrt(np.mean(weighted)))
+
+
+def matching_distance(a, b, count):
+    """한 손은 손목 궤적을 보존하고 손목 기준 손모양만 좌우 반전해 비교.
+
+    프레임마다 유리한 손을 골라 붙이지 않고 시퀀스 전체에 같은 반전을 쓴다.
+    양손은 좌우 역할/상대 위치를 보존하는 기존 비교를 그대로 사용한다.
+    저장 좌표를 바꾸지 않으므로 기존 NPZ도 재등록 없이 비교할 수 있다.
+    """
+    direct = distance(a, b, count)
+    if count != 1:
+        return direct
+    mirrored = np.array(b, copy=True)
+    mirrored[:, 0, :, 0] = 2 * b[:, 0, 0:1, 0] - b[:, 0, :, 0]
+    return min(direct, distance(a, mirrored, count))
+
+
+def motion_features(sequence, count):
+    """이동, 회전, 손가락 형태를 분리한다. 2D에서 관측 가능한 특징만 사용."""
+    points = sequence[:, :count]
+    wrists = points[:, :, 0]
+    local = points - wrists[:, :, None]
+    axis = local[:, :, 9]
+    scale = np.maximum(np.linalg.norm(axis, axis=-1), 1e-6)
+    up = axis / scale[..., None]
+    right = np.stack([-up[..., 1], up[..., 0]], axis=-1)
+    shape = np.stack([np.sum(local * right[:, :, None], axis=-1),
+                      np.sum(local * up[:, :, None], axis=-1)], axis=-1) / scale[:, :, None, None]
+    angles = np.arctan2(axis[..., 1], axis[..., 0])
+    rotation = angles - angles[:1]
+    separation = (np.linalg.norm(wrists[:, 1] - wrists[:, 0], axis=-1)
+                  if count == 2 else np.zeros(len(points)))
+    return dict(shape=shape, rotation=rotation, wrists=wrists,
+                separation=separation - separation[0])
+
+
+def motion_comparison(a, b, count):
+    """동적 중복/실행/후보 검사 공통 점수. 한 특징 차이가 평균에 묻히지 않게 한다.
+
+    각 손의 시간 RMS 중 큰 값을 사용한다. 거리와 형태는 손바닥 길이 단위,
+    회전 변화는 라디안 단위이며 최댓값으로 판정한다. 확률이 아니다.
+    한 손 반전은 모든 특징에 동일하게 적용하고 양손 역할은 바꾸지 않는다.
+    """
+    fa = motion_features(a, count)
+    def rms(v):
+        return float(np.max(np.sqrt(np.mean(v ** 2, axis=0))))
+    def compare(candidate, mirrored):
+        fb = motion_features(candidate, count)
+        shape_delta = fa['shape'] - fb['shape']
+        shape_sq = np.average(np.sum(shape_delta ** 2, axis=-1), axis=-1, weights=LANDMARK_WEIGHTS)
+        shape = float(np.max(np.sqrt(np.mean(shape_sq, axis=0))))
+        angle = fa['rotation'] - fb['rotation']
+        angle = np.arctan2(np.sin(angle), np.cos(angle))
+        wrist = np.linalg.norm((fa['wrists'] - fa['wrists'][:1]) - (fb['wrists'] - fb['wrists'][:1]), axis=-1)
+        parts = dict(landmark=distance(a, candidate, count), shape=shape,
+                     rotation=rms(angle), wrist=rms(wrist),
+                     separation=rms(fa['separation'] - fb['separation']))
+        return dict(**parts, score=max(parts.values()), mirrored=mirrored)
+    result = compare(b, False)
+    if count == 1:
+        mirrored = np.array(b, copy=True)
+        mirrored[:, 0, :, 0] = 2 * b[:, 0, 0:1, 0] - b[:, 0, :, 0]
+        alternate = compare(mirrored, True)
+        if alternate['score'] < result['score']:
+            result = alternate
+    return result
+
+
+def motion_matching_distance(a, b, count):
+    return motion_comparison(a, b, count)['score']
 
 
 def prefix_sequence(sequence, fraction):
@@ -162,11 +253,29 @@ class CustomGestureStore:
     def classify_with_distance(self, landmarks):
         return self.legacy.classify_with_distance(landmarks)
 
+    def sequence_comparisons(self, sequence, motion, count):
+        # 기존 템플릿도 비교할 때만 정지 구간을 잘라 신규 촬영과 기준을 맞춘다.
+        # 원본 파일과 실행용 템플릿은 여기서 변경하지 않는다.
+        def comparison(seq):
+            if motion != "DYNAMIC":
+                return seq
+            frames = trim_motion_frames(list(zip(np.linspace(0, 1, len(seq)), seq[:, :count])))
+            return encode_sequence([t for t, _ in frames], [p for _, p in frames])
+        sequence = comparison(sequence)
+        candidates = []
+        for index, (s, name, m, h) in enumerate(zip(*(self.data[k] for k in EXTRA_KEYS[:4]))):
+            if m != motion or h != count:
+                continue
+            reference = comparison(s)
+            details = (motion_comparison(sequence, reference, count) if motion == 'DYNAMIC'
+                       else dict(score=matching_distance(sequence, reference, count)))
+            candidates.append(dict(template_index=index, name=str(name), **details))
+        return sorted(candidates, key=lambda item: item['score'])
+
     def nearest_sequence(self, sequence, motion, count):
-        candidates = [(distance(sequence, s, count), str(name))
-                      for s, name, m, h in zip(*(self.data[k] for k in EXTRA_KEYS[:4]))
-                      if m == motion and h == count]
-        return min(candidates, default=(float("inf"), None))
+        candidates = self.sequence_comparisons(sequence, motion, count)
+        return ((candidates[0]['score'], candidates[0]['name']) if candidates
+                else (float('inf'), None))
 
     def reset_motion(self):
         self.history.clear()
@@ -210,7 +319,7 @@ class CustomGestureStore:
                 continue
             if motion == "STATIC":
                 current = encode_sequence([0, 1], [points, points])
-                score = distance(current, seq, count)
+                score = matching_distance(current, seq, count)
                 if score < best_static[0]:
                     best_static = score, str(name)
                 continue
@@ -233,14 +342,14 @@ class CustomGestureStore:
                                                          [v[1] for v in prefix_window])
                         movement = distance(current_prefix, np.repeat(current_prefix[:1], FRAMES, axis=0), count)
                         expected = prefix_sequence(seq, min(1.0, elapsed / span))
-                        if movement >= PREFIX_MIN_MOTION and distance(current_prefix, expected, count) < PREFIX_DISTANCE:
+                        if movement >= PREFIX_MIN_MOTION and motion_matching_distance(current_prefix, expected, count) < PREFIX_DISTANCE:
                             pending_motion = True
                             break
                 window = [item for item in self.history if item[0] >= now - span - 0.04]
                 if len(window) < 6 or window[-1][0] - window[0][0] < span * 0.9:
                     continue
                 current = encode_sequence([v[0] for v in window], [v[1] for v in window])
-                score = distance(current, seq, count)
+                score = motion_matching_distance(current, seq, count)
                 if score < best_dynamic[0]:
                     best_dynamic = score, str(name)
         if best_dynamic[1]:

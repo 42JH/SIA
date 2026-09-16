@@ -60,7 +60,13 @@ class MotionTests(unittest.TestCase):
         reg.finish()
         self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
         self.cache.sync(self.link, [dict(id=1, name=name, sha256="hash")])
-        return CustomGestureStore(self.cache.combined_path)
+        store = CustomGestureStore(self.cache.combined_path)
+        if motion == "DYNAMIC":
+            # 실제 촬영 시간 저장을 검증한 뒤, 아래 실행 테스트의 1초 궤적에
+            # 맞춰 시험용 템플릿만 재타이밍한다(위 촬영은 충돌 회피용 0.3초).
+            np.testing.assert_allclose(store.data["durations"], 0.3, atol=1e-6)
+            store.data["durations"][:] = 1.0
+        return store
 
     def feed(self, store, make_hands, duration=1, offset=0):
         return [store.update(make_hands(t / duration), offset + t)
@@ -365,7 +371,7 @@ class MotionTests(unittest.TestCase):
         store = CustomGestureStore(self.cache.combined_path)
         self.assertEqual(store.class_names(), ["old", "renamed"])
         self.assertEqual(store.classify_with_distance(hand()["landmarks"])[0], "old")
-        self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)])))
+        self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)], duration=0.3)))
         self.cache._rebuild({"2": {"name": "old"}})
         self.assertEqual(CustomGestureStore(self.cache.combined_path).class_names(), ["old"])
 
