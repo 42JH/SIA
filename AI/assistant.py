@@ -289,7 +289,7 @@ def main():
     # 모델은 brain 것과 따로 만든다 — 상시 추론은 앞 소리의 문맥을 들고 있어 한 인스턴스를 나눠 쓰면 서로 망친다.
     # 모델 파일이 없으면 None — 조각 완성 뒤 채점하는 예전 경로로 돈다.
     from brain import WAKE_MODEL, WAKE_THRESHOLD, load_wake_model
-    from voice import WAKE_CUT_S, WakeStream
+    from voice import WAKE_CUT_S, WAKE_FOLLOW_S, WakeStream
 
     wake_stream = None
     if WAKE_STREAM:
@@ -575,10 +575,12 @@ def main():
                         enroll.on_utter(ev[2], ev[1])  # 샘플로만 쓰고 명령 처리는 안 한다. ev[1]은 발화 시작 시각 — "이 문장 다시" 판정용
                         continue
                     if wake_stream is not None:
-                        # 호출어가 이 조각 안에서 잡혔는지 본다. 프리롤 2.0 s 덕에 조각은 말보다 먼저
-                        # 시작하므로, 잡힌 시각이 조각 시작보다 조금 이르기만 해도 이 조각의 것이다.
-                        heard = wake_live_t >= ev[1] - 0.3
-                        if not heard and not brain.session_open_at(ev[1]):  # 조각 시작 시각 기준 — brain 과 같은 규칙
+                        # 히트가 이 조각 안에 있거나(heard) 히트 뒤 WAKE_FOLLOW_S 안에 시작한 조각(follow)이면
+                        # brain 에 넘긴다. 세션은 brain 이 연다 — 둘째 조각이 첫 조각 처리 중에 도착하면
+                        # 여기서는 아직 세션 밖이다.
+                        heard = wake_live_t >= ev[1] - 0.3              # 히트가 이 조각 안에 있다 — 로그(wake_live) 귀속용
+                        follow = wake_live_t >= ev[1] - WAKE_FOLLOW_S   # 히트 직후 시작한 조각 — "시아야 (쉬고) 음소거" 의 둘째 조각
+                        if not follow and not brain.session_open_at(ev[1]):  # 조각 시작 시각 기준 — brain 과 같은 규칙
                             # 세션 밖인데 호출어가 없다 — 여기서 끊는다. 화면 캡처도, brain 도, 그 뒤의 화자 인증·Gemini 도 없다.
                             # brain 의 시동어 게이트가 어차피 기각할 조각이고, 그 전에 치르던 캡처·채점만 사라진다.
                             pending_capture = None
@@ -865,8 +867,9 @@ def main():
 
             # 상시 추론이 있으면 조각이 열렸다고 곧장 켜지 않는다 — 세션 중이거나 이번 조각에서 호출어가
             # 잡힌 뒤에만 켠다. 유튜브·옆 대화가 조각을 열 때마다 깜빡이던 것을 막는다.
+            # 호출 직후의 후속 명령 조각도 켠다.
             listening = voice.recording and (wake_stream is None or brain.session_open_at(voice.seg.onset_t)
-                                             or wake_live_t >= voice.seg.onset_t - 0.3)
+                                             or wake_live_t >= voice.seg.onset_t - WAKE_FOLLOW_S)
             if brain.busy:
                 overlay.set_state("THINKING")
             elif listening:
