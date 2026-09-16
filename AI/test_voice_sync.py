@@ -137,7 +137,7 @@ def test_null_clears_only_voice_state():
             assert sync.apply_pending(listener.reset_audio)
             log.assert_called_once_with(
                 f"[보이스 동기화] 서버에 사용 중인 목소리가 없어 로컬 프로필을 지운다 — {path}")
-        assert not path.exists() and speaker.snapshot() == (None, 0.25, None, None)
+        assert not path.exists() and speaker.snapshot() == (None, speaker.default_threshold, None, None)
         assert not brain.queue and brain._pending is None and brain._accum is not accum
         assert not listener.recording and listener.take_event()[0] == "reset"
         assert all(other.read_bytes() == b"keep" for other in other_files)

@@ -209,7 +209,13 @@ class AgentLink:
                     remaining = d["deadlineMs"] / 1000.0 - time.time()
                     self.session_until_mono = time.monotonic() + max(0.0, remaining)
                     self.be_session_id = d.get("sessionId")
-                else:  # PASSIVE — 만료·종료
+                elif d.get("reason") == "EXPIRED":
+                    # 자연 만료 — 마감을 지금으로 당긴다(이미 지났으면 그대로). 서버와 로컬 벽시계가 어긋나도
+                    # 그만큼 더 열려 있지 않는다. 0 으로 지우면 진행 중인 명령까지 "세션 밖"이 되어 버려진다 —
+                    # 게이트는 발화 *시작* 시각으로 판정하므로, 마감을 넘겨 끝난 명령은 살고 새 발화만 막힌다.
+                    self.session_until_mono = min(self.session_until_mono, time.monotonic())
+                    self.be_session_id = None
+                else:  # PASSIVE — 명시 종료(STOPPED·WATCHDOG·SHUTDOWN) 또는 초기 상태
                     self.session_until_mono = 0.0
                     self.be_session_id = None
                 self._session_condition.notify_all()

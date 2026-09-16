@@ -23,6 +23,8 @@ import collections
 import json
 import math
 import os
+import threading
+import numpy as np
 import subprocess
 import sys
 import time
@@ -49,6 +51,7 @@ from main import Camera, GazeWorker, open_camera
 
 HERE = Path(__file__).parent
 
+WAKE_STREAM = os.environ.get("WAKE_STREAM", "") == "1"  # 1이면 시동어 상시 추론을 켠다 (실측 스위치, 기본 꺼짐)
 GESTURE_HOLD_S = 0.8   # 제스처 커맨드: 이 시간 유지해야 발동 (오작동 방지)
 GESTURE_COOLDOWN_S = 1.2  # 연타 용도(10초 건너뛰기 반복)를 위해 짧게 — 홀드+재무장이 있어 안전
 # 정적 제스처는 동적 제스처보다 보수적으로 처리한다. 토글 성격의 명령은
@@ -230,6 +233,10 @@ def main():
 
         # 미등록이어도 넘긴다 — brain 은 enrolled 를 매번 확인하므로 FE 등록(65) 뒤 재시작 없이 게이트가 켜진다
         speaker = SpeakerVerifier(HERE / "models" / "speaker.npz")
+        # 화자 모델은 첫 embed() 에서 올라간다 (실측 12 s) — 첫 "시아야" 에서 치르면 그 호출이 무시된 것처럼
+        # 보이므로 시작하자마자 뒤에서 한 번 불러 둔다. 카메라·오버레이는 기다리지 않는다.
+        threading.Thread(target=lambda: speaker.embed(np.zeros(16000, np.int16)),
+                         daemon=True, name="speaker-warmup").start()
         if speaker.enrolled:
             print(f"화자 인증 켜짐 — 등록된 목소리에만 반응 (임계 {speaker.threshold}). 끄기: --no-speaker")
         else:
@@ -277,8 +284,25 @@ def main():
     brain.start()
     brain.warm_stt_async()  # STT 모델 예열 — 첫 명령이 로드 1.4~5s(+torch import) 를 떠안지 않게(팀원 실측 9/16)
 
+    # 시동어 상시 추론 — 세션 밖에서 호출어가 안 잡힌 조각은 화면 캡처·brain 제출 전에 버린다.
+    # (유튜브 배경 실측: 시간당 제출 372 → 0.5, 화면 캡처 490 → 1.5, LISTENING 25.6 % → 0 %.)
+    # 모델은 brain 것과 따로 만든다 — 상시 추론은 앞 소리의 문맥을 들고 있어 한 인스턴스를 나눠 쓰면 서로 망친다.
+    # 모델 파일이 없으면 None — 조각 완성 뒤 채점하는 예전 경로로 돈다.
+    from brain import WAKE_MODEL, WAKE_THRESHOLD, load_wake_model
+    from voice import WAKE_CUT_S, WakeStream
+
+    wake_stream = None
+    if WAKE_STREAM:
+        stream_model = load_wake_model()
+        if stream_model is not None:
+            wake_stream = WakeStream(stream_model, WAKE_MODEL.stem, WAKE_THRESHOLD)
+            print(f"시동어 상시 추론 켜짐 (임계 {WAKE_THRESHOLD}, 하한 {wake_stream.threshold_lo}) — 세션 밖 호출어 없는 조각은 버립니다")
+    else:
+        print("시동어 상시 추론 꺼짐 — 켜기: WAKE_STREAM=1")
+
     voice_events = collections.deque(maxlen=16)
-    voice = VoiceListener(voice_events, on_reset=brain.reset_audio)
+    voice = VoiceListener(voice_events, on_reset=brain.reset_audio, wake_stream=wake_stream,
+                          cut_ok=lambda t: not brain.session_open_at(t))
     voice.start()
 
     pyautogui.FAILSAFE = False  # 커서를 안 쓰는 모드 — 킬스위치는 ESC
@@ -368,6 +392,8 @@ def main():
         link.calib.on_reload = lambda c: setattr(worker, "calib", c)
 
     pending_capture = None  # 발화 시작 순간의 (full, crop) — 종료 시 오디오와 페어링
+    wake_live_t = float("-inf")   # 상시 추론이 마지막으로 호출어를 잡은 시각 — 조각이 호출어를 담았는지 판정하는 기준
+    wake_live_score, wake_cut = None, False   # 그때의 점수와 조각 앞부분을 잘랐는지 — 로그에 남겨 나중에 실측한다
     # DOM에서 플레이어 볼륨을 읽지는 못하므로, 이 값은 AI가 보낸 볼륨 키 입력을
     # 기준으로 표시하는 HUD용 추정치다. 실제 재생기 볼륨과는 다를 수 있다.
     hud_volume = 50
@@ -520,7 +546,22 @@ def main():
                     if link:
                         link.notice(ev[1])
                     overlay.toast(ev[1])
+                elif ev[0] == "wake_live":
+                    wake_live_t, wake_live_score, wake_cut = ev[1], ev[2], ev[3]
+                    if pending_capture is None or not brain.session_open_at(ev[1]):
+                        # 세션 밖에 남아 있는 캡처는 조각 없이 끝난 앞선 히트의 옛 화면이라 지금 화면으로 덮는다 —
+                        # 안 덮으면 몇 분 전 화면과 그때의 창이 이번 호출에 붙는다. 세션 안은 onset 에 찍은 것이 맞다.
+                        # 시선 점은 발화(조각) 시작 기준 (프로토콜 §7.5) — 조각이 없으면(호출어가 바닥 아래) 지금.
+                        # 화면만 지금 찍는다 — 조각 시작 시점의 화면은 남아 있지 않다.
+                        t_gaze = voice.seg.onset_t if voice.recording else ev[1]
+                        fix, _ = buffer.fixation_at(t_gaze, lookback=GAZE_LOOKBACK_S, window=0.4)
+                        pending_capture = (*capture_screen(fix), foreground_hwnd())
+                    print(f"[상시 시동어] 점수 {ev[2]:.2f}"
+                          + (" 하한" if wake_stream is not None and ev[2] < wake_stream.threshold else "")
+                          + (f" 앞 절단 {WAKE_CUT_S} s" if wake_cut else ""))
                 elif ev[0] == "onset":
+                    if wake_stream is not None and not brain.session_open_at(ev[1]):
+                        continue  # 배경이 여는 조각마다 화면을 찍지 않는다 — 호출어가 잡힐 때(wake_live) 찍는다
                     # 말이 시작된 '그 순간'의 화면·응시 영역·대상 창을 즉시 확보
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
@@ -533,13 +574,23 @@ def main():
                         pending_capture = None
                         enroll.on_utter(ev[2], ev[1])  # 샘플로만 쓰고 명령 처리는 안 한다. ev[1]은 발화 시작 시각 — "이 문장 다시" 판정용
                         continue
+                    if wake_stream is not None:
+                        # 호출어가 이 조각 안에서 잡혔는지 본다. 프리롤 2.0 s 덕에 조각은 말보다 먼저
+                        # 시작하므로, 잡힌 시각이 조각 시작보다 조금 이르기만 해도 이 조각의 것이다.
+                        heard = wake_live_t >= ev[1] - 0.3
+                        if not heard and not brain.session_open_at(ev[1]):  # 조각 시작 시각 기준 — brain 과 같은 규칙
+                            # 세션 밖인데 호출어가 없다 — 여기서 끊는다. 화면 캡처도, brain 도, 그 뒤의 화자 인증·Gemini 도 없다.
+                            # brain 의 시동어 게이트가 어차피 기각할 조각이고, 그 전에 치르던 캡처·채점만 사라진다.
+                            pending_capture = None
+                            continue
                     if pending_capture is None:
                         fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                         pending_capture = (*capture_screen(fix), foreground_hwnd())
                     full, crop, hwnd = pending_capture
                     pending_capture = None
                     brain.submit(ev[2], full, crop, t_utter=ev[1], target_hwnd=hwnd,
-                                 dom=bridge.context(max_age=10.0))
+                                 dom=bridge.context(max_age=10.0),
+                                 wake_live=(wake_live_score, wake_cut) if wake_stream is not None and heard else None)
 
             # --- 제스처 커맨드 (컨텍스트 의존: 유튜브가 활성 창이면 미디어 제어) ---
             from brain import is_youtube
@@ -718,8 +769,8 @@ def main():
                 if swipe_hand_changed:
                     palm_motion.update(None, now)
                 motion_event = palm_motion.update(
-                    scale_by_hand_size(swipe_hand["anchor"], swipe_hand["size"])
-                    if swipe_hand and not pinch_volume._pinched else None, now)
+                    swipe_hand["anchor"] if swipe_hand and not pinch_volume._pinched else None,
+                    now, size=swipe_hand["size"] if swipe_hand else None)
                 scroll_steps = palm_scroll.update(
                     scale_by_hand_size(hand["anchor"], hand["size"])
                     if hand and not pinch_volume._pinched else None, now)
@@ -812,9 +863,13 @@ def main():
                 link.flush_usage()
                 last_usage_flush = now
 
+            # 상시 추론이 있으면 조각이 열렸다고 곧장 켜지 않는다 — 세션 중이거나 이번 조각에서 호출어가
+            # 잡힌 뒤에만 켠다. 유튜브·옆 대화가 조각을 열 때마다 깜빡이던 것을 막는다.
+            listening = voice.recording and (wake_stream is None or brain.session_open_at(voice.seg.onset_t)
+                                             or wake_live_t >= voice.seg.onset_t - 0.3)
             if brain.busy:
                 overlay.set_state("THINKING")
-            elif voice.recording:
+            elif listening:
                 overlay.set_state("LISTENING")
             elif gesture_active:
                 suffix = f" {int(session_left)}s"
@@ -822,7 +877,7 @@ def main():
             else:
                 overlay.set_state("IDLE")
             # 듣는 중엔 응시 링으로 "여길 보고 있다고 인식 중" 피드백
-            if worker and (voice.recording or brain.busy):
+            if worker and (listening or brain.busy):
                 cur = buffer.current(now)
                 if cur:
                     overlay.show_ring(*cur)
@@ -831,7 +886,7 @@ def main():
 
             # --- HUD 미리보기 ---
             hud = cv2.resize(frame, (480, 270))
-            state = ("THINKING" if brain.busy else "LISTENING" if voice.recording
+            state = ("THINKING" if brain.busy else "LISTENING" if listening
                      else f"ACTIVE {int(session_left)}s" if gesture_active
                      else "IDLE")
             # 상태, 정적 손모양, 동적 이벤트를 같은 형식의 독립된 줄로 보여 준다.
