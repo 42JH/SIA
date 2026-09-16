@@ -64,6 +64,35 @@ SCREEN_SWIPE_CONFIG = {
     "vertical": False,
 }
 
+# 스와이프/스크롤/핀치볼륨의 이동량 기준(dist, step_dist 등)은 전부 화면
+# 비율(정규화 좌표)로 정해져 있어, 카메라와의 거리에 따라 같은 물리적 동작도
+# 다르게 판정된다 — 가까이 있으면 작은 움직임도 크게 잡히고, 멀리 있으면 큰
+# 움직임도 작게 잡힌다. 이 기준값들은 손 크기가 대략 이 정도(REFERENCE_PALM_SIZE)
+# 일 때를 기준으로 골랐다고 보고, 실제 손 크기가 다르면 좌표를 그 비율만큼
+# 스케일링해서 감지기에 넣는다 — 감지기 내부 기준값 자체는 건드리지 않는다.
+REFERENCE_PALM_SIZE = 0.12
+
+
+def scale_by_hand_size(point, size, reference=REFERENCE_PALM_SIZE):
+    """손 크기(size)를 기준 크기(reference)로 맞추도록 좌표 한 점을 스케일링한다.
+
+    size가 기준보다 크면(카메라에 가까움) 좌표를 줄이고, 작으면(멀리 있음)
+    늘려서 — 같은 물리적 이동이 카메라 거리와 무관하게 같은 값으로 보이게 한다.
+    """
+    factor = reference / max(float(size), 1e-6)
+    return (point[0] * factor, point[1] * factor)
+
+
+def scale_landmarks_by_hand_size(landmarks, size, reference=REFERENCE_PALM_SIZE):
+    """scale_by_hand_size와 같은 보정을 손 랜드마크 전체에 적용한다.
+
+    모든 점에 같은 배율을 곱하므로, 이미 스케일 불변인 값(예: 핀치 비율 —
+    손 크기로 나눈 값)은 분자·분모가 같이 스케일돼 결과가 그대로 유지된다.
+    """
+    factor = reference / max(float(size), 1e-6)
+    return [(x * factor, y * factor) for x, y in landmarks]
+
+
 def parse_hand(result):
     """GestureRecognizerResult → dict(anchor, pinch_ratio, gesture) / 손 없으면 None.
 
@@ -83,6 +112,7 @@ def parse_hand(result):
         "gesture": gesture,
         "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
         "landmarks": [(p.x, p.y) for p in lm],  # HUD 디버그 표시용
+        "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
     }
 
 
@@ -108,6 +138,7 @@ def parse_hands(result):
             "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
             "handedness": handedness,
             "landmarks": [(p.x, p.y) for p in lm],
+            "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
         })
     return hands
 
