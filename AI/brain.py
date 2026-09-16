@@ -20,12 +20,9 @@ import json
 import os
 
 import numpy as np
-import subprocess
 import threading
 import time
-import urllib.parse
 import wave
-import webbrowser
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -139,8 +136,7 @@ def dom_context_part(dom):
 
 def be_dom_text(link):
     """BE browser.dom_text 로 포그라운드 브라우저 본문 → dom 컨텍스트 dict, 못 받으면 None.
-    크롬 확장은 BE /ws/ext 로만 붙어 로컬 DomBridge(:8765)는 실제로 무피드다 — 그래서 본문 소스는
-    이 BE 도구. 세션 도구(S)라 세션 전엔 SESSION_REQUIRED → None(스크린샷 폴백). via 는 BE 가 붙이는
+    본문 소스는 이 BE 도구다. 세션 도구(S)라 세션 전엔 SESSION_REQUIRED → None(스크린샷 폴백). via 는 BE 가 붙이는
     출처(extension|accessibility) — accessibility 는 메뉴·사이드바 텍스트가 섞일 수 있다.
     ponytail: 포그라운드가 브라우저인지 안 가려 LLM 호출마다 한 번 두드린다 — 지연 보이면 창 제목으로 가드."""
     if not link:
@@ -242,18 +238,6 @@ def is_youtube(title):
     브라우저 탭 제목 패턴(' - YouTube')만 인정한다."""
     t = title.lower()
     return t.endswith(" - youtube") or " - youtube - " in t
-
-
-def press_keys(spec):
-    """'k' 또는 ['shift','n'] 또는 'shift+n' → 활성 창에 키 입력."""
-    import pyautogui
-
-    pyautogui.PAUSE = 0
-    keys = spec if isinstance(spec, list) else str(spec).split("+")
-    if len(keys) == 1:
-        pyautogui.press(keys[0], _pause=False)
-    else:
-        pyautogui.hotkey(*keys)
 
 
 def log_utterance(**fields):
@@ -526,11 +510,6 @@ def wake_only(audio, i_max, lead=0, sr=16000):
     return wake_clip_is_clean(audio, clip, end, certain, sr, min_s=0.0, skip_noise=True)[0]
 
 
-def wake_rejects(score, in_session, shadow=False):
-    """게이트 판정 — True면 LLM에 보내지 않는다. 세션 안(호출어 불필요)과 섀도(로그만)는 항상 통과."""
-    return score < WAKE_THRESHOLD and not in_session and not shadow
-
-
 def is_quota_error(e):
     s = str(e)
     return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
@@ -737,7 +716,7 @@ class Brain(threading.Thread):
         끝날 때는 세션이 닫혀 있을 수 있는데, 그걸 '세션 밖'으로 버리면 안 된다 (worker 의 in_session 과 같은 기준)."""
         return t < self._session_until()
 
-    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, dom=None, wake_live=None):
+    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, wake_live=None):
         """t_utter = 발화 시작 시각, target_hwnd = 그 순간의 포커스 창, dom = 브라우저
         컨텍스트(크롬 확장 실측, 없으면 None), wake_live = 상시 추론이 이 조각에서 잡은 (점수, 앞을
         잘랐는지) 또는 None — 로그 기록용. 세션·확인 만료 판정과 창 조작 대상은
@@ -748,7 +727,7 @@ class Brain(threading.Thread):
                 if t_utter < self._audio_since:
                     return
                 self.queue.append((audio_i16, full_img, crop_img,
-                                   t_utter, target_hwnd, dom, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
+                                   t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -866,7 +845,7 @@ class Brain(threading.Thread):
             with self._audio_lock:
                 if not self.queue:
                     continue
-                audio, full_img, crop_img, t_utter, hwnd, dom, wake_live, t_recv = self.queue.pop(0)
+                audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
@@ -985,7 +964,7 @@ class Brain(threading.Thread):
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
                 result, stt_draft, tier = None, None, 2
-                dom_s, t_pre = None, None
+                dom, dom_s, t_pre = None, None, None  # dom 은 2단(LLM) 경로에서만 채운다
                 self._last_stt_s = self._last_stt_lp = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연 — 확인 대기 경로(라우터 생략)도 리셋
                 if not (self._pending and t_utter < self._pending[2]):
                     t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
@@ -996,10 +975,9 @@ class Brain(threading.Thread):
                         stt_draft = r1  # STT 초안(승격 힌트) 또는 None(라우터 비활성)
                 if result is None:
                     # DOM 본문은 LLM 경로에서만, 그리고 wake_detected 뒤(세션 개시 후)에 가져온다 —
-                    # 발화 시작에 잡은 dom(DomBridge, 실제론 무피드)이 없으면 BE browser.dom_text 로 보충.
                     # 첫 명령("시아야 이거 요약해줘")도 여기선 세션이 열려 있어 본문이 붙는다.
                     t_dom = time.monotonic()
-                    dom = dom or be_dom_text(self._be())
+                    dom = be_dom_text(self._be())
                     dom_s = round(time.monotonic() - t_dom, 2)
                     result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
                 log_utterance(gate="router" if tier == 1 else "llm", tier=tier,

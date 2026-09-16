@@ -406,43 +406,6 @@ def test_custom_gestures():
         pass
 
 
-def test_dom_bridge():
-    import json as j
-    import time as t
-    import urllib.error
-    import urllib.request
-
-    from dombridge import DomBridge
-
-    b = DomBridge(port=18877)
-    b.start()
-    for _ in range(50):  # 서버 기동 대기
-        try:
-            urllib.request.urlopen("http://127.0.0.1:18877/health", timeout=1)
-            break
-        except Exception:
-            t.sleep(0.05)
-    assert b.context() is None
-    body = j.dumps({"title": "x - YouTube", "video": {"present": True}}).encode()
-    # 토큰 없는 POST는 거부(403)
-    bad = urllib.request.Request("http://127.0.0.1:18877/context", data=body, method="POST")
-    try:
-        urllib.request.urlopen(bad, timeout=2)
-        assert False, "토큰 없이 통과됨"
-    except urllib.error.HTTPError as e:
-        assert e.code == 403
-    except ConnectionError:
-        pass  # 윈도우에서 서버가 403 응답 전에 연결을 끊는 경우가 있음 — 거부는 거부
-    assert b.context() is None  # 거부됐으니 저장 안 됨
-    # 올바른 토큰 → 수신
-    ok = urllib.request.Request("http://127.0.0.1:18877/context", data=body,
-                                headers={"X-Bridge-Token": b.token}, method="POST")
-    assert j.loads(urllib.request.urlopen(ok, timeout=2).read())["ok"]
-    ctx = b.context()
-    assert ctx and ctx["video"]["present"]
-    assert b.context(max_age=0.0) is None  # 오래된 데이터는 자동 폐기
-
-
 def test_build_prompt():
     from brain import WAKE_WORD, build_prompt
 
@@ -472,17 +435,6 @@ def test_one_euro():
     assert out[0] > 0.72                     # 목표 0.8까지 지연이 크지 않음
     f.reset()
     assert f((0.1, 0.1), t + 1)[0] == 0.1    # 리셋 후 새로 시작
-
-
-def test_wake_gate():
-    """시동어 게이트 판정 — 실측 로그 재현: 세션 밖 저점수(0.001, 호출어 없는 "계산기 켜줘")는 차단,
-    세션 안 저점수(후속 명령 "볼륨 올려")는 통과, 섀도는 무조건 통과."""
-    from brain import WAKE_THRESHOLD, wake_rejects
-    assert wake_rejects(0.001, in_session=False)                   # 세션 밖 비호출 → 차단 (API 절감)
-    assert not wake_rejects(0.001, in_session=True)                # 세션 안은 호출어 불필요 → 후속 명령 통과
-    assert not wake_rejects(0.95, in_session=False)                # 호출 → 통과
-    assert not wake_rejects(WAKE_THRESHOLD, in_session=False)      # 경계값은 통과
-    assert not wake_rejects(0.001, in_session=False, shadow=True)  # 섀도: 로그만, 차단 없음
 
 
 def test_wake_first_frame():
@@ -1220,11 +1172,9 @@ if __name__ == "__main__":
     test_swipe_detector()
     test_scale_by_hand_size()
     test_custom_gestures()
-    test_dom_bridge()
     test_build_prompt()
     test_one_euro()
     test_mouse_subpixel_accumulator()
-    test_wake_gate()
     test_wake_first_frame()
     test_speech_s()
     test_speaker_accum()
@@ -1234,4 +1184,4 @@ if __name__ == "__main__":
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
-    print("OK - 28/28 통과")
+    print("OK - 26/26 통과")

@@ -10,13 +10,12 @@ import json
 import queue
 import threading
 import time
-import uuid
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from hands import (CustomGestures, REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
+from hands import (REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, normalize_landmarks,
                    weighted_distance)
 from custom_motion import (
