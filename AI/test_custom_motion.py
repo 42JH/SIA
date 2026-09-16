@@ -195,10 +195,12 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("스와이프", payload["reason"])
 
-    def test_one_hand_dynamic_rejects_when_it_matches_builtin_scroll(self):
-        """스크롤은 기본 꺼져 있지만(enabled=False), 나중에 켜졌을 때를 대비해
-        등록 시점에는 항상 확인해야 한다 — 충돌검사가 감지기별로 따로 안 만들어도
-        BUILTIN_DYNAMIC_DETECTORS 목록에 있는 건 전부 자동으로 걸린다."""
+    def test_one_hand_dynamic_allows_scroll_like_motion(self):
+        """스크롤·핀치볼륨은 서비스가 기본 제공하는 9종(정적 7 + 스와이프 좌/우)에
+        안 들어가는, 아직 사용자에게 노출된 적 없는(enabled=False) 기능이라
+        BUILTIN_DYNAMIC_DETECTORS에서 뺐다 — "내장 스크롤과 비슷합니다"는 사용자가
+        이해할 수 없는 사유이기 때문. 그래서 스크롤과 똑같이 움직여도 통과해야
+        한다(나중에 스크롤이 실제로 켜지면 이 목록에 다시 넣는다)."""
         def vertical(t, side="Left"):
             pts = np.array([[i % 4 * 0.02, -(i // 4) * 0.025] for i in range(21)], dtype=float)
             pts[0] = 0
@@ -212,18 +214,36 @@ class MotionTests(unittest.TestCase):
             reg._collect([vertical(t)], t)
         reg.phase = "WAIT_FINISH"
         reg.finish()
-        event, payload = self.link.sent[-1]
-        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
-        self.assertIn("스크롤", payload["reason"])
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
 
-    def test_two_hand_dynamic_allows_same_slow_horizontal_motion(self):
-        """같은(느린 수평) 움직임이어도 양손이면 내장 스와이프(1손 전용) 검사 대상이
-        아니므로 거부되면 안 된다 — 검사 범위가 1손 동적에만 좁게 걸려야 한다."""
+    def test_two_hand_dynamic_rejects_when_either_hand_matches_builtin_swipe(self):
+        """양손이 같은(느린 수평) 움직임을 해도, 한 손만 놓고 보면 내장 스와이프와
+        똑같은 동작이면 거부돼야 한다 — 실행 중 2손 인식이 그 프레임만 실패하면
+        (핸드니스 오판 등) 그 손 하나의 raw 판정만으로 내장 스와이프가 새어
+        발동할 수 있기 때문에, 손마다 독립적으로 검사한다."""
         pair = lambda t: [hand(0.2 + t * 0.2, "Left"), hand(0.65 + t * 0.2, "Right")]
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
         reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
         for t in np.linspace(0, 1, 21):
             reg._collect(pair(t), t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("스와이프", payload["reason"])
+
+    def test_two_hand_dynamic_allows_motion_neither_hand_alone_resembles(self):
+        """두 손이 서로 반대로 제자리에서 회전만 하는(손목 이동은 거의 없는) 동작은
+        어느 손만 따로 봐도 내장 동작(스와이프/스크롤/핀치)과 안 겹치므로 통과해야
+        한다 — 손별 독립 검사가 진짜 2손 전용 동작까지 과하게 막으면 안 된다."""
+        pair = lambda i: [self.tilted_hand(0.2, -40 + i * 4, "Left"),
+                          self.tilted_hand(0.65, 40 - i * 4, "Right")]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(20):
+            reg._collect(pair(i), i * 0.05)
+        reg.hand_counts = [2] * 20
         reg.phase = "WAIT_FINISH"
         reg.finish()
         self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])

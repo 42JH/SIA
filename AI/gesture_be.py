@@ -16,9 +16,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hands import (CustomGestures, PalmScrollDetector, PinchVolumeDetector,
-                   SCREEN_SWIPE_CONFIG, SwipeDetector, normalize_landmarks,
-                   weighted_distance)
+from hands import (CustomGestures, SCREEN_SWIPE_CONFIG, SwipeDetector,
+                   normalize_landmarks, weighted_distance)
 from custom_motion import (
     CustomGestureStore, FRAMES, PREFIX_MIN_MOTION, distance, encode_sequence,
     ordered_landmarks, read_templates, template_bytes as encode_template_bytes,
@@ -476,33 +475,45 @@ class GestureRegistration:
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
 
-    # 1손 동적 등록이 겹쳐선 안 되는 내장 동적 감지기 목록 — (표시 이름, 실행 때와
-    # 같은 설정으로 새 인스턴스를 만드는 함수, 손 랜드마크에서 그 감지기가 원하는
-    # 입력을 뽑는 함수). 새 내장 동적 동작이 생기면 여기 한 줄만 추가하면 된다.
-    # 지금 기본으로 꺼져 있는 것(스크롤·핀치볼륨)도 나중에 켜질 걸 대비해 항상
-    # 켠 채로 재생한다 — 등록 시점에만 걸러지고 실제 라이브 동작에는 영향 없다.
+    # 동적 등록이 겹쳐선 안 되는 내장 동적 감지기 목록 — (표시 이름, 실행 때와 같은
+    # 설정으로 새 인스턴스를 만드는 함수, 손 랜드마크에서 그 감지기가 원하는 입력을
+    # 뽑는 함수). 서비스가 기본 제공하는 9종(정적 7 + 스와이프 좌/우)만 "내장"으로
+    # 안내한다 — 스크롤·핀치볼륨은 아직 사용자에게 노출된 적 없는(enabled=False)
+    # 기능이라 지금 "내장 스크롤과 비슷합니다"라고 하면 사용자가 이해할 수 없는
+    # 사유가 된다. 그 기능들이 실제로 켜질 때, 이 목록에 다시 추가한다.
     BUILTIN_DYNAMIC_DETECTORS = (
         ("스와이프", lambda: SwipeDetector(**SCREEN_SWIPE_CONFIG), lambda lm: tuple(lm[9])),
-        ("스크롤", lambda: PalmScrollDetector(enabled=True), lambda lm: tuple(lm[9])),
-        ("핀치 볼륨 조절", lambda: PinchVolumeDetector(enabled=True), lambda lm: lm),
     )
 
     def _builtin_dynamic_collision(self):
-        """1손 동적 등록이 내장 동적 감지기와 겹치는지, 실제 감지기로 그대로 재생해 확인한다.
+        """동적 등록이 내장 동적 감지기와 겹치는지, 실제 감지기로 그대로 재생해 확인한다.
 
         실행 때와 같은 감지기·같은 설정을 써서 "이 촬영이 실제로 라이브였다면
         내장 동작이 발동했을까"를 그대로 재현한다 — 근사치 규칙을 따로 만드는
         것보다 실제 판정 로직과 항상 일치하고, 목록에 등록만 해두면 다른 내장
         동적 감지기도 자동으로 같이 확인된다. 겹치면 이름을, 안 겹치면 None을
         돌려준다.
+
+        1손·2손 모두 손마다(handedness 기준, 감지 순서는 프레임마다 바뀔 수
+        있어 안 믿는다) 독립적으로 재생한다 — 2손 동작이라도 그중 한 손만의
+        움직임이 내장 동작과 겹치면, 실행 중 그 손 하나만 raw 판정으로 새는
+        순간(2손 커스텀 인식이 그 프레임만 실패하는 경우) 내장 동작이 조용히
+        발동할 수 있기 때문이다.
         """
         for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
             for take in range(1, self.takes + 1):
-                detector = make_detector()
+                detectors = {}
                 for t, hands in self.take_frames.get(take, []):
-                    probe = extract(hands[0]["landmarks"]) if hands else None
-                    if detector.update(probe, t):
-                        return name
+                    seen = set()
+                    for h in hands:
+                        side = h.get("handedness") or "?"
+                        seen.add(side)
+                        detector = detectors.setdefault(side, make_detector())
+                        if detector.update(extract(h["landmarks"]), t):
+                            return name
+                    for side, detector in detectors.items():
+                        if side not in seen:
+                            detector.update(None, t)
         return None
 
     def _upload_motion(self, hand_count):
@@ -561,12 +572,17 @@ class GestureRegistration:
         # nearest_sequence 충돌검사 대상에 없다. 그대로 두면 내장 동작과 똑같이
         # 움직이는 동작을 커스텀으로 등록해도 경고 없이 통과하는데, 실행 시에는
         # 커스텀 동작 추적이 우선순위를 가져가(앞서 고친 우선순위 가드) 내장 동작이
-        # 조용히 가려져 버린다 — 등록 시점에 미리 알려주는 게 낫다.
-        if hand_count == 1 and self.motion == self.DYNAMIC:
+        # 조용히 가려져 버린다 — 등록 시점에 미리 알려주는 게 낫다. 2손 동작도
+        # 검사 대상이다 — 한 손만의 움직임이 내장과 겹쳐도, 실행 중 2손 인식이
+        # 그 프레임만 실패하면 그 손 하나만으로 내장 동작이 새어나갈 수 있다.
+        if self.motion == self.DYNAMIC:
             collided = self._builtin_dynamic_collision()
             if collided:
+                # 1손 정적의 내장 겹침 문구와 형태를 맞춘다("내장 제스처 'X'와
+                # 너무 유사합니다") — 정적은 프레임 비율(N/M)이 자연스럽게
+                # 붙지만, 동적은 감지기 재생 결과(예/아니오)라 그 부분만 없다.
                 raise GestureRegistrationRejected(
-                    f"내장 {collided} 동작과 너무 비슷합니다", similar_to=collided
+                    f"내장 제스처 '{collided}'와 너무 유사합니다", similar_to=collided
                 )
         dist, near = min(
             (self.custom_store.nearest_sequence(seq, self.motion, hand_count) for seq in sequences),
