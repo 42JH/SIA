@@ -768,8 +768,8 @@ def main():
                 if swipe_hand_changed:
                     palm_motion.update(None, now)
                 motion_event = palm_motion.update(
-                    scale_by_hand_size(swipe_hand["anchor"], swipe_hand["size"])
-                    if swipe_hand and not pinch_volume._pinched else None, now)
+                    swipe_hand["anchor"] if swipe_hand and not pinch_volume._pinched else None,
+                    now, size=swipe_hand["size"] if swipe_hand else None)
                 scroll_steps = palm_scroll.update(
                     scale_by_hand_size(hand["anchor"], hand["size"])
                     if hand and not pinch_volume._pinched else None, now)

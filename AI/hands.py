@@ -333,6 +333,17 @@ def normalize_landmarks(lm_xy):
     return (a / (np.linalg.norm(a[9]) + 1e-9)).ravel()
 
 
+def pose_distances(templates, feature):
+    """회전 정렬된 한 손 자세를 원본/좌우 반전 중 가까운 쪽으로 비교한다.
+
+    기존 저장 특징은 수정하지 않으므로 반대 손으로 찍은 예전 템플릿도 지원한다.
+    """
+    mirrored = np.array(feature, copy=True)
+    mirrored[0::2] *= -1
+    return np.minimum(weighted_distance(templates - feature),
+                      weighted_distance(templates - mirrored))
+
+
 class CustomGestures:
     """사용자 정의 제스처 저장소 + kNN 분류기.
 
@@ -394,7 +405,7 @@ class CustomGestures:
         if self.n == 0:
             return None, float("inf")
         f = normalize_landmarks(lm_xy)
-        d = weighted_distance(self.X - f)
+        d = pose_distances(self.X, f)
         idx = np.argsort(d)[:k]
         nearest = float(d[idx[0]])
         if nearest > self.thresh:
@@ -413,7 +424,7 @@ class CustomGestures:
         if self.n == 0:
             return None
         f = normalize_landmarks(lm_xy)
-        d = weighted_distance(self.X - f)
+        d = pose_distances(self.X, f)
         idx = np.argsort(d)[:k]
         if float(d[idx[0]]) > self.thresh:  # 가장 가까운 샘플조차 멀면 기권
             return None
@@ -433,7 +444,7 @@ class CustomGestures:
         best_name, best_d = None, float("inf")
         for name in self.class_names():
             cls = self.X[[i for i, n in enumerate(self.names) if n == name]]
-            dd = float(min(weighted_distance(cls - f).min() for f in feats))
+            dd = float(min(pose_distances(cls, f).min() for f in feats))
             if dd < best_d:
                 best_name, best_d = name, dd
         return best_name, best_d
@@ -509,6 +520,7 @@ class SwipeDetector:
         self._resume_after_cooldown = False
         self._lock_still_since = None
         self._last_point = None  # (t, x, y) 직전 프레임 — 클리어와 무관하게 유지
+        self._input_scale = None
 
     def prime(self, anchor, t):
         """이미 손바닥 홀드로 확인된 위치에서 즉시 스와이프를 받을 준비를 한다."""
@@ -519,7 +531,15 @@ class SwipeDetector:
         self._armed = True
         self._hist.append((t, x, y))
 
-    def update(self, anchor, t):
+    def update(self, anchor, t, size=None):
+        # 추적 시작 시 배율을 고정한다. 매 프레임 절대 좌표의 배율을 바꾸면
+        # 크기 추정 변화만으로 가짜 좌우 이동이 생긴다.
+        if anchor is None:
+            self._input_scale = None
+        elif size is not None:
+            if self._input_scale is None:
+                self._input_scale = REFERENCE_PALM_SIZE / max(float(size), 1e-6)
+            anchor = tuple(float(v) * self._input_scale for v in anchor)
         if anchor is None:  # 손 사라짐 → 리셋 (재등장 후 정지해야 무장)
             self._hist.clear()
             self._armed = False
