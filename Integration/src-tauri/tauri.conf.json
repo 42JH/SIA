@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../Frontend/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev --prefix ../Frontend",
-    "beforeBuildCommand": "npm run build --prefix ../Frontend"
+    "beforeDevCommand": "node scripts/sync-overlay.cjs && npm run dev --prefix ../Frontend",
+    "beforeBuildCommand": "node scripts/sync-overlay.cjs && npm run build --prefix ../Frontend"
   },
   "app": {
     "windows": [
@@ -19,11 +19,29 @@
         "resizable": true,
         "fullscreen": false,
         "visible": true
+      },
+      {
+        "label": "overlay",
+        "title": "SIA Overlay",
+        "url": "overlay/index.html",
+        "width": 1920,
+        "height": 1080,
+        "x": 0,
+        "y": 0,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": true,
+        "focus": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,

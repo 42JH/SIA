@@ -2,15 +2,16 @@
 //! 알림류 이벤트를 받는다. 인증 없음, 고정 URL(포트 8080), 2초 고정 재연결 —
 //! feSocket.js 와 정책을 그대로 맞췄다 (FE와 동시에 붙어도 되는지는 실행해서 확인 중).
 //!
-//! 지금 단계는 뼈대만: 연결·재연결·{type, data} 봉투 파싱까지만 하고, kind별
-//! 실제 처리(네이티브 토스트 / 오버레이 창 분기)는 handle_event()에서 다음 단계로 이어간다.
+//! kind별 판단은 전혀 하지 않고, 받은 {type, data} 봉투를 그대로 overlay 창에
+//! emit만 한다 — 실제 표시 로직(토스트 vs 진행상태, 자동 소멸 시간 등)은 전부
+//! overlay/index.html의 JS가 담당한다.
 
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Frontend/src/ws/feSocket.js 의 WS_URL 과 동일. 포트 정책은 아직 TBD (Integration/Agents.md 참고) —
@@ -64,15 +65,23 @@ fn handle_raw(app: &AppHandle, text: &str) {
     handle_event(app, &envelope.kind, &envelope.data);
 }
 
-/// kind별 실제 처리 — 다음 단계(네이티브 토스트 매핑, 오버레이 창 배선)에서 구현.
-/// 지금은 수신 확인용 로그만 남긴다.
-///
-/// 목표 매핑 (알림/팝업 네이티브 전환 설계 확정본):
-///   notice/success, unknown_command, summary, tool_result, gesture_result,
-///   capture_saved, voice_rejected, error, session_state(boot) → 네이티브 토스트
-///   confirm/choices → 네이티브 토스트 (응답 대기 없음 — 음성으로 별도 처리됨)
-///   listening, session_countdown → 오버레이 창
-fn handle_event(_app: &AppHandle, kind: &str, data: &Value) {
+/// `overlay` 창으로 보내는 이벤트 payload. 오버레이의 `Integration/overlay/index.html`이
+/// `window.__TAURI__.event.listen("sia://notify", ...)`로 그대로 받아서 kind별로 그린다 —
+/// 여기서는 판단하지 않고 그대로 중계만 한다 (네이티브 토스트는 쓰지 않기로 결정 — 오버레이
+/// 창 하나로 통합, Frontend의 기존 팝업 디자인을 그대로 옮겨왔다).
+#[derive(Serialize)]
+struct OverlayPayload<'a> {
+    kind: &'a str,
+    data: &'a Value,
+}
+
+/// BE에서 온 이벤트를 그대로 오버레이 창에 전달한다. kind별 분기·표시 로직은 전부
+/// overlay/index.html 쪽에 있다 (notificationStore.js·TopNotification.jsx·BootToast.jsx를
+/// 그대로 포팅함 — 알림/팝업 네이티브 전환 핸드오프 스펙 참고).
+fn handle_event(app: &AppHandle, kind: &str, data: &Value) {
     log::info!("[notify_bridge] 수신: {kind} {data}");
-    // TODO: kind → 네이티브 토스트 / 오버레이 창 분기 구현
+    let payload = OverlayPayload { kind, data };
+    if let Err(err) = app.emit_to("overlay", "sia://notify", &payload) {
+        log::warn!("[notify_bridge] 오버레이로 전달 실패: {err}");
+    }
 }

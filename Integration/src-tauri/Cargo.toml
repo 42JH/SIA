@@ -24,7 +24,6 @@ log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-notification = "2"
 tokio = { version = "1", features = ["time", "rt", "net"] }
 # /ws/fe 브릿지(notify_bridge.rs)용 — 버전은 미검증, cargo check로 확인 필요
 tokio-tungstenite = "0.24"

@@ -41,7 +41,6 @@ struct SidecarChildren {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_notification::init())
         .manage(SidecarChildren::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -83,7 +82,12 @@ pub fn run() {
             // --- BE -> (준비 확인) -> AI 순서로 sidecar 기동 ---
             spawn_sidecars(app.handle().clone());
 
-            // --- /ws/fe 알림 브릿지 (네이티브 토스트/오버레이) ---
+            // --- 오버레이 창: 클릭을 절대 받지 않음(순수 표시 전용) ---
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                overlay.set_ignore_cursor_events(true)?;
+            }
+
+            // --- /ws/fe 알림 브릿지 (하나의 오버레이 창: 토스트 + 진행상태) ---
             notify_bridge::spawn(app.handle().clone());
 
             Ok(())
