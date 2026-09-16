@@ -66,7 +66,7 @@ function ConfirmContent({ notification }) {
 
   return (
     <NotificationRow
-      icon="question"
+      icon="trash"
       message={notification.message}
       trailing={<Countdown value={remaining} />}
     />
@@ -88,19 +88,27 @@ function UnknownCommandContent({ notification }) {
 }
 
 function SummaryContent({ notification }) {
+  const completed = notification.items.length > 0;
   return (
     <div className={styles.detailContent}>
       <NotificationRow
         icon="summary"
         message={notification.message}
-        trailing={notification.items.length > 0
-          ? <span className={styles.count}>{notification.items.length}문장</span>
-          : null}
+        trailing={<span className={styles.count}>{completed ? `${notification.items.length}문장` : "요약 중"}</span>}
       />
-      {notification.items.length > 0 && (
+      {completed ? (
         <ol className={styles.summaryList}>
           {notification.items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
         </ol>
+      ) : (
+        <div className={styles.summarySkeleton} aria-label="요약 중">
+          <span className={styles.skeletonAvatar} />
+          <span className={styles.skeletonShort} />
+          <span className={styles.skeletonMedium} />
+          <span className={styles.skeletonLong} />
+          <span className={styles.skeletonLast} />
+          <span className={styles.summarySpinner} />
+        </div>
       )}
     </div>
   );
@@ -171,14 +179,39 @@ function SessionCountdownContent({ deadlineMs }) {
     if (remaining === 0) dismiss();
   }, [dismiss, remaining]);
 
-  return <NotificationRow icon="clock" message={`${remaining}초 후 대기 상태로 돌아갑니다.`} />;
+  return (
+    <div className={styles.row}>
+      <TimerRing value={remaining} total={15} />
+      <p className={styles.message}>{remaining}초 후 대기 상태로 돌아갑니다.</p>
+    </div>
+  );
 }
 
 function Countdown({ value }) {
-  return <span className={styles.countdown} aria-label={`${value}초 남음`}>{value}</span>;
+  return <TimerRing value={value} total={10} showValue />;
+}
+
+function TimerRing({ value, total, showValue = false }) {
+  const progress = Math.max(0, Math.min(1, value / total));
+  return (
+    <span
+      className={styles.timerRing}
+      style={{ "--timer-progress": `${progress * 360}deg` }}
+      aria-label={`${value}초 남음`}
+    >
+      {showValue && <span>{value}</span>}
+    </span>
+  );
 }
 
 function NotificationIcon({ name }) {
+  if (name === "microphone") {
+    return (
+      <span className={`${styles.icon} ${styles.listeningIcon}`} aria-hidden="true">
+        <i /><i /><i />
+      </span>
+    );
+  }
   return (
     <span className={`${styles.icon} ${name === "spinner" ? styles.spinner : ""}`} aria-hidden="true">
       {name !== "spinner" && <IconSvg name={name} />}
@@ -188,11 +221,10 @@ function NotificationIcon({ name }) {
 
 function IconSvg({ name }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
-  if (name === "microphone") return <svg viewBox="0 0 24 24" {...common}><rect x="8" y="3" width="8" height="13" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" /></svg>;
   if (name === "check") return <svg viewBox="0 0 24 24" {...common}><path d="m6 12 4 4 8-9" /></svg>;
   if (name === "warning") return <svg viewBox="0 0 24 24" {...common}><path d="M12 5v9M12 18h.01" /></svg>;
   if (name === "info") return <svg viewBox="0 0 24 24" {...common}><path d="M12 10v7M12 7h.01" /></svg>;
   if (name === "summary") return <svg viewBox="0 0 24 24" {...common}><path d="M7 8h10M7 12h10M7 16h6" /></svg>;
-  if (name === "clock") return <svg viewBox="0 0 24 24" {...common}><circle cx="12" cy="12" r="8" /><path d="M12 8v5l3 2" /></svg>;
+  if (name === "trash") return <svg viewBox="0 0 24 24" {...common}><path d="M7 8h10v11H7zM9 5h6M10 3h4" /></svg>;
   return <svg viewBox="0 0 24 24" {...common}><path d="M9.7 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1.2.9-1.2 1.7M12 17h.01" /></svg>;
 }
