@@ -485,6 +485,19 @@ def test_wake_gate():
     assert not wake_rejects(0.001, in_session=False, shadow=True)  # 섀도: 로그만, 차단 없음
 
 
+def test_wake_first_frame():
+    """호출어 끝 = 처음 임계를 넘은 프레임. 점수가 플래토를 이루면 최고점은 그 위 아무 데나 찍혀 뒤에 붙은 명령 끝까지 밀린다."""
+    from types import SimpleNamespace
+    from brain import WAKE_MODEL, WAKE_THRESHOLD, wake_score_of
+
+    plateau = [0.0, 0.0, 0.6, 0.999, 0.999, 0.999, 0.2]
+    model = SimpleNamespace(predict_clip=lambda audio: [{WAKE_MODEL.stem: s} for s in plateau])
+    top, i_first, lead = wake_score_of(model, np.zeros(16000, np.int16))
+    assert top == 0.999 and i_first == 2 and lead == 0
+    below = SimpleNamespace(predict_clip=lambda audio: [{WAKE_MODEL.stem: WAKE_THRESHOLD - 0.01}])
+    assert wake_score_of(below, np.zeros(16000, np.int16))[1] is None
+
+
 def test_speech_s():
     """유성 초 — voice_rejected 이벤트 가드. 2 s 소리 + 1 s 무음 → 2.0, 무음만 → 0, 빈 입력 → 0."""
     from brain import SPEAKER_JUDGE_SPEECH_S, speech_s
@@ -1212,6 +1225,7 @@ if __name__ == "__main__":
     test_one_euro()
     test_mouse_subpixel_accumulator()
     test_wake_gate()
+    test_wake_first_frame()
     test_speech_s()
     test_speaker_accum()
     test_voice_bridge()
@@ -1220,4 +1234,4 @@ if __name__ == "__main__":
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
-    print("OK - 27/27 통과")
+    print("OK - 28/28 통과")

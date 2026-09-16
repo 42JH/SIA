@@ -47,7 +47,7 @@ WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openW
 WAKE_THRESHOLD = 0.5      # NOTE(튜닝): predict_clip 최대 점수 하한. 노트북 마이크+Windows 오디오 향상
                           # 채널 실측 기준 인식 98.3%·본인 비호출 오발 0 — 채널이 바뀌면 재선정할 것
 WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정만 로그, 발화는 그대로 LLM으로 (실측용)
-SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(시동어 점수 최고점) 앞 1 s + 뒤 2 s 만 넣는다.
+SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(첫 임계 넘음) 앞 1 s + 뒤 2 s 만 넣는다.
                           # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
                           # 앞을 1.7 s 로 늘리거나 앞뒤 1.5 s 씩 잡으면 배경음이 더 들어와 본인 호출을 놓친 사례 있음.
                           # 발화가 3 s 이하거나 시동어를 못 넘은 발화(세션 안 명령)는 자르지 않는다.
@@ -61,9 +61,9 @@ NOISE_RMS = 350.0         # NOTE(튜닝): 조용한 블록(하위 20%)의 rms �
 WAKE_CLIP_MAX_S = 2.5     # NOTE(튜닝): 호출어 구간으로 잘라낼 수 있는 최대 길이. WAKE_MAX_S(말소리 2.0 s)에
                           # 단어 사이 틈을 더한 값 — 등록에서 받아 주는 길이는 실행에서도 잘리지 않아야 한다.
 WAKE_CLIP_PAD_S = 0.15    # 말소리 앞뒤로 남기는 여유. 첫 음절이 깎이면 임베딩이 흔들린다
-WAKE_CLIP_TAIL_JOIN_S = 0.05  # 최고점 뒤로 말소리가 쉬지 않고 이어질 때만 쓰는 더 짧은 꼬리 — 그 뒤는
+WAKE_CLIP_TAIL_JOIN_S = 0.05  # 호출어 끝 뒤로 말소리가 쉬지 않고 이어질 때만 쓰는 더 짧은 꼬리 — 그 뒤는
                           # 호출어가 아니라 이어진 명령(다른 사람일 수도 있다)이므로 여유를 거의 두지 않는다
-WAKE_CLIP_TAIL_S = 0.15   # 시동어 최고점(호출어가 끝난 지점) 뒤로 더 보는 시간. 짧게 두는 게 요점이다 —
+WAKE_CLIP_TAIL_S = 0.15   # 첫 임계 넘음(i_max, 호출어가 끝난 지점) 뒤로 더 보는 시간. 짧게 두는 게 요점이다 —
                           # "시아야 크롬 열어줘" 에서 뒤에 이어진 명령까지 넣으면 그 명령을 말한 사람
                           # (다른 사람일 수 있다)으로 호출자의 신원을 판정하게 된다.
                           # 명령 오디오가 버려지는 것은 아니다: 판정에만 이 구간을 쓰고 LLM 에는 발화 전체가 그대로 간다.
@@ -420,7 +420,7 @@ def speaker_input(audio, i_max, lead=0, sr=16000):
 
 
 def wake_score_of(model, audio):
-    """시동어 모델 채점 → (최고 점수, 최고점 프레임 또는 None, 앞에서 잘라 낸 샘플 수).
+    """시동어 모델 채점 → (최고 점수, 처음 임계를 넘은 프레임(호출어가 끝난 지점에 가장 가깝다) 또는 None, 앞에서 잘라 낸 샘플 수).
     점수가 임계 미만이면 앞 WAKE_LEAD_TRIM_S 를 떼고 한 번 더 본다 — 호출어 앞에 배경이 길게 붙으면
     점수가 무너진다. 등록(voice_bridge)과 실행(run)이 같이 쓴다."""
     scores = [float(p[WAKE_MODEL.stem]) for p in model.predict_clip(audio)]  # np.float32는 json 불가
@@ -431,8 +431,12 @@ def wake_score_of(model, audio):
         if max(s2) > max(scores):
             scores, lead = s2, n_lead
     top = round(max(scores), 3)
-    # 시동어를 넘은 발화만 최고점 프레임을 돌려준다 — 못 넘은 발화는 최고점 위치가 무의미하다
-    return top, (int(np.argmax(scores)) if top >= WAKE_THRESHOLD else None), lead
+    # 시동어를 넘은 발화만 처음 임계를 넘은 프레임을 돌려준다 — 못 넘은 발화는 그 위치가 무의미하다.
+    # 실측(eval/cases 44건): 처음 임계를 넘은 프레임은 언제나 호출어 말소리가 끝난 뒤 0.04~0.77 s 에 온다.
+    # 최고점(argmax)은 첫 넘음보다 최대 0.8 s 뒤에 찍혀, 호출어 뒤에 붙은 짧은 명령 끝까지 밀린다 —
+    # 그래서 호출어+명령 16건 중 4건이 단독 호출로 오판됐다. 첫 넘음 기준으로는 0건.
+    return top, (next((i for i, s in enumerate(scores) if s >= WAKE_THRESHOLD), None)
+                 if top >= WAKE_THRESHOLD else None), lead
 
 
 def noise_level(audio_i16, block=480):
@@ -459,11 +463,11 @@ def speech_span(audio_i16, sr=16000, floor=350.0, block=480):
 def wake_clip(audio, i_max, lead=0, sr=16000):
     """호출어 구간 → (오디오, 시작 s, 끝 s, 경계 확실함). 등록과 실행이 같이 쓰는 전처리다.
 
-    시동어 최고점(i_max)이 호출어가 끝난 지점이다. 거기서 짧은 꼬리만 더 보고 끊고, 앞으로는 말소리를
+    처음 임계를 넘은 프레임(i_max)이 호출어가 끝난 지점에 가장 가깝다. 거기서 짧은 꼬리만 더 보고 끊고, 앞으로는 말소리를
     따라 WAKE_CLIP_MAX_S 까지만 잡는다. 쉬지 않고 말이 이어지면 꼬리를 더 줄인다 — 그 뒤는 호출어가
-    아니라 이어진 명령이고 다른 사람일 수도 있다. 최고점이 말소리보다 앞에 찍혀 구간이 무너지면
+    아니라 이어진 명령이고 다른 사람일 수도 있다. 첫 임계 넘음이 말소리보다 앞에 찍혀 구간이 무너지면
     경계를 못 믿는 것으로 본다. 원본 오디오는 그대로 남는다.
-    NOTE(한계): 최고점에 오차가 있고 화자를 가르지는 않는다 — 늦게 찍히고 곧바로 다른 사람이 말하면
+    NOTE(한계): 첫 임계 넘음에 오차가 있고 화자를 가르지는 않는다 — 늦게 찍히고 곧바로 다른 사람이 말하면
     꼬리만큼 섞인다. 실제 연속 발화로 구간 분리의 정확도를 확인해야 한다."""
     span = speech_span(audio, sr)
     if span is None:
@@ -471,7 +475,7 @@ def wake_clip(audio, i_max, lead=0, sr=16000):
     start, end = span
     peak = i_max * WAKE_FRAME_S - WAKE_PAD_S + lead / sr           # 호출어가 끝난 시각
     tail = WAKE_CLIP_TAIL_S if end <= peak + WAKE_CLIP_TAIL_S else WAKE_CLIP_TAIL_JOIN_S
-    end = hi = min(end, peak + tail)                               # 최고점 뒤로는 더 보지 않는다 —
+    end = hi = min(end, peak + tail)                               # 호출어 끝 뒤로는 더 보지 않는다 —
     lo = max(0.0, max(start - WAKE_CLIP_PAD_S, end - WAKE_CLIP_MAX_S))  # 여유를 더하면 이어진 명령이 다시 들어온다
     if hi - lo < 0.1:
         lo, hi = max(0.0, start - WAKE_CLIP_PAD_S), min(len(audio) / sr, start + WAKE_CLIP_MAX_S)
@@ -507,14 +511,14 @@ def wake_only(audio, i_max, lead=0, sr=16000):
     """호출어 구간만 있고 앞뒤에 다른 말소리가 없으면 단독 호출 후보로 본다.
 
     화자 일치는 별도로 확인한다. 뒤에 짧은 명령이 붙거나 경계·품질이 불확실하면 기존 명령 처리로 넘긴다.
-    NOTE(한계): 시동어 최고점으로 경계를 추정하므로, 호출어와 명령이 이어진 녹음으로 확인해야 한다.
+    NOTE(한계): 첫 임계 넘음(i_max)으로 경계를 추정하므로, 호출어와 명령이 이어진 녹음으로 확인해야 한다.
     """
     if i_max is None:
         return False
     clip, start, end, certain = wake_clip(audio, i_max, lead, sr)
     span = speech_span(audio, sr)
     # 임베딩용 꼬리(0.15초)를 단독 호출 판정에 쓰면 짧게 붙인 명령까지 삼킨다.
-    # 여기서는 최고점의 프레임 반 칸 오차까지만 허용한다.
+    # 여기서는 첫 넘음 뒤 프레임 반 칸까지만 호출어 꼬리로 본다.
     boundary = i_max * WAKE_FRAME_S - WAKE_PAD_S + lead / sr + WAKE_FRAME_S / 2
     if not certain or span is None or span[0] < start or span[1] > min(end, boundary):
         return False
@@ -1011,7 +1015,8 @@ class Brain(threading.Thread):
                               accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0
                               accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
                               wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
-                              i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
+                              i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # i_max 는 처음 임계를 넘은 프레임.
+                              # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
                               session=t_utter < self._session_until(),
                               audio_is_speech=result.get("audio_is_speech"),
                               wake_heard=result.get("wake_heard"),
