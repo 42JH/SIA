@@ -147,7 +147,7 @@ def test_wake_only_keeps_attached_commands():
     assert not wake_only(np.full(48000, 1000, np.int16), peak)  # 배경음·잘린 구간
     lead = 16000
     assert wake_only(np.concatenate([np.zeros(lead, np.int16), head, silence]), peak, lead)
-    fast = np.concatenate([np.zeros(6720, np.int16), np.full(6240, 1000, np.int16), silence])  # 말소리 0.39초
+    fast = np.concatenate([np.zeros(6720, np.int16), np.full(2400, 1000, np.int16), silence])  # 말소리 0.15초
     fast_peak = int(round((speech_span(fast)[1] + WAKE_PAD_S) / WAKE_FRAME_S))
     assert wake_only(fast, fast_peak)
     clip, _, end, certain = wake_clip(fast, fast_peak)
