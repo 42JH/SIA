@@ -97,13 +97,13 @@ export default function DashboardHome() {
   const panelTitle = view === 'gestures' ? (registration ? registrationTitle : '제스처') : view === 'voice' ? '보이스' : '시선';
   const back = () => { if (view === 'gestures' && registration) { useGestureStore.getState().closeRegistration(); return; } open('home'); };
   return <main className={`${styles.page} ${styles[`view_${view}`] ?? ''}`}>
-    <header className={styles.header}><button className={styles.brand} onClick={() => open('home')} aria-label="대시보드 홈"><SiaLogo /></button><span /><button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴"><i /><i /><i /></button></header>
+    <header className={styles.header}><button className={styles.brand} onClick={() => open('home')} aria-label="대시보드 홈"><SiaLogo /></button><span />{!(registration && ['form', 'complete'].includes(registration.stage)) && <button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴"><i /><i /><i /></button>}</header>
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
     <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
       {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} />}
-      {['gestures', 'voice', 'gaze'].includes(view) && <div className={styles.panelHeading}><button onClick={back}>‹</button><h1>{panelTitle}</h1></div>}
-      {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel />}{view === 'gaze' && <GazePanel />}{view === 'settings' && <SettingsPanel />}
+      {['gestures', 'gaze'].includes(view) && <div className={styles.panelHeading}><button onClick={back}>‹</button><h1>{panelTitle}</h1></div>}
+      {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel onBack={back} />}{view === 'gaze' && <GazePanel />}{view === 'settings' && <SettingsPanel />}
     </section>
   </main>;
 }

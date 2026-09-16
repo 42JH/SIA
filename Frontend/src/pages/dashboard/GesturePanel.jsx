@@ -80,7 +80,15 @@ function buildDefaultGestures(items) {
 
 const displayName = (gesture) => gesture.custom ? gesture.name : (gesture.label || gesture.name);
 const displayTool = (step) => toolLabels[step.tool] || step.tool;
-const initialStep = () => ({ tool: '', args: {}, delayMs: '' });
+const initialStep = () => ({ tool: '', args: {} });
+
+function CameraIcon({ video = false }) {
+  return video ? (
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="9" y="17" width="33" height="30" rx="4" /><path d="m42 26 13-7v26l-13-7Z" /></svg>
+  ) : (
+    <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M20 18h6l3-6h10l3 6h6a7 7 0 0 1 7 7v22a7 7 0 0 1-7 7H16a7 7 0 0 1-7-7V25a7 7 0 0 1 7-7Z" /><circle cx="32" cy="36" r="10" /></svg>
+  );
+}
 
 const directionLabels = { up: '위', down: '아래', left: '왼쪽', right: '오른쪽' };
 const presetLabels = { LEFT_HALF: '화면 왼쪽 절반', RIGHT_HALF: '화면 오른쪽 절반', CENTER: '화면 가운데' };
@@ -101,7 +109,6 @@ function displayStepDetail(step, apps) {
     else if (key === 'level') displayed = `${value}%`;
     return `${argumentLabels[key] || key}: ${displayed}`;
   });
-  if (step.delayMs) details.push(`실행 전 ${step.delayMs}ms 대기`);
   return details.join(' · ') || '추가 설정 없이 실행';
 }
 
@@ -122,7 +129,6 @@ function toEditableSteps(steps = []) {
   return steps.map((step) => ({
     tool: step.tool,
     args: step.args || {},
-    delayMs: step.delayMs ?? '',
   }));
 }
 
@@ -138,7 +144,7 @@ function HoverPreview({ gesture, large = false }) {
   };
 
   return (
-    <div className={`${styles.preview} ${large ? styles.largePreview : ''}`} onMouseEnter={start} onMouseLeave={stop}>
+    <div className={`${styles.preview} ${large ? styles.largePreview : ''} ${gesture.custom ? styles.customPreview : styles.defaultPreview}`} onMouseEnter={start} onMouseLeave={stop}>
       {url ? (isImage
         ? <img src={url} alt={`${displayName(gesture)} 제스처`} />
         : <video ref={videoRef} src={url} muted loop playsInline preload="metadata" />)
@@ -205,10 +211,7 @@ export default function GesturePanel() {
   return (
     <>
       <div className={styles.toolbar}>
-        <div>
-          <h2>제스처</h2>
-          <p>제스처를 켜거나 끄고, 원하는 동작에 기능을 연결할 수 있습니다.</p>
-        </div>
+        <span />
         <button className={styles.primary} onClick={beginRegistration}>+ 새 제스처 등록</button>
       </div>
       {loading && <p role="status">제스처를 불러오는 중입니다.</p>}
@@ -242,8 +245,7 @@ function GestureSection({ title, items, onSelect, onToggle, empty }) {
             <i />
           </label>
           <HoverPreview gesture={gesture} />
-          <strong>{displayName(gesture)}</strong>
-          <span>{gesture.custom ? '커스텀' : `기본 제공${gesture.enabled ? '' : ' · 꺼짐'}`}</span>
+          <div className={styles.cardInfo}><strong>{displayName(gesture)}</strong><span>{gesture.steps?.[0] ? displayTool(gesture.steps[0]) : gesture.custom ? '연결 기능 없음' : '기본 제공'}</span><small className={styles.cardAction}>상세 보기 <b>›</b></small></div>
           {gesture.custom && !gesture.runnable && <small className={styles.warning}>현재 사용할 수 없는 기능이 포함되어 있습니다.</small>}
         </article>
       ))}</div> : <p className={styles.empty}>{empty}</p>}
@@ -307,30 +309,28 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
   return (
     <div className={styles.backdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={styles.detailModal} role="dialog" aria-modal="true" aria-labelledby="gesture-detail-title">
-        <header><button onClick={onClose} aria-label="닫기">‹</button><h2 id="gesture-detail-title">{editing ? '제스처 수정' : '제스처 상세'}</h2><button onClick={onClose} aria-label="닫기">×</button></header>
-        {editing ? <GestureForm
-          custom={gesture.custom}
-          name={name} setName={setName} description={description} setDescription={setDescription}
-          repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={error}
-        /> : <div className={styles.detailBody}>
-          <HoverPreview gesture={gesture} large />
-          <h3>{displayName(gesture)}</h3>
-          <p className={styles.gestureDescription}>{gesture.description?.trim() || '등록된 제스처 설명이 없습니다.'}</p>
-          <p className={styles.meta}>{gesture.custom ? `커스텀 제스처${gesture.createdAt ? ` · 등록일 ${gesture.createdAt.slice(0, 10)}` : ''}` : '기본 제공 제스처'}</p>
-          {!gesture.virtual && <div className={styles.detailToggle}><span>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
-          {!!gesture.steps?.length && <div className={styles.macroSummary}>
-            <h4>실행 동작</h4>
-            <p>제스처를 인식하면 아래 기능을 순서대로 실행합니다.</p>
-            <ol className={styles.stepSummary}>{gesture.steps.map((step, index) => <li key={`${step.tool}-${index}`}>
-              <strong>{displayTool(step)}</strong>
-              <span>{displayStepDetail(step, apps)}</span>
-            </li>)}</ol>
-          </div>}
-        </div>}
-        <footer className={styles.actions}>
-          {editing ? <><button onClick={() => setEditing(false)}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '저장'}</button></> : gesture.custom ? <><button onClick={() => setEditing(true)}>수정</button><button onClick={() => setConfirmDelete(true)}>삭제</button></> : <><button disabled={gesture.virtual} title={gesture.virtual ? '백엔드 기본 제스처 등록이 필요합니다.' : undefined} onClick={() => setEditing(true)}>기능 지정</button><button onClick={onClose}>확인</button></>}
-        </footer>
-        {confirmDelete && <div className={styles.innerBackdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><h3>제스처를 삭제하시겠습니까?</h3><p>“{displayName(gesture)}”의 영상과 학습 데이터도 함께 삭제됩니다.</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
+        <header><button onClick={onClose} aria-label="닫기">‹</button><h2 id="gesture-detail-title">{editing ? (gesture.custom ? '제스처 수정' : '기본 제스처 기능 수정') : gesture.custom ? '제스처 상세' : '기본 제스처 상세'}</h2><button onClick={onClose} aria-label="닫기">×</button></header>
+        <div className={styles.detailLayout}>
+          <div className={styles.detailMedia}><h3>{gesture.custom ? '촬영된 동작' : '기본 제스처'}</h3><HoverPreview gesture={gesture} large /><small>{gesture.custom ? 'SIA AI VISION' : 'SIA DEFAULT GESTURE'}</small></div>
+          <div className={styles.detailPanel}>
+            {editing ? <GestureForm
+              custom={gesture.custom}
+              name={name} setName={setName} description={description} setDescription={setDescription}
+              repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={error}
+            /> : <div className={styles.detailBody}>
+              <small>GESTURE NAME</small><h3>{displayName(gesture)}</h3>
+              <small>GESTURE TYPE</small><strong>{gesture.custom ? '커스텀 제스처' : '기본 제공 제스처'}</strong>
+              <small>LINKED ACTION</small><strong>{gesture.steps?.length ? gesture.steps.map(displayTool).join(' → ') : '연결된 기능 없음'}</strong>
+              {gesture.createdAt && <><small>REGISTRATION DATE</small><strong>등록일 {gesture.createdAt.slice(0, 10)}</strong></>}
+              {!gesture.custom && <p>기본 제스처의 이름과 동작은 변경할 수 없습니다.</p>}
+              {!gesture.virtual && <div className={styles.detailToggle}><span><small>USAGE</small>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
+            </div>}
+            <footer className={styles.actions}>
+              {editing ? <><button onClick={() => setEditing(false)}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '저장'}</button></> : gesture.custom ? <><button onClick={() => setEditing(true)}>수정</button><button className={styles.primary} onClick={() => setConfirmDelete(true)}>삭제</button></> : <button className={styles.primary} disabled={gesture.virtual} title={gesture.virtual ? '백엔드 기본 제스처 등록이 필요합니다.' : undefined} onClick={() => setEditing(true)}>기능 수정</button>}
+            </footer>
+          </div>
+        </div>
+        {confirmDelete && <div className={styles.innerBackdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>‘{displayName(gesture)}’ 제스처를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
       </section>
     </div>
   );
@@ -348,7 +348,7 @@ function parseSteps(steps) {
     ['amount', 'level', 'x1', 'y1', 'x2', 'y2'].forEach((key) => {
       if (args[key] !== undefined) args[key] = Number(args[key]);
     });
-    return { tool: step.tool, args, ...(step.delayMs === '' ? {} : { delayMs: Number(step.delayMs) }) };
+    return { tool: step.tool, args };
   });
 }
 
@@ -366,7 +366,6 @@ function GestureForm({ custom = true, name, setName, description, setDescription
     <div><span>이 제스처로 실행할 기능</span>{steps.map((step, index) => <div className={styles.stepEditor} key={index}>
       <b>{index + 1}</b><select value={step.tool} onChange={(event) => updateStep(index, { tool: event.target.value, args: {} })}><option value="">기능 선택</option>{Object.entries(groups).map(([category, categoryTools]) => <optgroup label={categoryLabels[category] || category} key={category}>{categoryTools.map((tool) => <option value={tool.name} key={tool.name}>{toolLabels[tool.name] || tool.name}</option>)}</optgroup>)}</select>
       <StepSettings step={step} apps={apps} update={(args) => updateStep(index, { args })} />
-      <input type="number" min="0" value={step.delayMs} onChange={(event) => updateStep(index, { delayMs: event.target.value })} aria-label={`${index + 1}번째 실행 전 대기`} placeholder="대기 ms" />
       <button onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))} aria-label={`${index + 1}번째 기능 삭제`}>×</button>
     </div>)}<button className={styles.addStep} disabled={steps.length >= 5} onClick={() => setSteps([...steps, initialStep()])}>+ 기능 추가하기</button><small>위에서 아래 순서로 실행됩니다. 최대 5개까지 등록할 수 있습니다.</small></div>
     <label className={styles.repeat}><input type="checkbox" checked={repeatable} onChange={(event) => setRepeatable(event.target.checked)} /> 제스처를 유지하는 동안 반복 실행</label>
@@ -397,6 +396,7 @@ function StepSettings({ step, apps, update }) {
 function FileTargetPicker({ path, onChange }) {
   const fileInput = useRef(null);
   const folderInput = useRef(null);
+  const [targetType, setTargetType] = useState('file');
   const [pickerError, setPickerError] = useState('');
 
   const chooseFile = (event) => {
@@ -426,9 +426,15 @@ function FileTargetPicker({ path, onChange }) {
     event.target.value = '';
   };
 
+  const openPicker = () => {
+    if (targetType === 'folder') folderInput.current?.click();
+    else fileInput.current?.click();
+  };
+
   return <div className={styles.filePicker}>
     <input value={path} onChange={(event) => { onChange(event.target.value); setPickerError(''); }} placeholder="열 파일 또는 폴더의 절대경로" />
-    <div><button type="button" onClick={() => fileInput.current?.click()}>파일 선택</button><button type="button" onClick={() => folderInput.current?.click()}>폴더 선택</button></div>
+    <select value={targetType} onChange={(event) => setTargetType(event.target.value)} aria-label="열 대상 종류"><option value="file">파일 선택</option><option value="folder">폴더 선택</option></select>
+    <button type="button" onClick={openPicker}>찾아보기</button>
     <input ref={fileInput} className={styles.hiddenPicker} type="file" onChange={chooseFile} />
     <input ref={folderInput} className={styles.hiddenPicker} type="file" webkitdirectory="" directory="" onChange={chooseFolder} />
     {pickerError && <small className={styles.pickerError}>{pickerError}</small>}
@@ -453,6 +459,8 @@ export function GestureRegistration({ onClose, onSaved }) {
   const previewStarted = useRef(false);
   const previewSeq = useRef(-1);
   const ignoredTempIds = useRef(new Set());
+  const registrationRequested = useRef(false);
+  const macroAssignRequested = useRef(false);
 
   useEffect(() => {
     Promise.all([fetchGestureTools(), fetchRegisteredApps()])
@@ -491,6 +499,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       updateRegistration({ previewFrame: `data:image/jpeg;base64,${data.jpegB64}`, previewReady: true });
     },
     reg_state: (data) => {
+      if (!registrationRequested.current) return;
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
@@ -505,6 +514,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       else updateRegistration({ tempId: data.tempId, phase: data.phase, captured: data.phase === 'CAPTURED' ? true : current?.captured, stage: data.phase === 'MODE_STARTED' ? 'capture' : current?.stage });
     },
     reg_take: (data) => {
+      if (!registrationRequested.current) return;
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
@@ -521,6 +531,7 @@ export function GestureRegistration({ onClose, onSaved }) {
     },
     reg_frame: (data) => {
       // TODO(BE): 카운트다운 중 실시간 프레임 이벤트가 없어 직전 화면만 유지 가능
+      if (!registrationRequested.current) return;
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
@@ -533,6 +544,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       updateRegistration({ tempId: data.tempId, frame: `data:image/jpeg;base64,${data.jpegB64}`, take: data.take, stage: 'capture' });
     },
     reg_recorded: (data) => {
+      if (!registrationRequested.current) return;
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
@@ -541,6 +553,8 @@ export function GestureRegistration({ onClose, onSaved }) {
       updateRegistration({ tempId: data.tempId, previews, selectedTake: previews[0]?.take || 1, stage: current?.stage === 'rejected' ? 'rejected' : 'review', ...(data.reason ? { error: data.reason } : {}) });
     },
     macro_saved: () => {
+      if (!macroAssignRequested.current) return;
+      macroAssignRequested.current = false;
       setSaving(false);
       updateRegistration({ stage: 'complete' });
     },
@@ -552,6 +566,8 @@ export function GestureRegistration({ onClose, onSaved }) {
         return;
       }
       if (!['reg_start', 'reg_stop', 'macro_assign'].includes(data.of)) return;
+      if (data.of === 'macro_assign' ? !macroAssignRequested.current : !registrationRequested.current) return;
+      if (data.of === 'macro_assign') macroAssignRequested.current = false;
       setSaving(false);
       updateRegistration({
         error: data.message || '제스처 등록 중 오류가 발생했습니다.',
@@ -574,6 +590,8 @@ export function GestureRegistration({ onClose, onSaved }) {
   }, [registration?.stage, updateRegistration]);
 
   useEffect(() => () => {
+    registrationRequested.current = false;
+    macroAssignRequested.current = false;
     if (!previewStarted.current) return;
     try { stopGesturePreview(); } catch { /* 연결 종료 시 별도 처리 없음 */ }
     previewStarted.current = false;
@@ -624,7 +642,11 @@ export function GestureRegistration({ onClose, onSaved }) {
       similarity: null,
       error: '',
     });
-    try { startGestureRegistration(motion); } catch (error) { updateRegistration({ stage: 'intro', error: error.message }); }
+    registrationRequested.current = true;
+    try { startGestureRegistration(motion); } catch (error) {
+      registrationRequested.current = false;
+      updateRegistration({ stage: 'intro', error: error.message });
+    }
   };
 
   const next = () => updateRegistration({ stage: 'form', error: '' });
@@ -633,10 +655,12 @@ export function GestureRegistration({ onClose, onSaved }) {
     try { parsedSteps = parseSteps(steps); } catch (error) { updateRegistration({ error: error.message }); return; }
     if (!name.trim() || !parsedSteps.length) { updateRegistration({ error: '제스처 이름과 한 개 이상의 기능을 입력해주세요.' }); return; }
     setSaving(true);
+    macroAssignRequested.current = true;
     updateRegistration({ error: '' });
     try {
       assignGestureMacro({ tempId: registration.tempId, take: registration.selectedTake, name: name.trim(), description: description.trim() || undefined, repeatable, steps: parsedSteps });
     } catch (error) {
+      macroAssignRequested.current = false;
       setSaving(false);
       updateRegistration({ error: error.message });
     }
@@ -644,10 +668,14 @@ export function GestureRegistration({ onClose, onSaved }) {
   const close = () => { stopPreview(); closeRegistration(); onClose(); };
 
   if (!registration) return null;
+  const stageTitle = registration.stage === 'review' ? '촬영 결과' : ['rejected', 'form', 'complete'].includes(registration.stage) ? '제스처 등록' : '제스처 촬영';
+  const selectedPreview = registration.previews.find((take) => take.take === registration.selectedTake) || registration.previews[0];
+  const selectedPreviewIsImage = (selectedPreview?.mediaType || (registration.motion === 'STATIC' ? 'IMAGE' : 'VIDEO')) === 'IMAGE';
   return <div className={styles.registration}>
+    <div className={styles.registrationHeading}><button onClick={close} aria-label="제스처 목록으로 돌아가기">‹</button><div><h1>{stageTitle}</h1>{registration.stage === 'form' && <p>나만의 제스처로 더 편리한 일상을 만들어보세요.</p>}{registration.stage === 'complete' && <p>새로운 제스처 등록이 완료되었습니다.</p>}</div></div>
     <div className={styles.registrationBody}>
       {/* TODO(BE): 카메라 사용 불가 시 시스템 카메라 설정을 여는 API가 명세에 없음 */}
-      {registration.stage === 'intro' && <><div className={styles.cameraBox}>{registration.previewFrame ? <img src={registration.previewFrame} alt="AI 카메라 미리보기" /> : <span>{registration.previewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}<b className={styles.cameraState}>{registration.previewReady ? '● 카메라 준비 완료' : '카메라 연결 중'}</b></div><p>카메라 화면을 확인한 뒤 촬영 버튼을 눌러주세요.</p><button className={styles.primary} disabled={!registration.previewReady} onClick={() => setCaptureTypeOpen(true)}>촬영하기</button><small>촬영 방식을 선택한 뒤 3회 촬영합니다.</small>{captureTypeOpen && <CaptureTypeDialog onClose={() => setCaptureTypeOpen(false)} onSelect={start} />}</>}
+      {registration.stage === 'intro' && <><div className={styles.cameraBox}>{registration.previewFrame ? <img src={registration.previewFrame} alt="AI 카메라 미리보기" /> : <span>{registration.previewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}<b className={styles.cameraState}>{registration.previewReady ? '● 카메라 준비 완료' : '카메라 연결 중'}</b></div><p>카메라 화면과 연결 상태를 확인한 뒤 촬영 버튼을 눌러주세요.</p><button className={styles.primary} disabled={!registration.previewReady} onClick={() => setCaptureTypeOpen(true)}>촬영하기</button><small>화면에 손과 동작 범위가 모두 보이는지 확인해주세요.</small>{captureTypeOpen && <CaptureTypeDialog onClose={() => setCaptureTypeOpen(false)} onSelect={start} />}</>}
       {registration.stage === 'waiting' && <><div className={styles.cameraBox}>카메라 연결을 기다리고 있습니다.</div><p>잠시만 기다려주세요.</p></>}
       {registration.stage === 'capture' && <>
         <div className={styles.liveFrame}>
@@ -659,24 +687,25 @@ export function GestureRegistration({ onClose, onSaved }) {
         </div>
         <div className={styles.progress}><i style={{ width: `${Math.max(registration.take - (registration.takePhase === 'DONE' ? 0 : 1), 0) / 3 * 100}%` }} /></div>
         <p>{registration.takePhase === 'COUNTDOWN' ? `${registration.take}회차 촬영을 준비하세요.` : registration.takePhase === 'DONE' && registration.take === 3 ? `${registration.motion === 'STATIC' ? '촬영 사진' : '촬영 영상'}을 처리하고 있습니다.` : `${registration.take || 1}/3회 ${registration.motion === 'STATIC' ? '사진 촬영 중' : '인식 중'}`}</p>
+        <button className={styles.cancelCapture} onClick={close}>촬영 취소</button>
       </>}
       {registration.stage === 'review' && <Review registration={registration} onSelect={(selectedTake) => updateRegistration({ selectedTake })} onRetry={() => start(registration.motion)} onNext={next} />}
       {registration.stage === 'rejected' && <RegistrationRejected registration={registration} onRetry={() => start(registration.motion)} />}
-      {registration.stage === 'form' && <><GestureForm name={name} setName={setName} description={description} setDescription={setDescription} repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={registration.error} /><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '등록하기'}</button></>}
-      {registration.stage === 'complete' && <><div className={styles.completeIcon}>✓</div><h3>등록 완료!</h3><p>제스처와 연결한 기능을 바로 사용할 수 있습니다.</p><button className={styles.primary} onClick={() => { onSaved(); close(); }}>확인</button></>}
+      {registration.stage === 'form' && <div className={styles.registrationWorkspace}><div className={styles.capturedPanel}><h3>촬영한 동작</h3><div className={styles.capturedMedia}>{selectedPreview && (selectedPreviewIsImage ? <img src={mediaUrl(selectedPreview.previewUrl)} alt="선택한 제스처" /> : <video src={mediaUrl(selectedPreview.previewUrl)} muted loop autoPlay playsInline />)}</div><span>{name || '새 제스처'}</span></div><div className={styles.registrationFormPanel}><GestureForm name={name} setName={setName} description={description} setDescription={setDescription} repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={registration.error} /><div className={styles.actions}><button onClick={close}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '다음'}</button></div></div></div>}
+      {registration.stage === 'complete' && <div className={styles.registrationWorkspace}><div className={styles.capturedPanel}><h3>촬영한 동작</h3><div className={styles.capturedMedia}>{selectedPreview && (selectedPreviewIsImage ? <img src={mediaUrl(selectedPreview.previewUrl)} alt="등록한 제스처" /> : <video src={mediaUrl(selectedPreview.previewUrl)} muted loop autoPlay playsInline />)}</div><span>{name}</span></div><div className={styles.completePanel}><div className={styles.completeIcon}>✓</div><h3>등록 완료!</h3><strong>{name}</strong><p>등록된 기능이 아래 순서대로 실행됩니다.</p><div className={styles.completeSteps}>{steps.map((step, index) => <span key={`${step.tool}-${index}`}>{displayTool(step)}</span>)}</div><button className={styles.primary} onClick={() => { onSaved(); close(); }}>확인</button></div></div>}
       {registration.error && !['rejected', 'form'].includes(registration.stage) && <p className={styles.error} role="alert">{registration.error}</p>}
     </div>
   </div>;
 }
 
 function CaptureTypeDialog({ onClose, onSelect }) {
-  return <div className={styles.captureTypeBackdrop} role="presentation" onMouseDown={onClose}><div className={styles.captureTypeDialog} role="dialog" aria-modal="true" aria-labelledby="capture-type-title" onMouseDown={(event) => event.stopPropagation()}><h3 id="capture-type-title">촬영 방식을 선택해주세요</h3><div><article><span className={styles.captureTypeIcon} aria-hidden="true">▣</span><strong>정적 제스처 등록</strong><p>제스처 동작을 사진으로 촬영합니다.<br />3초 카운트다운 후 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('STATIC')}>사진으로 등록</button></article><article><span className={styles.captureTypeIcon} aria-hidden="true">▻</span><strong>동적 제스처 등록</strong><p>제스처 동작을 영상으로 촬영합니다.<br />3초 카운트다운 후 2초간 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('DYNAMIC')}>영상으로 등록</button></article></div></div></div>;
+  return <div className={styles.captureTypeBackdrop} role="presentation" onMouseDown={onClose}><div className={styles.captureTypeDialog} role="dialog" aria-modal="true" aria-labelledby="capture-type-title" onMouseDown={(event) => event.stopPropagation()}><h3 id="capture-type-title">촬영 방식 선택</h3><p>등록할 제스처의 촬영 방식을 선택해주세요.</p><div><article><span className={styles.captureTypeIcon}><CameraIcon /></span><strong>정적 제스처 등록</strong><p>사진으로 촬영합니다.<br />3초 카운트다운 후 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('STATIC')}>사진으로 등록</button></article><article><span className={styles.captureTypeIcon}><CameraIcon video /></span><strong>동적 제스처 등록</strong><p>영상으로 촬영합니다.<br />3초 카운트다운 후 2초간 3회 반복</p><button className={styles.primary} onClick={() => onSelect('DYNAMIC')}>영상으로 등록</button></article></div></div></div>;
 }
 
 function Review({ registration, onSelect, onRetry, onNext }) {
   const selected = registration.previews.find((take) => take.take === registration.selectedTake);
   const selectedIsImage = (selected?.mediaType || (registration.motion === 'STATIC' ? 'IMAGE' : 'VIDEO')) === 'IMAGE';
-  return <>{selected && (selectedIsImage ? <img className={styles.reviewVideo} src={mediaUrl(selected.previewUrl)} alt="선택한 정적 제스처" /> : <video className={styles.reviewVideo} src={mediaUrl(selected.previewUrl)} controls autoPlay muted loop />)}<div className={styles.takeChoices}>{registration.previews.map((take) => <button className={registration.selectedTake === take.take ? styles.selectedTake : ''} onClick={() => onSelect(take.take)} key={take.take}>{take.mediaType === 'IMAGE' ? <img src={mediaUrl(take.previewUrl)} alt={`${take.take}회 촬영`} /> : <video src={mediaUrl(take.previewUrl)} muted preload="metadata" />}<span>{take.take}회</span></button>)}</div><p>목록과 상세 화면에서 보여줄 대표 {selectedIsImage ? '사진' : '영상'}을 골라주세요.</p><small>세 번의 촬영 데이터는 모두 제스처 학습에 사용됩니다.</small><div className={styles.actions}><button onClick={onRetry}>다시 촬영</button><button className={styles.primary} disabled={!registration.captured || !registration.previews.length} onClick={onNext}>{registration.captured ? '다음' : '학습 처리 중'}</button></div></>;
+  return <>{selected && (selectedIsImage ? <img className={styles.reviewVideo} src={mediaUrl(selected.previewUrl)} alt="선택한 정적 제스처" /> : <video className={styles.reviewVideo} src={mediaUrl(selected.previewUrl)} controls autoPlay muted loop />)}<div className={styles.takeChoices}>{registration.previews.map((take) => <button className={registration.selectedTake === take.take ? styles.selectedTake : ''} onClick={() => onSelect(take.take)} key={take.take}>{take.mediaType === 'IMAGE' ? <img src={mediaUrl(take.previewUrl)} alt={`${take.take}회 촬영`} /> : <video src={mediaUrl(take.previewUrl)} muted preload="metadata" />}<span>{take.take}회</span></button>)}</div><p>이 동작으로 등록할까요?</p><small>세 번의 촬영 데이터는 모두 제스처 학습에 사용됩니다.</small><div className={styles.actions}><button onClick={onRetry}>다시 촬영</button><button className={styles.primary} disabled={!registration.captured || !registration.previews.length} onClick={onNext}>{registration.captured ? '다음' : '학습 처리 중'}</button></div></>;
 }
 
 function RegistrationRejected({ registration, onRetry }) {
@@ -690,10 +719,12 @@ function RegistrationRejected({ registration, onRetry }) {
   return <section className={styles.rejectedResult}>
     <div className={styles.alertIcon}>!</div>
     <h3>{registration.error}</h3>
+    {hasSimilarGesture && <p>둘을 구분하지 못해 잘못 실행될 수 있습니다.<br />손 모양이나 방향을 바꿔 다시 촬영해주세요.</p>}
     <div className={`${styles.similarityGrid} ${hasSimilarGesture ? '' : styles.singlePreview}`}>
-      <article><div className={styles.compareMedia}>{currentPreview?.previewUrl ? (currentPreview.mediaType === 'IMAGE' ? <img src={mediaUrl(currentPreview.previewUrl)} alt="지금 촬영한 제스처" /> : <video src={mediaUrl(currentPreview.previewUrl)} muted loop autoPlay playsInline />) : registration.frame ? <img src={registration.frame} alt="지금 촬영한 제스처" /> : <span>촬영 화면</span>}</div><strong>지금 만든 제스처</strong></article>
+      <article><div className={styles.compareMedia}>{registration.frame ? <img src={registration.frame} alt="지금 촬영한 제스처" /> : currentPreview?.previewUrl ? (currentPreview.mediaType === 'IMAGE' ? <img src={mediaUrl(currentPreview.previewUrl)} alt="지금 촬영한 제스처" /> : <video src={mediaUrl(currentPreview.previewUrl)} muted loop autoPlay playsInline />) : <span>촬영 화면</span>}</div><strong>지금 만든 제스처</strong></article>
       {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{registration.similarTo}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
     </div>
     <button className={styles.primary} onClick={onRetry}>다시 촬영</button>
+    {hasSimilarGesture && <small>혼동 가능한 제스처는 등록할 수 없습니다.</small>}
   </section>;
 }
