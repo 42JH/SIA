@@ -43,7 +43,8 @@ from custom_motion import CustomGestureStore, static_execution_allowed
 from gaze import Calibrator, GazeBuffer, make_engine
 from hands import (GestureEngine, GestureStable, HoldToggle, MotionHandTracker,
                    PalmScrollDetector, PinchVolumeDetector, SCREEN_SWIPE_CONFIG,
-                   SwipeDetector, TwoHandSpreadDetector)
+                   SwipeDetector, TwoHandSpreadDetector, scale_by_hand_size,
+                   scale_landmarks_by_hand_size)
 from main import Camera, GazeWorker, open_camera
 
 HERE = Path(__file__).parent
@@ -707,14 +708,20 @@ def main():
                                          accuracy=raw_score,
                                          payload={"source": "static", "occurredAt": int(time.time() * 1000)})
             if gesture_active and not registration_active:
-                pinch_event = pinch_volume.update(hand["landmarks"] if hand else None, now)
+                # 스와이프/스크롤/핀치볼륨의 이동량 기준은 화면 비율로 정해져
+                # 있어 카메라와의 거리에 따라 민감도가 달라진다 — 넣기 전에
+                # 실제 손 크기 기준으로 스케일링해 거리 영향을 지운다.
+                pinch_event = pinch_volume.update(
+                    scale_landmarks_by_hand_size(hand["landmarks"], hand["size"]) if hand else None, now)
                 swipe_hand, swipe_hand_changed = palm_motion_tracker.update(hands)
                 if swipe_hand_changed:
                     palm_motion.update(None, now)
                 motion_event = palm_motion.update(
-                    swipe_hand["anchor"] if swipe_hand and not pinch_volume._pinched else None, now)
+                    scale_by_hand_size(swipe_hand["anchor"], swipe_hand["size"])
+                    if swipe_hand and not pinch_volume._pinched else None, now)
                 scroll_steps = palm_scroll.update(
-                    hand["anchor"] if hand and not pinch_volume._pinched else None, now)
+                    scale_by_hand_size(hand["anchor"], hand["size"])
+                    if hand and not pinch_volume._pinched else None, now)
                 if custom_motion_event:
                     # 완성된 커스텀 동작이 최우선 — 같은 손 움직임이 우연히
                     # 스와이프/스크롤로도 읽혀 이중 발동하는 것을 막는다.

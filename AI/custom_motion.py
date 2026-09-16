@@ -1,8 +1,12 @@
 """Versioned custom gesture templates: legacy poses and timed one/two-hand takes.
 
-Coordinates retain orientation and relative hand placement. Only the initial
-common translation and palm scale are removed; per-frame normalization would
-erase the motion we want to recognize.
+Coordinates retain relative hand placement and each hand's own shape. Only the
+initial common translation and palm scale are removed; per-frame normalization
+would erase the motion we want to recognize. For two hands, the average
+tilt of the pair is also removed (see ROTATION_REF_MIN below) — that overall
+lean is closer to camera-angle noise than to signal, while how the two hands
+are angled *relative to each other* is kept, since that is what actually
+distinguishes two-hand gestures from one another.
 """
 import io
 from collections import deque
@@ -15,6 +19,12 @@ FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
 PREFIX_DISTANCE = 0.16
 PREFIX_MIN_MOTION = 0.08
+# 두 손 평균 방향 벡터(손목 중점→중지MCP 중점)의 최소 길이 — 이 값 미만이면
+# "두 손이 거의 정반대를 향한다"는 뜻이라 회전 기준 자체가 정의되지 않는다.
+# 길이 = 2*cos(두 손 사이 각도/2)이므로, 0.35는 두 손이 약 160도 이상
+# 벌어졌을 때만 걸린다 — 보통의 2손 제스처(벌리기·교차 등)는 걸리지 않는
+# 보수적인 값이다. 걸리면 보정을 건너뛰고 기존 동작(회전 미보정)으로 되돌아간다.
+ROTATION_REF_MIN = 0.35
 EXTRA_KEYS = ("sequences", "sequence_names", "motions", "hand_counts", "durations")
 
 
@@ -48,6 +58,20 @@ def encode_sequence(times, points):
     origin = points[0, :, 0].mean(axis=0)
     scale = np.linalg.norm(points[0, :, 9] - points[0, :, 0], axis=-1).mean()
     normalized = (points - origin) / max(float(scale), 1e-6)
+    if normalized.shape[1] == 2:
+        # 두 손 각각의 손목→중지MCP 방향을 평균 내 "두 손이 대체로 향하는 방향"을
+        # 구하고, 그 방향이 항상 위(0, -1)를 보도록 시퀀스 전체를 한 번 돌린다.
+        # 프레임 0에서만 계산해 전체에 똑같이 적용한다(스케일·원점과 같은 방식) —
+        # 매 프레임 다시 계산하면 자연스러운 진동에도 기준이 흔들릴 수 있다.
+        ref = normalized[0, :, 9].mean(axis=0) - normalized[0, :, 0].mean(axis=0)
+        ref_len = float(np.linalg.norm(ref))
+        if ref_len > ROTATION_REF_MIN:
+            angle = np.arctan2(float(ref[0]), -float(ref[1]))
+            c, s = np.cos(-angle), np.sin(-angle)
+            rot = np.array([[c, -s], [s, c]], dtype=np.float32)
+            normalized = normalized @ rot.T
+        # ref_len이 기준 미만이면(두 손이 거의 정반대를 향함) 회전 기준 자체가
+        # 불안정하므로 보정을 건너뛴다 — 회전 미보정 상태(기존 동작)로 남는다.
     flat = normalized.reshape(len(times), -1)
     grid = np.linspace(times[0], times[-1], FRAMES)
     sampled = np.stack([np.interp(grid, times, col) for col in flat.T], axis=-1)

@@ -322,6 +322,37 @@ def test_swipe_detector():
     assert s.update((0.9, 0.5), t + 0.03) is None
 
 
+def test_scale_by_hand_size():
+    """스와이프 등의 이동량 기준은 화면 비율(절대값)이라, 카메라와의 거리에
+    따라 같은 물리적 동작도 다르게 판정된다 — 손 크기로 스케일 보정하면
+    카메라 거리와 무관하게 같은 결과가 나와야 한다."""
+    from hands import SCREEN_SWIPE_CONFIG, SwipeDetector, scale_by_hand_size
+
+    def run(palm_size, physical_multiple, use_scale):
+        det = SwipeDetector(**SCREEN_SWIPE_CONFIG)
+        t = 0.0
+        events = []
+        for _ in range(6):  # 정지 상태로 무장
+            t += 0.05
+            anchor = (0.5, 0.5)
+            events.append(det.update(scale_by_hand_size(anchor, palm_size) if use_scale else anchor, t))
+        total = physical_multiple * palm_size  # "손 크기의 N배"만큼의 물리적 이동
+        for i in range(1, 7):
+            t += 0.05
+            anchor = (0.5 + total * i / 6, 0.5)
+            events.append(det.update(scale_by_hand_size(anchor, palm_size) if use_scale else anchor, t))
+        return [e for e in events if e]
+
+    far_palm, close_palm, physical_multiple = 0.06, 0.24, 1.5
+    # 보정 없이(화면 비율 그대로) 같은 물리적 스와이프를 하면, 카메라에 가까울
+    # 때만 발동하고 멀 때는 안 걸린다 — 이게 지금 고치려는 문제 상황이다.
+    assert run(far_palm, physical_multiple, use_scale=False) == []
+    assert run(close_palm, physical_multiple, use_scale=False) == ["Swipe_Right"]
+    # 손 크기로 보정하면 카메라 거리와 무관하게 똑같이 발동해야 한다.
+    assert run(far_palm, physical_multiple, use_scale=True) == ["Swipe_Right"]
+    assert run(close_palm, physical_multiple, use_scale=True) == ["Swipe_Right"]
+
+
 def test_custom_gestures():
     import math as m
     import tempfile
@@ -1110,6 +1141,7 @@ if __name__ == "__main__":
     test_click_recal()
     test_vad_segmenter()
     test_swipe_detector()
+    test_scale_by_hand_size()
     test_custom_gestures()
     test_dom_bridge()
     test_build_prompt()
@@ -1123,4 +1155,4 @@ if __name__ == "__main__":
     test_wake_model_load()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 25/25 통과")
+    print("OK - 26/26 통과")
