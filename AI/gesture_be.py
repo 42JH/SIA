@@ -16,11 +16,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from hands import (CustomGestures, SCREEN_SWIPE_CONFIG, SwipeDetector,
-                   normalize_landmarks, weighted_distance)
+from hands import (CustomGestures, REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
+                   SwipeDetector, normalize_landmarks,
+                   weighted_distance)
 from custom_motion import (
     CustomGestureStore, FRAMES, PREFIX_MIN_MOTION, distance, encode_sequence,
-    ordered_landmarks, read_templates, template_bytes as encode_template_bytes,
+    ordered_landmarks, read_templates, trim_motion_frames, template_bytes as encode_template_bytes,
 )
 
 
@@ -201,6 +202,9 @@ class GestureRegistration:
     MIN_STATIC_SAMPLES = 8
     MIN_STATIC_MOTION_FRAMES = 4  # 2손 정적: 회차당 평균낼 프레임이 너무 적으면 떨림이 안 지워진다
     FRAME_MARGIN = 0.02  # 정규화 좌표가 이만큼 넘게 [0,1]을 벗어나면 화면 밖으로 본다
+    OUT_OF_FRAME_HOLD_S = 0.20
+    OUT_OF_FRAME_RATIO = 0.20
+    OUT_OF_FRAME_MAX_GAP_S = 0.25  # 긴 관측 공백을 연속 이탈로 추정하지 않는다
     MAX_GAP_FRACTION = 0.3  # 회차 구간 대비 이 비율 넘게 손을 놓치면 거부
     STATIC = "STATIC"
     DYNAMIC = "DYNAMIC"
@@ -306,6 +310,32 @@ class GestureRegistration:
     def _hand_out_of_frame(cls, landmarks):
         lm = np.asarray(landmarks)
         return bool(np.any(lm < -cls.FRAME_MARGIN) or np.any(lm > 1 + cls.FRAME_MARGIN))
+
+    def _validate_frame_bounds(self):
+        """회차별 감지 프레임을 검사한다. 한 프레임 튐은 거절하지 않는다."""
+        for take, frames in self.take_frames.items():
+            observed = outside = 0
+            run_start = previous = None
+            longest = 0.0
+            for t, hands in frames:
+                if not hands:
+                    run_start = previous = None
+                    continue
+                observed += 1
+                clipped = any(self._hand_out_of_frame(h["landmarks"]) for h in hands)
+                if clipped:
+                    outside += 1
+                    if run_start is None or previous is None or not 0 < t - previous <= self.OUT_OF_FRAME_MAX_GAP_S:
+                        run_start = t
+                    longest = max(longest, t - run_start)
+                else:
+                    run_start = None
+                previous = t
+            ratio = outside / observed if observed else 0.0
+            if outside >= 2 and (longest + 1e-9 >= self.OUT_OF_FRAME_HOLD_S
+                                 or ratio >= self.OUT_OF_FRAME_RATIO):
+                print(f"[제스처 화면 이탈] tempId={self.temp_id} take={take} frames={outside}/{observed} ratio={ratio:.3f} longest={longest:.3f}s")
+                raise ValueError(f"{take}회차 촬영 중 손이 화면 밖으로 벗어났습니다. 손목과 손끝이 화면 안에 들어오도록 해주세요")
 
     @staticmethod
     def _as_hands(hands):
@@ -427,15 +457,8 @@ class GestureRegistration:
             raise ValueError("손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요")
         if self.sizes2 and min(self.sizes2) < self.MIN_PALM_SIZE:
             raise ValueError("손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요")
-        # 손이 화면 밖으로 나가면(카메라에 너무 가까이 대는 등) MediaPipe가 보이지
-        # 않는 부분의 랜드마크를 정규화 좌표 [0,1] 밖으로 추정해 내보낸다 — 크기로는
-        # 못 잡는다(화면 중앙에서 크게 잡히는 것 자체는 문제가 아니므로). 좌표
-        # 범위를 직접 보고 잘렸는지 확인한다.
-        for frames in self.take_frames.values():
-            for _, hands in frames:
-                for h in hands:
-                    if self._hand_out_of_frame(h["landmarks"]):
-                        raise ValueError("손이 화면 밖으로 벗어났습니다. 카메라에서 조금 떨어져 주세요")
+        # 순간 좌표 튐 대신 회차별 지속 시간/빈도로 화면 이탈을 판정한다.
+        self._validate_frame_bounds()
         # "손모양이 실제로 안정적이었는지"는 1손 정적은 _upload_static의 MAX_SPREAD가,
         # 2손 정적은 _upload_motion의 회차별 spread 검사가 담당한다 — 둘 다 저장에
         # 실제로 쓰이는 정규화된 손모양 전체를 비교하므로, 여기 손목 각도 하나만 보던
@@ -458,17 +481,18 @@ class GestureRegistration:
         for label, count in self.builtin_hits.items():
             if count >= len(feats) * self.BUILTIN_OVERLAP:
                 raise GestureRegistrationRejected(
-                    f"내장 제스처 '{label}'와 너무 유사합니다 ({count}/{len(feats)})",
+                    f"'{label}'와 너무 유사합니다 ({count}/{len(feats)})",
                     similar_to=label,
                     similarity=round(count / len(feats), 4),
                 )
         near, dist = self.custom_store.nearest_class(feats)
+        print(f"[제스처 중복 검사] tempId={self.temp_id} motion=STATIC nearest={near!r} distance={dist:.4f} threshold={self.COLLISION_DIST}")
         if near and dist < self.COLLISION_DIST:
             # 랜드마크 거리는 확률이 아니므로, 화면 표시용으로 단조 감소 점수로
             # 변환한다. 0은 동일, 거리가 멀수록 0에 가까워진다.
             similarity = round(float(np.exp(-dist)), 4)
             raise GestureRegistrationRejected(
-                f"기존 제스처 '{near}'와 너무 유사합니다",
+                f"'{near}'와 너무 유사합니다",
                 similar_to=near,
                 similarity=similarity,
             )
@@ -476,13 +500,16 @@ class GestureRegistration:
         self.link.put_gesture_npz(self.temp_id, payload)
 
     # 동적 등록이 겹쳐선 안 되는 내장 동적 감지기 목록 — (표시 이름, 실행 때와 같은
-    # 설정으로 새 인스턴스를 만드는 함수, 손 랜드마크에서 그 감지기가 원하는 입력을
-    # 뽑는 함수). 서비스가 기본 제공하는 9종(정적 7 + 스와이프 좌/우)만 "내장"으로
-    # 안내한다 — 스크롤·핀치볼륨은 아직 사용자에게 노출된 적 없는(enabled=False)
-    # 기능이라 지금 "내장 스크롤과 비슷합니다"라고 하면 사용자가 이해할 수 없는
-    # 사유가 된다. 그 기능들이 실제로 켜질 때, 이 목록에 다시 추가한다.
+    # 설정으로 새 인스턴스를 만드는 함수, 손 하나(dict)에서 그 감지기가 원하는
+    # 입력을 뽑는 함수). 서비스가 기본 제공하는 9종(정적 7 + 스와이프 좌/우)만
+    # "내장"으로 안내한다 — 스크롤·핀치볼륨은 아직 사용자에게 노출된 적 없는
+    # (enabled=False) 기능이라 지금 "내장 스크롤과 비슷합니다"라고 하면 사용자가
+    # 이해할 수 없는 사유가 된다. 그 기능들이 실제로 켜질 때, 이 목록에 다시
+    # 추가한다. extract는 원본 좌표를 반환하고 감지기가 시작 손 크기로
+    # 배율을 고정한다. 실행 때(assistant.py)도 같은 경로를 사용한다.
     BUILTIN_DYNAMIC_DETECTORS = (
-        ("스와이프", lambda: SwipeDetector(**SCREEN_SWIPE_CONFIG), lambda lm: tuple(lm[9])),
+        ("스와이프", lambda: SwipeDetector(**SCREEN_SWIPE_CONFIG),
+         lambda h: h["landmarks"][9]),
     )
 
     def _builtin_dynamic_collision(self):
@@ -491,14 +518,19 @@ class GestureRegistration:
         실행 때와 같은 감지기·같은 설정을 써서 "이 촬영이 실제로 라이브였다면
         내장 동작이 발동했을까"를 그대로 재현한다 — 근사치 규칙을 따로 만드는
         것보다 실제 판정 로직과 항상 일치하고, 목록에 등록만 해두면 다른 내장
-        동적 감지기도 자동으로 같이 확인된다. 겹치면 이름을, 안 겹치면 None을
-        돌려준다.
+        동적 감지기도 자동으로 같이 확인된다.
 
         1손·2손 모두 손마다(handedness 기준, 감지 순서는 프레임마다 바뀔 수
         있어 안 믿는다) 독립적으로 재생한다 — 2손 동작이라도 그중 한 손만의
         움직임이 내장 동작과 겹치면, 실행 중 그 손 하나만 raw 판정으로 새는
         순간(2손 커스텀 인식이 그 프레임만 실패하는 경우) 내장 동작이 조용히
         발동할 수 있기 때문이다.
+
+        겹치면 (표시용 이름, 구체적인 이벤트값) 튜플을, 안 겹치면 (None, None)을
+        돌려준다. 감지기 반환값이 문자열이면(SwipeDetector의 "Swipe_Left" 등,
+        BE 기본 제스처 이름과 그대로 일치) 그걸 similar_to로 쓸 수 있게 넘기고,
+        아니면(PalmScrollDetector의 정수 스텝처럼 이름이 아닌 값) 표시용 이름으로
+        대체한다.
         """
         for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
             for take in range(1, self.takes + 1):
@@ -509,12 +541,15 @@ class GestureRegistration:
                         side = h.get("handedness") or "?"
                         seen.add(side)
                         detector = detectors.setdefault(side, make_detector())
-                        if detector.update(extract(h["landmarks"]), t):
-                            return name
+                        event = detector.update(extract(h), t, size=h.get("size", REFERENCE_PALM_SIZE))
+                        if event:
+                            start = self.take_frames[take][0][0]
+                            print(f"[제스처 스와이프 충돌] tempId={self.temp_id} take={take} elapsed={t-start:.3f}s hand={side} direction={event}")
+                            return name, (event if isinstance(event, str) else name)
                     for side, detector in detectors.items():
                         if side not in seen:
                             detector.update(None, t)
-        return None
+        return None, None
 
     def _upload_motion(self, hand_count):
         """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다.
@@ -527,6 +562,7 @@ class GestureRegistration:
         만든 뒤, 인식 때와 똑같은 형태(그 자세를 2점으로 복제)로 저장한다.
         """
         sequences = []
+        durations = []
         for take in range(1, self.takes + 1):
             frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
             frames = [(t, pts) for t, pts in frames if pts is not None]
@@ -563,11 +599,20 @@ class GestureRegistration:
                 if spread > self.MAX_SPREAD:
                     raise ValueError(f"{take}회차 촬영 중 손모양이 흔들렸습니다. 자세를 고정해 다시 촬영하세요")
             else:
+                original_start, original_end = frames[0][0], frames[-1][0]
+                frames = trim_motion_frames(frames)
+                print(f"[제스처 동작 구간] tempId={self.temp_id} take={take} start={frames[0][0]-original_start:.3f}s end={frames[-1][0]-original_start:.3f}s captured={original_end-original_start:.3f}s")
                 seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
                 movement = distance(seq, np.repeat(seq[:1], FRAMES, axis=0), hand_count)
                 if movement < PREFIX_MIN_MOTION:
                     raise ValueError(f"{take}회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요")
             sequences.append(seq)
+            durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
+        matches = []
+        for take, seq in enumerate(sequences, 1):
+            score, name = self.custom_store.nearest_sequence(seq, self.motion, hand_count)
+            matches.append((score, name))
+            print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion={self.motion} hands={hand_count} nearest={name!r} distance={score:.4f} threshold={self.COLLISION_DIST}")
         # 내장 동적 감지기(스와이프 등)는 NPZ 템플릿이 아니라 별도 상태기계라
         # nearest_sequence 충돌검사 대상에 없다. 그대로 두면 내장 동작과 똑같이
         # 움직이는 동작을 커스텀으로 등록해도 경고 없이 통과하는데, 실행 시에는
@@ -576,22 +621,24 @@ class GestureRegistration:
         # 검사 대상이다 — 한 손만의 움직임이 내장과 겹쳐도, 실행 중 2손 인식이
         # 그 프레임만 실패하면 그 손 하나만으로 내장 동작이 새어나갈 수 있다.
         if self.motion == self.DYNAMIC:
-            collided = self._builtin_dynamic_collision()
+            collided, collided_event = self._builtin_dynamic_collision()
             if collided:
-                # 1손 정적의 내장 겹침 문구와 형태를 맞춘다("내장 제스처 'X'와
-                # 너무 유사합니다") — 정적은 프레임 비율(N/M)이 자연스럽게
-                # 붙지만, 동적은 감지기 재생 결과(예/아니오)라 그 부분만 없다.
+                # similar_to는 표시용 통칭("스와이프")이 아니라 구체적인 이벤트
+                # 이름("Swipe_Left" 등, BE 기본 제스처 이름과 일치)을 보낸다 —
+                # FE가 그 이름으로 실제 제스처를 찾아 보여줄 수 있게 한다.
+                # similarity는 일부러 안 보낸다(None) — 이건 거리 기반 비교가
+                # 아니라 실제 감지기를 재생해 "발동했다/안 했다"만 보는 방식이라
+                # 정확한 유사도 숫자를 만들 방법이 없다. 억지로 만들면(예:
+                # 손모양 시퀀스 거리 재사용) 감지기가 실제로 보는 값(궤적 이동량)과
+                # 다른 걸 재는 셈이라 오히려 오해를 준다.
                 raise GestureRegistrationRejected(
-                    f"내장 제스처 '{collided}'와 너무 유사합니다", similar_to=collided
+                    f"'{collided}'와 너무 유사합니다", similar_to=collided_event
                 )
-        dist, near = min(
-            (self.custom_store.nearest_sequence(seq, self.motion, hand_count) for seq in sequences),
-            key=lambda item: item[0],
-        )
+        dist, near = min(matches, key=lambda item: item[0])
         if near and dist < self.COLLISION_DIST:
             similarity = round(float(np.exp(-dist)), 4)
             raise GestureRegistrationRejected(
-                f"기존 제스처 '{near}'와 너무 유사합니다",
+                f"'{near}'와 너무 유사합니다",
                 similar_to=near,
                 similarity=similarity,
             )
@@ -600,6 +647,6 @@ class GestureRegistration:
             sequences=np.stack(sequences), sequence_names=np.array(["__pending__"] * len(sequences)),
             motions=np.array([self.motion] * len(sequences)),
             hand_counts=np.array([hand_count] * len(sequences), dtype=np.int32),
-            durations=np.array([self.take_s] * len(sequences), dtype=np.float32),
+            durations=np.array(durations, dtype=np.float32),
         )
         self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))

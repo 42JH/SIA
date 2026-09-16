@@ -64,6 +64,35 @@ SCREEN_SWIPE_CONFIG = {
     "vertical": False,
 }
 
+# 스와이프/스크롤/핀치볼륨의 이동량 기준(dist, step_dist 등)은 전부 화면
+# 비율(정규화 좌표)로 정해져 있어, 카메라와의 거리에 따라 같은 물리적 동작도
+# 다르게 판정된다 — 가까이 있으면 작은 움직임도 크게 잡히고, 멀리 있으면 큰
+# 움직임도 작게 잡힌다. 이 기준값들은 손 크기가 대략 이 정도(REFERENCE_PALM_SIZE)
+# 일 때를 기준으로 골랐다고 보고, 실제 손 크기가 다르면 좌표를 그 비율만큼
+# 스케일링해서 감지기에 넣는다 — 감지기 내부 기준값 자체는 건드리지 않는다.
+REFERENCE_PALM_SIZE = 0.12
+
+
+def scale_by_hand_size(point, size, reference=REFERENCE_PALM_SIZE):
+    """손 크기(size)를 기준 크기(reference)로 맞추도록 좌표 한 점을 스케일링한다.
+
+    size가 기준보다 크면(카메라에 가까움) 좌표를 줄이고, 작으면(멀리 있음)
+    늘려서 — 같은 물리적 이동이 카메라 거리와 무관하게 같은 값으로 보이게 한다.
+    """
+    factor = reference / max(float(size), 1e-6)
+    return (point[0] * factor, point[1] * factor)
+
+
+def scale_landmarks_by_hand_size(landmarks, size, reference=REFERENCE_PALM_SIZE):
+    """scale_by_hand_size와 같은 보정을 손 랜드마크 전체에 적용한다.
+
+    모든 점에 같은 배율을 곱하므로, 이미 스케일 불변인 값(예: 핀치 비율 —
+    손 크기로 나눈 값)은 분자·분모가 같이 스케일돼 결과가 그대로 유지된다.
+    """
+    factor = reference / max(float(size), 1e-6)
+    return [(x * factor, y * factor) for x, y in landmarks]
+
+
 def parse_hand(result):
     """GestureRecognizerResult → dict(anchor, pinch_ratio, gesture) / 손 없으면 None.
 
@@ -83,6 +112,7 @@ def parse_hand(result):
         "gesture": gesture,
         "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
         "landmarks": [(p.x, p.y) for p in lm],  # HUD 디버그 표시용
+        "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
     }
 
 
@@ -108,6 +138,7 @@ def parse_hands(result):
             "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
             "handedness": handedness,
             "landmarks": [(p.x, p.y) for p in lm],
+            "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
         })
     return hands
 
@@ -302,6 +333,17 @@ def normalize_landmarks(lm_xy):
     return (a / (np.linalg.norm(a[9]) + 1e-9)).ravel()
 
 
+def pose_distances(templates, feature):
+    """회전 정렬된 한 손 자세를 원본/좌우 반전 중 가까운 쪽으로 비교한다.
+
+    기존 저장 특징은 수정하지 않으므로 반대 손으로 찍은 예전 템플릿도 지원한다.
+    """
+    mirrored = np.array(feature, copy=True)
+    mirrored[0::2] *= -1
+    return np.minimum(weighted_distance(templates - feature),
+                      weighted_distance(templates - mirrored))
+
+
 class CustomGestures:
     """사용자 정의 제스처 저장소 + kNN 분류기.
 
@@ -363,7 +405,7 @@ class CustomGestures:
         if self.n == 0:
             return None, float("inf")
         f = normalize_landmarks(lm_xy)
-        d = weighted_distance(self.X - f)
+        d = pose_distances(self.X, f)
         idx = np.argsort(d)[:k]
         nearest = float(d[idx[0]])
         if nearest > self.thresh:
@@ -382,7 +424,7 @@ class CustomGestures:
         if self.n == 0:
             return None
         f = normalize_landmarks(lm_xy)
-        d = weighted_distance(self.X - f)
+        d = pose_distances(self.X, f)
         idx = np.argsort(d)[:k]
         if float(d[idx[0]]) > self.thresh:  # 가장 가까운 샘플조차 멀면 기권
             return None
@@ -402,7 +444,7 @@ class CustomGestures:
         best_name, best_d = None, float("inf")
         for name in self.class_names():
             cls = self.X[[i for i, n in enumerate(self.names) if n == name]]
-            dd = float(min(weighted_distance(cls - f).min() for f in feats))
+            dd = float(min(pose_distances(cls, f).min() for f in feats))
             if dd < best_d:
                 best_name, best_d = name, dd
         return best_name, best_d
@@ -478,6 +520,7 @@ class SwipeDetector:
         self._resume_after_cooldown = False
         self._lock_still_since = None
         self._last_point = None  # (t, x, y) 직전 프레임 — 클리어와 무관하게 유지
+        self._input_scale = None
 
     def prime(self, anchor, t):
         """이미 손바닥 홀드로 확인된 위치에서 즉시 스와이프를 받을 준비를 한다."""
@@ -488,7 +531,15 @@ class SwipeDetector:
         self._armed = True
         self._hist.append((t, x, y))
 
-    def update(self, anchor, t):
+    def update(self, anchor, t, size=None):
+        # 추적 시작 시 배율을 고정한다. 매 프레임 절대 좌표의 배율을 바꾸면
+        # 크기 추정 변화만으로 가짜 좌우 이동이 생긴다.
+        if anchor is None:
+            self._input_scale = None
+        elif size is not None:
+            if self._input_scale is None:
+                self._input_scale = REFERENCE_PALM_SIZE / max(float(size), 1e-6)
+            anchor = tuple(float(v) * self._input_scale for v in anchor)
         if anchor is None:  # 손 사라짐 → 리셋 (재등장 후 정지해야 무장)
             self._hist.clear()
             self._armed = False

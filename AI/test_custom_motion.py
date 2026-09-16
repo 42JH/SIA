@@ -60,7 +60,13 @@ class MotionTests(unittest.TestCase):
         reg.finish()
         self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
         self.cache.sync(self.link, [dict(id=1, name=name, sha256="hash")])
-        return CustomGestureStore(self.cache.combined_path)
+        store = CustomGestureStore(self.cache.combined_path)
+        if motion == "DYNAMIC":
+            # 실제 촬영 시간 저장을 검증한 뒤, 아래 실행 테스트의 1초 궤적에
+            # 맞춰 시험용 템플릿만 재타이밍한다(위 촬영은 충돌 회피용 0.3초).
+            np.testing.assert_allclose(store.data["durations"], 0.3, atol=1e-6)
+            store.data["durations"][:] = 1.0
+        return store
 
     def feed(self, store, make_hands, duration=1, offset=0):
         return [store.update(make_hands(t / duration), offset + t)
@@ -194,6 +200,33 @@ class MotionTests(unittest.TestCase):
         event, payload = self.link.sent[-1]
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("스와이프", payload["reason"])
+        # similarTo는 통칭이 아니라 BE 기본 제스처 이름과 그대로 일치하는
+        # 구체적인 이벤트 이름이어야 FE가 실제 제스처를 찾아 보여줄 수 있다.
+        self.assertEqual(payload["similarTo"], "Swipe_Right")
+        # 감지기는 발동 여부만 재현할 뿐 거리를 안 재므로, 유사도 숫자를
+        # 억지로 만들지 않는다 — 잘못된 숫자보다 없는 게 낫다.
+        self.assertIsNone(payload["similarity"])
+
+    def test_one_hand_dynamic_swipe_collision_scales_with_camera_distance(self):
+        """카메라에서 멀리 있어서 손이 작게 잡히는 사람이 화면 비율로는 작게(하지만
+        자기 손 크기 대비로는 충분히 크게) 움직여도, 그게 실제로는 스와이프와
+        똑같은 동작이면 등록 시점에 걸러야 한다 — 손 크기(size)로 스케일 보정하지
+        않으면 화면 비율만으로는 절대 못 잡는 이동량이다."""
+        small_palm = 0.03  # 화면의 3% — 카메라에서 멀리 있을 때의 손 크기
+        # 물리적으로는 "손 크기의 1.5배" 스와이프지만, 화면 비율로는 0.045밖에
+        # 안 돼 SCREEN_SWIPE_CONFIG의 dist(0.12)에 훨씬 못 미친다 — 보정이
+        # 없으면 절대 안 걸린다.
+        total = small_palm * 1.5
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            h = dict(hand(0.3 + t * total), size=small_palm)
+            reg._collect([h], t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertEqual(payload["similarTo"], "Swipe_Right")
 
     def test_one_hand_dynamic_allows_scroll_like_motion(self):
         """스크롤·핀치볼륨은 서비스가 기본 제공하는 9종(정적 7 + 스와이프 좌/우)에
@@ -231,6 +264,7 @@ class MotionTests(unittest.TestCase):
         event, payload = self.link.sent[-1]
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("스와이프", payload["reason"])
+        self.assertEqual(payload["similarTo"], "Swipe_Right")
 
     def test_two_hand_dynamic_allows_motion_neither_hand_alone_resembles(self):
         """두 손이 서로 반대로 제자리에서 회전만 하는(손목 이동은 거의 없는) 동작은
@@ -337,7 +371,7 @@ class MotionTests(unittest.TestCase):
         store = CustomGestureStore(self.cache.combined_path)
         self.assertEqual(store.class_names(), ["old", "renamed"])
         self.assertEqual(store.classify_with_distance(hand()["landmarks"])[0], "old")
-        self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)])))
+        self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)], duration=0.3)))
         self.cache._rebuild({"2": {"name": "old"}})
         self.assertEqual(CustomGestureStore(self.cache.combined_path).class_names(), ["old"])
 
@@ -365,6 +399,80 @@ class MotionTests(unittest.TestCase):
         b = encode_sequence(times, points[::-1])
         self.assertGreater(distance(a, b, 1), 1)
         self.assertIsNone(ordered_landmarks([hand(side="Unknown"), hand(0.6, "Unknown")]))
+
+    @staticmethod
+    def two_hand_tilt_pose(spread=0.3, global_tilt_deg=0.0, relative_tilt_deg=0.0, center=(0.5, 0.6)):
+        """두 손 벌리기 자세 — global_tilt는 두 손이 '같이' 도는 전체 기울기,
+        relative_tilt는 오른손만 자기 자리에서 추가로 도는 상대 회전이다."""
+        def base():
+            pts = np.array([[i % 4 * 0.02, -(i // 4) * 0.025] for i in range(21)], dtype=float)
+            pts[0] = 0
+            pts[9] = [0, -0.1]
+            return pts
+
+        def rot(deg):
+            a = np.radians(deg)
+            c, s = np.cos(a), np.sin(a)
+            return np.array([[c, -s], [s, c]])
+
+        left = base() + [-spread / 2, 0]
+        right = base()
+        if relative_tilt_deg:
+            right = right @ rot(relative_tilt_deg).T
+        right = right + [spread / 2, 0]
+        both = np.vstack([left, right])
+        if global_tilt_deg:
+            both = both @ rot(global_tilt_deg).T
+        both = both + center
+        return [dict(landmarks=both[:21], handedness="Left"),
+                dict(landmarks=both[21:], handedness="Right")]
+
+    def encode_static_pose(self, hands):
+        pts = ordered_landmarks(hands)
+        return encode_sequence([0, 1], [pts, pts])
+
+    def test_two_hand_global_tilt_is_normalized_away(self):
+        """두 손이 '같이' 기우는 전체 기울기는 카메라 각도 잡음에 가까우므로,
+        등록 때와 실행 때 몸이 조금 틀어져 있어도 같은 제스처로 인식돼야 한다."""
+        base = self.encode_static_pose(self.two_hand_tilt_pose())
+        tilted = self.encode_static_pose(self.two_hand_tilt_pose(global_tilt_deg=20))
+        self.assertLess(distance(tilted, base, 2), 0.01)
+
+    def test_two_hand_relative_rotation_is_preserved(self):
+        """한 손만 다른 손 대비 도는 상대 회전은 실제로 다른 제스처를 뜻하므로,
+        전체 기울기를 지워도 여전히 뚜렷하게 구분돼야 한다."""
+        base = self.encode_static_pose(self.two_hand_tilt_pose())
+        relative = self.encode_static_pose(self.two_hand_tilt_pose(relative_tilt_deg=20))
+        self.assertGreater(distance(relative, base, 2), 0.1)
+
+    def test_two_hand_opposite_facing_skips_rotation_safely(self):
+        """두 손이 거의 정반대를 향하면(예: 손뼉 치기 직전) 기준 방향 자체가
+        정의되지 않는다 — 에러 없이, 회전 보정을 건너뛴 값을 내야 한다."""
+        def facing_pose(global_tilt_deg=0.0):
+            pts = np.array([[i % 4 * 0.02, -(i // 4) * 0.025] for i in range(21)], dtype=float)
+            pts[0] = 0
+            pts[9] = [0, -0.1]
+            a = np.radians(180)
+            c, s = np.cos(a), np.sin(a)
+            flipped = pts @ np.array([[c, -s], [s, c]]).T
+            left = pts + [-0.15, 0]
+            right = flipped + [0.15, 0]
+            both = np.vstack([left, right])
+            if global_tilt_deg:
+                ga = np.radians(global_tilt_deg)
+                gc, gs = np.cos(ga), np.sin(ga)
+                both = both @ np.array([[gc, -gs], [gs, gc]]).T
+            both = both + [0.5, 0.6]
+            return [dict(landmarks=both[:21], handedness="Left"),
+                    dict(landmarks=both[21:], handedness="Right")]
+
+        base = self.encode_static_pose(facing_pose())
+        self.assertTrue(np.isfinite(base).all())
+        # 보정이 건너뛰어졌다면(회전 미보정) 전체를 돌린 버전은 여전히 다르게 보여야
+        # 한다 — 일반 자세라면 0에 가까울 20도 기울임이 그대로 남는지로 확인한다.
+        tilted = self.encode_static_pose(facing_pose(global_tilt_deg=20))
+        self.assertTrue(np.isfinite(tilted).all())
+        self.assertGreater(distance(tilted, base, 2), 0.05)
 
     def test_capture_tick_upload_download_roundtrip(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
