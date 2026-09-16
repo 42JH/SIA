@@ -270,13 +270,31 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
       setError(parseError.message);
       return;
     }
-    if (!name.trim() || !parsedSteps.length) {
-      setError('제스처 이름과 한 개 이상의 기능을 입력해주세요.');
+    // 기본 제공 제스처는 기능 해제(빈 steps)가 허용되지만 커스텀은 최소 한 단계가 필요하다
+    if (gesture.custom && !name.trim()) {
+      setError('제스처 이름을 입력해주세요.');
+      return;
+    }
+    if (gesture.custom && !parsedSteps.length) {
+      setError('한 개 이상의 기능을 입력해주세요.');
+      return;
+    }
+    // 보낸 필드만 바뀌므로 실제로 바뀐 필드만 담는다 — 기본 제공은 애초에 name · description을 다루지 않는다
+    const payload = {};
+    if (gesture.custom) {
+      if (name.trim() !== gesture.name) payload.name = name.trim();
+      const trimmedDescription = description.trim() || null;
+      if (trimmedDescription !== (gesture.description || null)) payload.description = trimmedDescription;
+    }
+    if (repeatable !== Boolean(gesture.repeatable)) payload.repeatable = repeatable;
+    if (JSON.stringify(steps) !== JSON.stringify(toEditableSteps(gesture.steps))) payload.steps = parsedSteps;
+    if (!Object.keys(payload).length) {
+      setEditing(false);
       return;
     }
     setSaving(true);
     try {
-      const next = await updateGesture(gesture.id, { name: name.trim(), description: description.trim() || null, repeatable, steps: parsedSteps });
+      const next = await updateGesture(gesture.id, payload);
       onUpdated(next);
       setEditing(false);
     } catch (requestError) {
@@ -291,6 +309,7 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
       <section className={styles.detailModal} role="dialog" aria-modal="true" aria-labelledby="gesture-detail-title">
         <header><button onClick={onClose} aria-label="닫기">‹</button><h2 id="gesture-detail-title">{editing ? '제스처 수정' : '제스처 상세'}</h2><button onClick={onClose} aria-label="닫기">×</button></header>
         {editing ? <GestureForm
+          custom={gesture.custom}
           name={name} setName={setName} description={description} setDescription={setDescription}
           repeatable={repeatable} setRepeatable={setRepeatable} steps={steps} setSteps={setSteps} tools={tools} apps={apps} error={error}
         /> : <div className={styles.detailBody}>
@@ -299,7 +318,7 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
           <p className={styles.gestureDescription}>{gesture.description?.trim() || '등록된 제스처 설명이 없습니다.'}</p>
           <p className={styles.meta}>{gesture.custom ? `커스텀 제스처${gesture.createdAt ? ` · 등록일 ${gesture.createdAt.slice(0, 10)}` : ''}` : '기본 제공 제스처'}</p>
           {!gesture.virtual && <div className={styles.detailToggle}><span>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
-          {gesture.custom && !!gesture.steps?.length && <div className={styles.macroSummary}>
+          {!!gesture.steps?.length && <div className={styles.macroSummary}>
             <h4>실행 동작</h4>
             <p>제스처를 인식하면 아래 기능을 순서대로 실행합니다.</p>
             <ol className={styles.stepSummary}>{gesture.steps.map((step, index) => <li key={`${step.tool}-${index}`}>
@@ -309,7 +328,7 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
           </div>}
         </div>}
         <footer className={styles.actions}>
-          {editing ? <><button onClick={() => setEditing(false)}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '저장'}</button></> : gesture.custom ? <><button onClick={() => setEditing(true)}>수정</button><button onClick={() => setConfirmDelete(true)}>삭제</button></> : <button onClick={onClose}>확인</button>}
+          {editing ? <><button onClick={() => setEditing(false)}>취소</button><button className={styles.primary} disabled={saving} onClick={save}>{saving ? '저장 중' : '저장'}</button></> : gesture.custom ? <><button onClick={() => setEditing(true)}>수정</button><button onClick={() => setConfirmDelete(true)}>삭제</button></> : <><button disabled={gesture.virtual} title={gesture.virtual ? '백엔드 기본 제스처 등록이 필요합니다.' : undefined} onClick={() => setEditing(true)}>기능 지정</button><button onClick={onClose}>확인</button></>}
         </footer>
         {confirmDelete && <div className={styles.innerBackdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><h3>제스처를 삭제하시겠습니까?</h3><p>“{displayName(gesture)}”의 영상과 학습 데이터도 함께 삭제됩니다.</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
       </section>
@@ -333,7 +352,7 @@ function parseSteps(steps) {
   });
 }
 
-function GestureForm({ name, setName, description, setDescription, repeatable, setRepeatable, steps, setSteps, tools, apps = [], error }) {
+function GestureForm({ custom = true, name, setName, description, setDescription, repeatable, setRepeatable, steps, setSteps, tools, apps = [], error }) {
   const updateStep = (index, patch) => setSteps(steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step));
   const groups = tools.reduce((result, tool) => {
     const category = tool.name.split('.')[0];
@@ -342,8 +361,8 @@ function GestureForm({ name, setName, description, setDescription, repeatable, s
     return result;
   }, {});
   return <div className={styles.form}>
-    <label>제스처 이름<input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 손가락 하트" /></label>
-    <label>제스처 설명<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="어떤 모양과 움직임의 제스처인지 적어주세요." /></label>
+    {custom && <label>제스처 이름<input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 손가락 하트" /></label>}
+    {custom && <label>제스처 설명<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="어떤 모양과 움직임의 제스처인지 적어주세요." /></label>}
     <div><span>이 제스처로 실행할 기능</span>{steps.map((step, index) => <div className={styles.stepEditor} key={index}>
       <b>{index + 1}</b><select value={step.tool} onChange={(event) => updateStep(index, { tool: event.target.value, args: {} })}><option value="">기능 선택</option>{Object.entries(groups).map(([category, categoryTools]) => <optgroup label={categoryLabels[category] || category} key={category}>{categoryTools.map((tool) => <option value={tool.name} key={tool.name}>{toolLabels[tool.name] || tool.name}</option>)}</optgroup>)}</select>
       <StepSettings step={step} apps={apps} update={(args) => updateStep(index, { args })} />
