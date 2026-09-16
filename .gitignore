@@ -37,3 +37,10 @@ venv/
 # Logs
 *.log
 npm-debug.log*
+
+# Integration (Tauri)
+Integration/node_modules/
+Integration/src-tauri/target/
+Integration/src-tauri/gen/
+Integration/src-tauri/binaries/*
+!Integration/src-tauri/binaries/README.md
