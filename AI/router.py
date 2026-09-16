@@ -10,9 +10,9 @@ None → 호출측이 LLM(2단)으로 승격하며 STT 초안을 힌트로 첨�
 1단 v1 범위는 안전한 명령만: 앱 실행, 미디어 제어, 세션 종료. 창 닫기·삭제
 같은 파괴적 동작은 확인 흐름이 필요해서 LLM 경로에 남긴다.
 
-모델: 환경변수 STT_MODEL (기본 base, CPU int8). 첫 발화 때 lazy load.
-실측(2초 오디오, CPU int8): base 0.84~0.94s / small 1.7~2.6s — 1단 목표
-(1초 미만)는 base만 충족. 오인식 비용은 LLM 승격뿐이라 빠른 쪽이 기본.
+모델: 기본 small — GPU(ctranslate2 CUDA) 면 float16·0.15s, 없거나 로드 실패면
+CPU int8·2.4s 로 자동 폴백. beam5 + 사전에서 만든 어휘 프롬프트 + 환각 가드
+(avg_logprob < STT_MIN_LOGPROB 면 승격). 첫 발화 때 lazy load. 상세 실측은 아래 설정 주석.
 NOTE(한계): 매칭은 공백 제거 후 부분 문자열 — 활용형이 사전을 벗어나면
 승격된다. 회귀 케이스로 1단 적중률을 실측한 뒤 형태소 분석기(kiwipiepy)
 도입을 판단한다.
@@ -31,16 +31,17 @@ def _cuda_available():
         return False
 
 
-# STT 설정 — 기본 "auto": GPU(ctranslate2 CUDA)가 있으면 small·float16·beam5·어휘 프롬프트, 없으면 base·int8·beam1.
-# 실측(eval --tier1 59케이스, 2026-09-15): base·cpu 5적중/22미스/중앙 0.72s → small·cuda+프롬프트 20적중/7미스/0.13s, 오답 0.
-# CPU 에선 프롬프트를 끈다 — base 가 프롬프트 어휘로 환각('일시정지.' 오답 2건)해 즉시 실행이 틀리기 때문.
+# STT 설정 — 기본 "auto": GPU(ctranslate2 CUDA)가 있으면 small·float16, 없으면 small·int8. beam5·어휘 프롬프트는 공통.
+# 실측(eval --tier1 59케이스): base·cpu·beam1 6적중/21미스/중앙 0.70s(9/15 라이브가 이 상태 — '계산결하죠' 식 뭉개짐)
+#   → small·cuda 24적중/3미스/0.15s(9/16, 오답 0) · small·cpu·int8·beam5+프롬프트 23적중/4미스/2.4s(오답 0).
+# base 는 프롬프트 어휘로 환각('일시정지.' 오답)해 폴백으로도 안 쓴다. CPU small 은 2초대라 느리지만 Gemini 4.5초보다 빠르고 정확하다.
 STT_DEVICE = os.environ.get("STT_DEVICE", "auto")
 if STT_DEVICE == "auto":
     STT_DEVICE = "cuda" if _cuda_available() else "cpu"
 _GPU = STT_DEVICE.startswith("cuda")
-MODEL_NAME = os.environ.get("STT_MODEL") or ("small" if _GPU else "base")
+MODEL_NAME = os.environ.get("STT_MODEL") or "small"
 STT_COMPUTE = os.environ.get("STT_COMPUTE") or ("float16" if _GPU else "int8")
-STT_BEAM = int(os.environ.get("STT_BEAM") or (5 if _GPU else 1))
+STT_BEAM = int(os.environ.get("STT_BEAM") or 5)
 # 환각 가드 — 세그먼트 최저 avg_logprob 가 이 값 미만이면 1단 즉시 실행을 포기하고 LLM 으로 승격한다.
 # 실측(small·cuda·프롬프트, 59케이스): 정답 적중 22건 logprob -0.79~-0.16, 유일한 오답(사인오프를 '다음곡.'으로 환각) -1.09.
 STT_MIN_LOGPROB = float(os.environ.get("STT_MIN_LOGPROB") or -0.9)
@@ -53,6 +54,8 @@ ASK = ("뭐야", "뭐지", "뭔데", "설명", "요약", "번역", "알려줘", 
 APPS_KO = {"계산기": "calc", "메모장": "notepad", "크롬": "chrome",
            "탐색기": "explorer", "그림판": "paint"}
 OPEN_VERBS = ("열어", "켜", "띄워", "실행", "틀어")
+# 앱 이름 뒤에 군말만 남으면 열기 — "시아야 메모장 해줄래?"·"시아야 크롬" (실측 미스 2건). "메모장 저장해줘"처럼 다른 동사가 있으면 승격.
+APP_ONLY_REQ = {"", "해줘", "해줄래", "해줄래요", "해주세요", "해", "줘", "좀", "좀해줘", "부탁해", "부탁"}
 
 MEDIA_KO = [  # (키워드들, media_key, say)
     (("음소거", "소리꺼", "소리켜"), "mute", "음소거를 전환할게요"),
@@ -70,7 +73,7 @@ VOL_DOWN = ("내려", "줄여", "낮춰", "다운")
 DEFAULT_PROMPT = ("시아야. " + " ".join(f"{a} 열어줘." for a in APPS_KO) + " "
                   + " ".join(f"{ws[0]}." for ws, _, _ in MEDIA_KO)
                   + " 볼륨 올려줘. 볼륨 내려줘. 이거 저장해줘. 창 최대화. 다음 탭. 종료.")
-STT_PROMPT = (os.environ["STT_PROMPT"] or None) if "STT_PROMPT" in os.environ else (DEFAULT_PROMPT if _GPU else None)
+STT_PROMPT = (os.environ["STT_PROMPT"] or None) if "STT_PROMPT" in os.environ else DEFAULT_PROMPT
 
 # NOTE(튜닝): 흔한 동사("들어가" 등)는 오탐 실측 후 제거됨 — '유튜브 들어가줄래'가
 # end_session 으로 처리된 사례(2026-09-03). 부분 일치는 명시적 종료 표현만.
@@ -81,7 +84,7 @@ END_KO = ("이제그만", "그만해", "이제됐어",    # 부분 일치 허용
 # 호출어의 STT 흔한 오표기 — 동음·유사 발음만 (실측 기반으로 추가)
 # NOTE(튜닝): 미인식↑면 변형을 추가하고, 엉뚱한 발화가 통과하면 뺀다.
 # 짧은 변형("시아"·"시야")은 시아버지·시야 같은 일상 단어에 오탐하므로 넣지 않는다
-WAKE_VARIANTS = {"시아야": ("시아야", "시야야", "씨아야")}
+WAKE_VARIANTS = {"시아야": ("시아", "시아야", "시야야", "씨아야")}
 
 
 def _compact(text):
@@ -102,10 +105,20 @@ class Router:
 
         if self._model is None:
             t0 = time.monotonic()
-            if STT_DEVICE.startswith("cuda"):
-                import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
-            self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
-            print(f"STT 모델 로드 ({MODEL_NAME}, {STT_DEVICE}/{STT_COMPUTE}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
+            self.device, self.compute = STT_DEVICE, STT_COMPUTE
+            try:
+                if STT_DEVICE.startswith("cuda"):
+                    import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
+                self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+            except Exception as e:
+                if not STT_DEVICE.startswith("cuda"):
+                    raise
+                # GPU 는 보이는데 로드가 실패하는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
+                # 재시도 대신 CPU small 로 한 번에 내려간다. 팀원 노트북 셋업 차이를 여기서 흡수.
+                print(f"STT GPU 로드 실패 → CPU 폴백: {str(e)[:120]}")
+                self.device, self.compute = "cpu", "int8"
+                self._model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+            print(f"STT 모델 로드 ({MODEL_NAME}, {self.device}/{self.compute}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
         t0 = time.monotonic()
         a = np.asarray(audio_i16, dtype=np.float32) / 32768.0
         segments, _ = self._model.transcribe(a, language="ko", beam_size=STT_BEAM,
@@ -114,6 +127,13 @@ class Router:
         text = "".join(s.text for s in segments).strip()
         self.last_logprob = min((s.avg_logprob for s in segments), default=None)
         return text, time.monotonic() - t0
+
+    def _residual(self, c, name):
+        """호출어·앱 이름을 뺀 나머지 — 군말뿐인지 판단용."""
+        r = c.replace(name, "")
+        for w in sorted(self.wakes, key=len, reverse=True):
+            r = r.replace(w, "")
+        return r
 
     def route(self, text, session_active):
         """텍스트 → 액션 dict 또는 None(승격). 게이트: 호출어 또는 활성 세션."""
@@ -131,7 +151,7 @@ class Router:
         base = {"audio_is_speech": True, "wake_heard": wake, "is_command": True,
                 "transcript": text, "tier": 1}
         for name, key in APPS_KO.items():
-            if name in c and any(v in c for v in OPEN_VERBS):
+            if name in c and (any(v in c for v in OPEN_VERBS) or self._residual(c, name) in APP_ONLY_REQ):
                 return {**base, "action": "open_app", "app": key,
                         "say": f"{name}를 열게요"}
         # 종료 인사는 미디어보다 먼저 — "다음 영상에서 만나요"가 '다음 영상'(next)으로 잡히지 않게
@@ -168,6 +188,10 @@ def selftest():
     assert r.route("시작해줘", True)["media_key"] == "playpause"
     assert r.route("노래 틀어줘", True)["media_key"] == "playpause"
     assert r.route("크롬 틀어줘", True)["action"] == "open_app"          # 앱 이름이 있으면 열기가 우선
+    assert r.route("시아야 메모장 해줄래?", False)["app"] == "notepad"   # 앱 이름 + 군말 → 열기(실측 미스)
+    assert r.route("메모장 해줄래?", True)["action"] == "open_app"
+    assert r.route("시아야 크롬", False)["action"] == "open_app"
+    assert r.route("메모장 저장해줘", True) is None                     # 다른 동사 → 승격
     assert r.route("다음 영상에서 만나요", True)["action"] == "end_session"  # 인사 > 다음영상(next)
     assert r.route("다음 영상", True)["media_key"] == "next"
     assert r.route("수고하셨습니다", True)["action"] == "end_session"
