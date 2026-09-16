@@ -282,6 +282,7 @@ def main():
     if link and link.wake:
         link.wake.wake_model = brain.wake  # 등록의 발음 확인도 실행과 같은 고정 모델로
     brain.start()
+    brain.warm_stt_async()  # STT 모델 예열 — 첫 명령이 로드 1.4~5s(+torch import) 를 떠안지 않게(팀원 실측 9/16)
 
     # 시동어 상시 추론 — 세션 밖에서 호출어가 안 잡힌 조각은 화면 캡처·brain 제출 전에 버린다.
     # (유튜브 배경 실측: 시간당 제출 372 → 0.5, 화면 캡처 490 → 1.5, LISTENING 25.6 % → 0 %.)

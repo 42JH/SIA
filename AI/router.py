@@ -17,7 +17,9 @@ NOTE(한계): 매칭은 공백 제거 후 부분 문자열 — 활용형이 사�
 승격된다. 회귀 케이스로 1단 적중률을 실측한 뒤 형태소 분석기(kiwipiepy)
 도입을 판단한다.
 """
+import difflib
 import os
+import threading
 import re
 import time
 
@@ -56,6 +58,44 @@ APPS_KO = {"계산기": "calc", "메모장": "notepad", "크롬": "chrome",
 OPEN_VERBS = ("열어", "켜", "띄워", "실행", "틀어")
 # 앱 이름 뒤에 군말만 남으면 열기 — "시아야 메모장 해줄래?"·"시아야 크롬" (실측 미스 2건). "메모장 저장해줘"처럼 다른 동사가 있으면 승격.
 APP_ONLY_REQ = {"", "해줘", "해줄래", "해줄래요", "해주세요", "해", "줘", "좀", "좀해줘", "부탁해", "부탁"}
+# 앱 이름이 있고 잔여가 열기 동사와 자모 유사하면 열기 — 라이브 실측 "크롬 켜줘"→"크롬 펴줘"(팀원, 9/16).
+# 잔여 길이만 보면 "크롬 느려"·"계산기 어디"도 열려서(검토 지적) 유사도를 본다. 다른 의도 표지(닫기·끄기·탭·저장 등)는 승격.
+NOT_OPEN = ("닫", "꺼", "끄", "종료", "지워", "삭제", "저장", "탭", "최소", "최대", "이동", "옮", "검색")
+
+# --- 자모 유사도: 동사 초성 오인식(켜줘→펴줘, 띄워→띠워)을 사전 확장 없이 흡수 ---
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_JONG = " ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"
+
+
+def jamo(text):
+    """한글 음절을 초·중·종성 문자열로 푼다 — '켜줘' → 'ㅋㅕㅈㅜㅓ'. 한글이 아니면 그대로."""
+    out = []
+    for ch in text:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            out.append(_CHO[code // 588] + _JUNG[code % 588 // 28] + _JONG[code % 28].strip())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def similar(a, b):
+    """자모 단위 difflib 비율 — 켜줘↔펴줘 0.80, 띄워↔띠워 0.80, 켜↔꺼 0.50, 열어↔느려 0.57."""
+    return difflib.SequenceMatcher(None, jamo(a), jamo(b)).ratio()
+
+
+OPEN_SUFFIXES = ("", "줘", "줄래", "봐", "요", "라", "봐줘", "주세요")
+
+
+def open_like(residual):
+    """앱 이름·호출어를 뺀 잔여가 '열기 요청'으로 볼 수 있나 — APP_ONLY_REQ 의 군말이거나, 열기 동사(+군말)와
+    자모 유사도 0.7 이상. 검토에서 나온 오탐('크롬 느려'·'크롬은요'·'계산기 어디'·'탐색기 말고')은 전부 0.45 이하."""
+    if residual in APP_ONLY_REQ:
+        return True
+    if len(residual) > 4 or any(x in residual for x in NOT_OPEN):
+        return False
+    return any(similar(residual, v + suf) >= 0.7 for v in OPEN_VERBS for suf in OPEN_SUFFIXES)  # 켜줘↔펴줘 0.75 가 경계라 여유
 
 MEDIA_KO = [  # (키워드들, media_key, say)
     (("음소거", "소리꺼", "소리켜"), "mute", "음소거를 전환할게요"),
@@ -68,9 +108,30 @@ MEDIA_KO = [  # (키워드들, media_key, say)
 VOL_NOUNS = ("볼륨", "소리")
 VOL_UP = ("올려", "키워", "높여", "업")
 VOL_DOWN = ("내려", "줄여", "낮춰", "다운")
+_KO_DIGIT = {"일": 1, "이": 2, "삼": 3, "사": 4, "오": 5, "육": 6, "칠": 7, "팔": 8, "구": 9}
+# 숫자(80·팔십·백) 뒤에 까지/으로/로/퍼센트가 붙거나 문장이 끝나면 절대값 — "볼륨 두 칸 올려"처럼 수량 표현은 안 잡는다.
+_LEVEL_RE = re.compile(r"(\d{1,3}|백|[일이삼사오육칠팔구]?십[일이삼사오육칠팔구]?)"
+                       r"(?:[가-힣]{1,2}(?:까지|으로|로|퍼센트|프로|%)|(?:까지|으로|로|퍼센트|프로|%|$))")  # "80번지까지"(TTS 실측)도 80
+
+
+def volume_level(c):
+    """압축 문장에서 목표 볼륨 0~100 을 뽑는다. 없으면 None(한 단계 올림·내림).
+    팀원 실측(9/16): "소리 80까지 높여줘"가 volup 한 단계로 처리돼 +2 만 올라갔다 → BE volume.set 으로."""
+    m = _LEVEL_RE.search(c)
+    if not m:
+        return None
+    tok = m.group(1)
+    if tok.isdigit():
+        n = int(tok)
+    elif tok == "백":
+        n = 100
+    else:
+        tens, ones = tok.split("십")
+        n = _KO_DIGIT.get(tens, 1) * 10 + _KO_DIGIT.get(ones, 0)
+    return max(0, min(100, n))
 
 # initial_prompt 어휘 힌트 — 사전과 같은 표에서 만들어 항상 동기화. 짧은 한국어 명령의 오인식을 크게 줄인다(위 실측).
-DEFAULT_PROMPT = ("시아야. " + " ".join(f"{a} 열어줘." for a in APPS_KO) + " "
+DEFAULT_PROMPT = ("시아야. " + " ".join(f"{a} 열어줘. {a} 켜줘." for a in APPS_KO) + " "
                   + " ".join(f"{ws[0]}." for ws, _, _ in MEDIA_KO)
                   + " 볼륨 올려줘. 볼륨 내려줘. 이거 저장해줘. 창 최대화. 다음 탭. 종료.")
 STT_PROMPT = (os.environ["STT_PROMPT"] or None) if "STT_PROMPT" in os.environ else DEFAULT_PROMPT
@@ -96,29 +157,46 @@ class Router:
         self.wakes = tuple(_compact(w) for w in
                            WAKE_VARIANTS.get(wake_word, (wake_word,)))
         self._model = None
+        self._load_lock = threading.Lock()
         self.last_logprob = None  # 직전 transcribe 의 세그먼트 최저 avg_logprob (환각 가드·로그용)
+
+    def _load(self, WhisperModel):
+        if self._model is not None:
+            return
+        t0 = time.monotonic()
+        self.device, self.compute = STT_DEVICE, STT_COMPUTE
+        try:
+            if STT_DEVICE.startswith("cuda"):
+                import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
+            self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+        except Exception as e:
+            if not STT_DEVICE.startswith("cuda"):
+                raise
+            # GPU 는 보이는데 로드가 실패하는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
+            # 재시도 대신 CPU small 로 한 번에 내려간다. 팀원 노트북 셋업 차이를 여기서 흡수.
+            print(f"STT GPU 로드 실패 → CPU 폴백: {str(e)[:120]}")
+            self.device, self.compute = "cpu", "int8"
+            self._model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        print(f"STT 모델 로드 ({MODEL_NAME}, {self.device}/{self.compute}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
+
+    def warm(self):
+        """모델 로드 + 무음 1초 추론 — 첫 명령이 로드 1.4s·CUDA 워밍업을 떠안지 않게(팀원 실측 9/16).
+        transcribe() 를 거치지 않아 last_logprob·호출 통계를 건드리지 않는다."""
+        import numpy as np
+        from faster_whisper import WhisperModel
+
+        with self._load_lock:
+            self._load(WhisperModel)
+        segments, _ = self._model.transcribe(np.zeros(16000, np.float32), language="ko", beam_size=1)
+        list(segments)
 
     def transcribe(self, audio_i16):
         """발화 오디오 → (텍스트, 소요 초). 모델은 첫 호출 때 로드."""
         import numpy as np
         from faster_whisper import WhisperModel
 
-        if self._model is None:
-            t0 = time.monotonic()
-            self.device, self.compute = STT_DEVICE, STT_COMPUTE
-            try:
-                if STT_DEVICE.startswith("cuda"):
-                    import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
-                self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
-            except Exception as e:
-                if not STT_DEVICE.startswith("cuda"):
-                    raise
-                # GPU 는 보이는데 로드가 실패하는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
-                # 재시도 대신 CPU small 로 한 번에 내려간다. 팀원 노트북 셋업 차이를 여기서 흡수.
-                print(f"STT GPU 로드 실패 → CPU 폴백: {str(e)[:120]}")
-                self.device, self.compute = "cpu", "int8"
-                self._model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
-            print(f"STT 모델 로드 ({MODEL_NAME}, {self.device}/{self.compute}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
+        with self._load_lock:  # 예열 스레드와 첫 발화가 겹쳐도 모델은 한 번만 올린다
+            self._load(WhisperModel)
         t0 = time.monotonic()
         a = np.asarray(audio_i16, dtype=np.float32) / 32768.0
         segments, _ = self._model.transcribe(a, language="ko", beam_size=STT_BEAM,
@@ -151,7 +229,10 @@ class Router:
         base = {"audio_is_speech": True, "wake_heard": wake, "is_command": True,
                 "transcript": text, "tier": 1}
         for name, key in APPS_KO.items():
-            if name in c and (any(v in c for v in OPEN_VERBS) or self._residual(c, name) in APP_ONLY_REQ):
+            if name not in c:
+                continue
+            r = self._residual(c, name)
+            if any(v in c for v in OPEN_VERBS) or open_like(r):
                 return {**base, "action": "open_app", "app": key,
                         "say": f"{name}를 열게요"}
         # 종료 인사는 미디어보다 먼저 — "다음 영상에서 만나요"가 '다음 영상'(next)으로 잡히지 않게
@@ -161,6 +242,10 @@ class Router:
             if any(_compact(w) in c for w in words):
                 return {**base, "action": "media", "media_key": key, "say": say}
         if any(n in c for n in VOL_NOUNS):
+            level = volume_level(c)
+            if level is not None:  # 절대값은 BE volume.set — 한 단계 키 입력으론 80 을 못 맞춘다
+                return {**base, "action": "media", "media_key": "volset", "level": level,
+                        "say": f"볼륨을 {level}으로 맞출게요"}
             if any(v in c for v in VOL_UP):
                 return {**base, "action": "media", "media_key": "volup", "say": "볼륨을 올릴게요"}
             if any(v in c for v in VOL_DOWN):
@@ -183,7 +268,7 @@ def selftest():
     assert r.route("그만", False) is None  # 세션 없는 '그만'은 승격
     # 2026-09-15 실측 미스에서 추가: 조사·군말 사이 볼륨, 종료 인사 우선, 틀어/시작해
     assert r.route("볼륨 좀 올려줘", True)["media_key"] == "volup"
-    assert r.route("볼륨을 팔십까지 올려줘", True)["media_key"] == "volup"
+    assert r.route("볼륨을 팔십까지 올려줘", True)["media_key"] == "volset"  # 값이 있으면 절대값(9/16 팀원 실측)
     assert r.route("소리 줄여줄래", True)["media_key"] == "voldown"
     assert r.route("시작해줘", True)["media_key"] == "playpause"
     assert r.route("노래 틀어줘", True)["media_key"] == "playpause"
@@ -192,6 +277,22 @@ def selftest():
     assert r.route("메모장 해줄래?", True)["action"] == "open_app"
     assert r.route("시아야 크롬", False)["action"] == "open_app"
     assert r.route("메모장 저장해줘", True) is None                     # 다른 동사 → 승격
+    assert r.route("시아야 크롬 펴줘", False)["app"] == "chrome"        # 동사 오인식(켜줘→펴줘) — 앱 이름이 닻
+    assert r.route("시아야 크롬 닫아줘", False) is None                 # 닫기 표지 → 승격
+    assert r.route("크롬 탭 닫아", True) is None
+    assert r.route("메모장에 적어줘", True) is None                     # 열기와 무관한 동사 → 승격
+    assert r.route("메모장 띠워줘", True)["app"] == "notepad"          # 띄워→띠워(자모 0.8)
+    for bad in ("크롬 느려", "크롬은요", "계산기 어디", "탐색기 말고", "크롬 봐", "크롬이 안 돼"):
+        assert r.route(bad, True) is None, bad                       # 검토 지적: 짧은 잔여만으로 열면 오탐
+    assert similar("켜줘", "펴줘") >= 0.7 and similar("켜", "꺼") < 0.7
+    hit = r.route("소리 80까지 높여줘", True)                           # 절대값(팀원 실측: 한 단계만 올라감)
+    assert hit["media_key"] == "volset" and hit["level"] == 80
+    assert r.route("볼륨을 팔십으로 맞춰줘", True)["level"] == 80
+    assert r.route("볼륨 십오", True)["level"] == 15 and r.route("소리 백으로", True)["level"] == 100
+    assert r.route("볼륨 두 칸 올려줘", True)["media_key"] == "volup"     # 수량 표현은 한 단계
+    assert r.route("소리 80번지까지 높여줘", True)["level"] == 80          # 숫자·조사 사이 군말(TTS 실측)
+    assert r.route("볼륨 3 올려", True)["media_key"] == "volup"           # 조사 없는 숫자는 절대값이 아니다
+    assert r.route("볼륨 올려줘", True)["media_key"] == "volup"
     assert r.route("다음 영상에서 만나요", True)["action"] == "end_session"  # 인사 > 다음영상(next)
     assert r.route("다음 영상", True)["media_key"] == "next"
     assert r.route("수고하셨습니다", True)["action"] == "end_session"

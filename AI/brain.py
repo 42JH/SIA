@@ -93,6 +93,8 @@ MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggl
              "next": ("media.next", None), "prev": ("media.prev", None),
              "volup": ("volume.step", {"dir": "up"}), "voldown": ("volume.step", {"dir": "down"})}
 
+VAD_TAIL_S = 0.55  # voice.VadSegmenter end_silence_s 기본값과 맞춤 — 발화 끝 ≈ 세그먼트 도착 시각 - 꼬리
+
 SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_command": true/false, "transcript": "들은 말",
  "action": "answer|save_crop|open_app|web_search|find_file|delete_file|window|media|end_session|confirm_yes|confirm_no|none",
  "bbox": [ymin, xmin, ymax, xmax] (save_crop일 때 대상 경계, 전체 화면 기준 0~1000 정규화) 또는 null,
@@ -100,7 +102,7 @@ SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_comman
  "app": "chrome|notepad|calc|explorer|paint 또는 null",
  "query": "검색어 또는 파일명, 없으면 null",
  "window_op": "maximize|minimize|close|scroll_down|scroll_up 또는 null",
- "media_key": "playpause|mute|forward|back|next|prev|volup|voldown 또는 null",
+ "media_key": "playpause|mute|forward|back|next|prev|volup|voldown|volset 또는 null", "level": "volset 일 때 목표 볼륨 0~100, 아니면 null",
  "say": "사용자에게 보여줄 응답"}"""
 
 ACTION_RULES = """액션 규칙:
@@ -121,7 +123,7 @@ ACTION_RULES = """액션 규칙:
   그대로). 파일명을 도저히 알 수 없으면 query=null. 삭제는 휴지통행이며 재확인한다.
 - 창 제어(최대화/최소화/닫기) 및 스크롤(내려/올려) → window + window_op.
   창 닫기는 위험한 동작이라 비서가 실행 전 재확인한다.
-- 영상·음악 제어(재생/일시정지, 음소거, 10초 앞·뒤, 다음/이전, 볼륨) → media + media_key.
+- 영상·음악 제어(재생/일시정지, 음소거, 10초 앞·뒤, 다음/이전, 볼륨) → media + media_key. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
 - "그만", "이제 됐어", "꺼져" 등 비서 종료 → end_session.
 - 명령이지만 지원 범위 밖이면 none, say에 이유를 담아라."""
 
@@ -640,6 +642,7 @@ class Brain(threading.Thread):
     # [지연] 출력·log_utterance·submit 이 AttributeError 없이 읽는다.
     _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
     _router_fails = 0
+    _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -734,7 +737,7 @@ class Brain(threading.Thread):
                 if t_utter < self._audio_since:
                     return
                 self.queue.append((audio_i16, full_img, crop_img,
-                                   t_utter, target_hwnd, dom, wake_live))
+                                   t_utter, target_hwnd, dom, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -825,6 +828,25 @@ class Brain(threading.Thread):
         self._wake_notified = None
         return True, "ok", sim, clip_t0, clip_t1
 
+    def _warm_stt(self):
+        """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
+        라우터가 이미 있거나(테스트의 대역 포함), 음성 명령이 비활성이거나, STT_WARM=0 이면 건너뛴다."""
+        if self.router is not None or self._router_dead or not self.enabled or os.environ.get("STT_WARM") == "0":
+            return
+        try:
+            from router import Router
+
+            with self._router_lock:
+                if self.router is None:
+                    self.router = Router(WAKE_WORD)
+            self.router.warm()
+        except Exception as e:
+            print(f"[STT 예열 실패 → 첫 발화 때 로드] {e}")
+
+    def warm_stt_async(self):
+        """운영 진입점(assistant.py)이 start() 직후 한 번 부른다 — run() 안에 두면 테스트의 반복 run() 마다 스레드가 생긴다."""
+        threading.Thread(target=self._warm_stt, daemon=True).start()
+
     def run(self):
         while True:
             if not self.queue:
@@ -833,13 +855,13 @@ class Brain(threading.Thread):
             with self._audio_lock:
                 if not self.queue:
                     continue
-                audio, full_img, crop_img, t_utter, hwnd, dom, wake_live = self.queue.pop(0)
+                audio, full_img, crop_img, t_utter, hwnd, dom, wake_live, t_recv = self.queue.pop(0)
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
             self.busy += 1
             t_proc = time.monotonic()  # 처리 시작(발화 종료 + VAD 꼬리 이후) — 지연 분해 기준점
-            t_end = (t_utter + len(audio) / 16000) if t_utter else t_proc  # 발화가 끝난 시각(추정)
+            t_end = t_recv - VAD_TAIL_S  # 발화가 끝난 시각(추정): VAD 는 꼬리 침묵 뒤에 세그먼트를 넘긴다. 이전 식(t_utter+길이)은 프리롤 2초만큼 늦게 잡았다
             try:
                 if EVAL_CAPTURE:
                     pq = self._pending[0] if self._pending and t_utter < self._pending[2] else None
@@ -1025,7 +1047,9 @@ class Brain(threading.Thread):
             try:
                 from router import Router
 
-                self.router = Router(WAKE_WORD)
+                with self._router_lock:
+                    if self.router is None:
+                        self.router = Router(WAKE_WORD)
             except Exception as e:
                 self._router_dead = True
                 print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
@@ -1261,7 +1285,7 @@ class Brain(threading.Thread):
                 self._say(q + ' — "응, 삭제" / "취소"', "confirm", CONFIRM_TIMEOUT_S,
                           timeoutSec=int(CONFIRM_TIMEOUT_S))
         elif action == "media":
-            if self._media(result.get("media_key"), say, hwnd):
+            if self._media(result.get("media_key"), say, hwnd, level=result.get("level")):
                 return completed
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
             SAVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1305,7 +1329,12 @@ class Brain(threading.Thread):
         else:
             self.overlay.toast("…")
 
-    def _media(self, key, say="", hwnd=0):
+    def _media(self, key, say="", hwnd=0, level=None):
+        if key == "volset":  # 절대값은 BE 전용(volume.set) — 로컬 키 입력으론 현재 값을 모른다
+            if level is not None and self._try_be("volume.set", {"level": int(level)}, say):
+                return True
+            self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
+            return False
         # BE 연결 시 미디어/볼륨은 MCP 도구로 이관(유튜브 여부는 BE 가 포그라운드로 판별).
         # forward/back(유튜브 10초 이동)은 카탈로그에 없어 아래 로컬 경로로 남는다.
         tool = MEDIA_MCP.get(key)
