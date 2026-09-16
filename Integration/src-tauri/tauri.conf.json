@@ -12,15 +12,6 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "SIA",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false,
-        "visible": true
-      },
-      {
         "label": "overlay",
         "title": "SIA Overlay",
         "url": "overlay/index.html",

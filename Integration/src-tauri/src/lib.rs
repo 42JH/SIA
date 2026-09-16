@@ -80,7 +80,9 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // --- BE -> (준비 확인) -> AI 순서로 sidecar 기동 ---
+            // --- BE -> (준비 확인 + 온보딩 여부 판단) -> AI 순서로 sidecar 기동 ---
+            // 메인 창은 더 이상 tauri.conf.json에 정적으로 선언돼 있지 않다 — 온보딩이
+            // 필요한 경우에만 여기서(spawn_sidecars 내부) 동적으로 생성한다.
             spawn_sidecars(app.handle().clone());
 
             // --- 오버레이 창: 주 모니터에 맞춰 크기/위치 재설정 + 클릭 무시(순수 표시 전용) ---
@@ -142,10 +144,44 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// 메인 창을 동적으로 생성한다. 예전엔 `tauri.conf.json`에 `main` 창을 정적으로
+/// 선언해서 부팅할 때마다 항상 만들었지만, 이제 "온보딩이 필요할 때만 메인 창을
+/// 만든다"로 바뀌면서 Rust 코드에서 직접 만들도록 옮겼다 — 그래야 만드는 시점에
+/// 어느 경로로 시작할지(`initial_path`) 고를 수 있다.
+///
+/// `initial_path`가 `None`이면 프론트엔드 기본 라우트(`"/"` → 온보딩 화면)로,
+/// `Some("dashboard")`면 대시보드로 바로 진입한다. 이 URL 기반 진입(`WebviewUrl::App`)이
+/// 개발 모드(Vite dev 서버, 기본적으로 SPA 폴백 지원)에서는 문제없이 동작하지만,
+/// 프로덕션 빌드(`frontendDist` 정적 서빙)에서 `/dashboard` 같은 하위 경로로 바로
+/// 진입해도 index.html로 폴백되는지는 이 샌드박스에서 확인 불가 — `npm run tauri build`
+/// 결과물로 직접 확인 필요. 만약 안 되면 오버레이에 쓴 것과 같은 "ready 이벤트 +
+/// FE navigate()" 방식으로 바꿔야 한다.
+fn create_main_window(app: &AppHandle, initial_path: Option<&str>) -> tauri::Result<()> {
+    let url = tauri::WebviewUrl::App(PathBuf::from(initial_path.unwrap_or("")));
+    tauri::WebviewWindowBuilder::new(app, "main", url)
+        .title("SIA")
+        .inner_size(1200.0, 800.0)
+        .resizable(true)
+        .visible(true)
+        .build()?;
+    Ok(())
+}
+
+/// 트레이 "열기"/좌클릭에서 호출한다.
+///
+/// 메인 창이 이미 있으면(온보딩이 진행 중이었거나, 이전에 이미 만들어둔 상태) 그냥
+/// 보여주기만 한다 — 창을 hide만 하고 destroy는 안 하니 SPA 상태가 그대로 보존된다.
+///
+/// 메인 창이 없으면, 그건 부팅 시점에 온보딩이 이미 끝나 있어서 애초에 만들지
+/// 않았다는 뜻이다(`spawn_sidecars`의 온보딩 체크 참고 — 그게 메인 창을 안 만드는
+/// 유일한 이유다). 그러니 지금 처음 만드는 거라면 온보딩이 아니라 대시보드로 바로
+/// 진입시킨다.
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
+    } else if let Err(err) = create_main_window(app, Some("dashboard")) {
+        log::error!("[main-window] 트레이에서 메인 창 생성 실패: {err}");
     }
 }
 
@@ -221,6 +257,53 @@ fn parse_status_code(response_head: &str) -> Option<u16> {
         .ok()
 }
 
+/// `/api/status` 전체 응답 바디를 읽어온다. `fetch_status_code`는 상태 코드(첫 줄)만
+/// 필요해서 64바이트만 읽었지만, 여기서는 JSON 바디(activeVoiceId/activeCalibId)가
+/// 필요해서 연결이 닫힐 때까지 전부 읽는다 (요청에 `Connection: close`를 실어 보내서
+/// BE가 응답 후 연결을 닫아준다는 전제).
+fn fetch_status_body(port: u16) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_secs(2))).ok()?;
+
+    let request = format!(
+        "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let (_head, body) = text.split_once("\r\n\r\n")?;
+    Some(body.to_string())
+}
+
+/// `GET /api/status` 응답 중 온보딩 판단에 필요한 필드만 뽑는다. 나머지 필드
+/// (agentConnected 등)는 관심 없어서 구조체에 안 넣었다 — serde는 모르는 필드를
+/// 기본적으로 무시하므로 문제 없다.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusResponse {
+    active_voice_id: Option<i64>,
+    active_calib_id: Option<i64>,
+}
+
+/// `activeVoiceId`/`activeCalibId`가 둘 다 있어야(= 음성 임베딩 + 시선 보정 모두
+/// active 프로필 존재) 온보딩을 마친 것으로 판단한다.
+///
+/// 온보딩 흐름(`OnboardingFlow.jsx`)이 welcome -> basic(기기 선택) -> 설치앱 스캔 ->
+/// 시동어 등록 -> 음성 등록 -> 시선 보정 순 순차 진행이라, 이 둘(음성/시선)만 확인해도
+/// 그 앞 단계들이 이미 끝났다고 볼 수 있다.
+fn parse_onboarding_done(body: &str) -> bool {
+    serde_json::from_str::<StatusResponse>(body)
+        .map(|s| s.active_voice_id.is_some() && s.active_calib_id.is_some())
+        .unwrap_or(false)
+}
+
 /// BE가 준비됐는지 한 번 확인한다: runtime.json 읽기 + PID 대조 + `/api/status` 200 확인.
 /// 셋 다 만족하면 포트를 반환한다. TcpStream은 블로킹이라 spawn_blocking으로 돌린다.
 async fn probe_backend_ready(expected_pid: u32) -> Option<u16> {
@@ -255,8 +338,9 @@ async fn wait_for_backend_ready(expected_pid: u32) -> Option<u16> {
     }
 }
 
-/// BE를 먼저 띄우고, 준비 확인(`wait_for_backend_ready`)이 끝난 뒤에만 AI를 띄운다.
-/// 45초 안에 준비되지 않으면 BE를 종료하고 AI는 실행하지 않는다.
+/// BE를 먼저 띄우고, 준비 확인(`wait_for_backend_ready`)이 끝난 뒤 온보딩 여부를
+/// 판단해서 필요하면 메인 창을 만들고, 그 다음 AI를 띄운다. 45초 안에 BE가 준비되지
+/// 않으면 BE를 종료하고 AI는 실행하지 않는다.
 fn spawn_sidecars(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let shell = app.shell();
@@ -283,6 +367,28 @@ fn spawn_sidecars(app: AppHandle) {
             return;
         };
         log::info!("Backend 준비 완료 (port {port}) — AI 실행");
+
+        // --- 온보딩 필요 여부에 따라 메인 창 생성 여부 결정 ---
+        // 이미 온보딩을 마쳤으면(activeVoiceId/activeCalibId 둘 다 있으면) 메인 창을
+        // 아예 만들지 않는다 — 트레이 아이콘 + 오버레이(부트 토스트)만 뜨고, 그 외엔
+        // 아무 것도 자동으로 열리지 않는다. 나중에 사용자가 트레이 "열기"를 누르면
+        // 그때 `show_main_window`가 대시보드로 바로 만든다. 온보딩이 안 끝났으면
+        // 지금 바로 메인 창을 만들어 온보딩 화면을 띄운다.
+        let onboarded = tokio::task::spawn_blocking(move || fetch_status_body(port))
+            .await
+            .ok()
+            .flatten()
+            .map(|body| parse_onboarding_done(&body))
+            .unwrap_or(false);
+
+        if onboarded {
+            log::info!("[main-window] 온보딩 완료 상태 — 부팅 시 메인 창 생성 생략 (부트 토스트만)");
+        } else {
+            log::info!("[main-window] 온보딩 필요 — 메인 창을 온보딩 화면으로 생성");
+            if let Err(err) = create_main_window(&app, None) {
+                log::error!("[main-window] 생성 실패: {err}");
+            }
+        }
 
         let (mut ai_rx, ai_child) = match shell
             .sidecar("sia-ai")
@@ -354,5 +460,15 @@ mod tests {
         assert_eq!(parse_status_code("HTTP/1.1 404 Not Found"), Some(404));
         assert_eq!(parse_status_code(""), None);
         assert_eq!(parse_status_code("garbage"), None);
+    }
+
+    #[test]
+    fn onboarding_done_needs_both_voice_and_calib() {
+        assert!(parse_onboarding_done(r#"{"activeVoiceId":1,"activeCalibId":2}"#));
+        assert!(!parse_onboarding_done(r#"{"activeVoiceId":1,"activeCalibId":null}"#));
+        assert!(!parse_onboarding_done(r#"{"activeVoiceId":null,"activeCalibId":2}"#));
+        assert!(!parse_onboarding_done(r#"{"activeVoiceId":null,"activeCalibId":null}"#));
+        assert!(!parse_onboarding_done("not json"));
+        assert!(!parse_onboarding_done("{}"));
     }
 }
