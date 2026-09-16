@@ -13,6 +13,8 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 
+mod notify_bridge;
+
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -80,6 +82,9 @@ pub fn run() {
 
             // --- BE -> (준비 확인) -> AI 순서로 sidecar 기동 ---
             spawn_sidecars(app.handle().clone());
+
+            // --- /ws/fe 알림 브릿지 (네이티브 토스트/오버레이) ---
+            notify_bridge::spawn(app.handle().clone());
 
             Ok(())
         })
