@@ -25,7 +25,7 @@ SENTENCES = [  # 화자 인증 등록 문장 5개 — FE 와 공통 상수. 순�
     "다음 영상으로 넘어가고 음소거 해줘",
     "안녕하세요 저는 이 컴퓨터의 주인입니다",
 ]
-MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 < 0.4 s, brain.WAKE_MIN_S 와 같은 근거)만 TOO_SHORT 로
+MIN_SPEECH_S = 0.4     # NOTE(튜닝): 짧은 발화 거르기 전용 — 헛기침·"어"·클릭음(말소리 < 0.4 s)만 TOO_SHORT 로
                        # 무른다. "문장을 끝까지 읽었나" 는 여기서 안 본다 — 그건 유사도 게이트와 문장별 quality 몫이다.
                        # 1.5 였다가 내림: speech_s 는 앞 여유분·단어 틈을 안 세서 녹음 길이의 39%(로그 147건 중앙값)만 잡힌다 —
                        # 문장을 2 s 에 읽으면 0.8~1.0 s 라 실제 낭독이 거절됐다. voice_enroll 의 1.5 는 녹음 전체 길이 기준이라 다른 자다
@@ -40,9 +40,8 @@ REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(IN
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
 WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
-WAKE_REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
-                     # FE 가 다르게 그릴 수 있는 사유만 코드로 보낸다. 그 밖(클리핑·모델 실패·업로드 실패)은
-                     # 사용자가 할 행동이 같거나 사용자 잘못이 아니라 reason 만 보낸다 — VoiceSession._reject 와 같은 규칙
+REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
+                     # 두 이벤트(wakeword_rejected · voice_sentence_rejected)의 확정 code 어휘, BE 프로토콜 §4 와 같은 값
 REJECT_REASONS = {   # 품질 판정 사유 → FE 에 보여 줄 문구
     "TOO_SHORT": "너무 짧게 들렸어요. 호출어를 끝까지 불러주세요.",
     "TOO_LONG": "너무 길게 들렸어요. 호출어만 불러주세요.",
@@ -402,11 +401,14 @@ class VoiceSession:
 
     # ── 내부 ──
     def _reject(self, n, code, reason, why):
-        """문장 하나를 무르고 사유를 보낸다. self._n 은 그대로 둔다 — 순번을 진행하지 않고 같은 문장을 계속 기다린다."""
+        """문장 하나를 무르고 사유를 보낸다. self._n 은 그대로 둔다 — 순번을 진행하지 않고 같은 문장을 계속 기다린다.
+
+        code 는 REJECT_CODES 의 TOO_SHORT·TOO_LONG·NOISY·INCONSISTENT 만 보내고, 목소리 분석 실패·저장 실패는 reason 만 보낸다.
+        """
         print(f"[화자 등록] 문장 {n} 거절({code or '사유만'}) — {why}, 다시 기다린다")
         data = {"tempId": self.tempId, "n": n, "reason": reason}
-        if code:
-            data["code"] = code             # 없으면 키 자체를 넣지 않는다 — BE 계약 (FE 는 reason 으로 폴백)
+        if code in REJECT_CODES:
+            data["code"] = code             # 어휘 밖이거나 없으면 키 자체를 넣지 않는다 — BE 계약 (FE 는 reason 으로 폴백)
         self._tx("voice_sentence_rejected", data)
 
     def _finish(self, forced=False):
@@ -1025,7 +1027,8 @@ class WakeEnroll:
     def _reject(self, reason, why, code=None):
         """샘플 거절이나 저장 실패를 알린다. 반복 실패해도 검사 기준은 유지한다.
 
-        지원하는 거절 코드가 없으면 reason만 보낸다. 저장 실패도 같은 이벤트로 알리며 순번은 5를 넘기지 않는다.
+        code 는 REJECT_CODES 의 TOO_SHORT·TOO_LONG·NOISY·INCONSISTENT·MISMATCH 만 보내고, 목소리 분석 실패·호출어 품질 미달
+        (클리핑·잘린 경계·뒤이은 말소리)·호출어 모델 없음·저장 실패는 reason 만 보낸다. 저장 실패도 같은 이벤트로 알리며 순번은 5를 넘기지 않는다.
         """
         self._fails += 1
         n = min(len(self._samples) + 1, WAKE_TOTAL)
@@ -1034,7 +1037,7 @@ class WakeEnroll:
         if self._fails >= REJECT_BUDGET + 1 and not self._saving:
             reason += " 계속 안 되면 조용한 곳에서 마이크에 조금 더 가까이 불러주세요."   # 저장 실패는 말하는 법과 무관하다
         data = {"n": n, "total": WAKE_TOTAL, "reason": reason}
-        if code in WAKE_REJECT_CODES:
+        if code in REJECT_CODES:
             data["code"] = code
         self._tx("wakeword_rejected", data)
 
