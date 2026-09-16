@@ -83,8 +83,33 @@ pub fn run() {
             // --- BE -> (준비 확인) -> AI 순서로 sidecar 기동 ---
             spawn_sidecars(app.handle().clone());
 
-            // --- 오버레이 창: 클릭을 절대 받지 않음(순수 표시 전용) ---
+            // --- 오버레이 창: 주 모니터에 맞춰 크기/위치 재설정 + 클릭 무시(순수 표시 전용) ---
+            // tauri.conf.json의 1920x1080 @ (0,0)은 그냥 기본값(fallback)이다. 실제로는
+            // 항상 "주 모니터"의 실제 크기/위치로 창을 다시 맞춘다 — 안 그러면 모니터
+            // 배치에 따라(예: 보조 모니터가 주 모니터 왼쪽에 있어서 주 모니터가
+            // x=1920부터 시작하는 경우 등) 오버레이 창이 두 모니터 사이에 걸쳐버리고,
+            // CSS의 `#progress { right/bottom }` 앵커가 화면 우하단이 아니라 모니터
+            // 경계 쪽에 위치하게 된다. 창을 정확히 주 모니터 영역과 1:1로 맞추면
+            // CSS 앵커링만으로 항상 주 모니터 우하단에 뜬다.
             if let Some(overlay) = app.get_webview_window("overlay") {
+                match overlay.primary_monitor() {
+                    Ok(Some(monitor)) => {
+                        let size = *monitor.size();
+                        let position = *monitor.position();
+                        if let Err(err) = overlay.set_size(tauri::PhysicalSize::new(size.width, size.height)) {
+                            log::warn!("[overlay] 주 모니터 크기로 리사이즈 실패: {err}");
+                        }
+                        if let Err(err) = overlay.set_position(tauri::PhysicalPosition::new(position.x, position.y)) {
+                            log::warn!("[overlay] 주 모니터 위치로 이동 실패: {err}");
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("[overlay] 주 모니터 정보를 가져오지 못함 — tauri.conf.json 기본값(1920x1080 @ 0,0) 사용");
+                    }
+                    Err(err) => {
+                        log::warn!("[overlay] 주 모니터 조회 실패: {err} — tauri.conf.json 기본값 사용");
+                    }
+                }
                 overlay.set_ignore_cursor_events(true)?;
             }
 
