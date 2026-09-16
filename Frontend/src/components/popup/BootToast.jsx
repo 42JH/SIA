@@ -18,5 +18,5 @@ export default function BootToast() {
 
   if (!visible) return null;
 
-  return <div className={styles.toast}>SIA가 실행되었습니다.</div>;
+  return <div className={styles.toast} role="status"><span className={styles.logo} aria-hidden="true"><i /><i /><i /><i /><i /></span><p>SIA가 실행되었습니다.</p></div>;
 }
