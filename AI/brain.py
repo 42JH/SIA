@@ -634,6 +634,14 @@ def jpeg_bytes(pil_img, max_w=1400, quality=75):
 
 class Brain(threading.Thread):
     """요청 큐를 소비하는 워커 — 메인 루프(영상 처리)를 API 지연으로 막지 않는다."""
+    # 클래스 기본값 — 확인 대기 경로처럼 라우터를 거치지 않는 발화나 테스트의 Brain.__new__ 객체에서도
+    # [지연] 출력·log_utterance·submit 이 AttributeError 없이 읽는다.
+    _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
+    _router_fails = 0
+    # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
+    # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
+    paused = False
+
 
     def __init__(self, overlay, act=True, speaker=None, link=None, wake_template=None):
         super().__init__(daemon=True)
@@ -934,8 +942,8 @@ class Brain(threading.Thread):
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
                 result, stt_draft, tier = None, None, 2
                 dom_s, t_pre = None, None
+                self._last_stt_s = self._last_stt_lp = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연 — 확인 대기 경로(라우터 생략)도 리셋
                 if not (self._pending and t_utter < self._pending[2]):
-                    self._last_stt_s = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연(utterances.jsonl stt_s/llm_s)
                     t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
                     r1 = self._try_router(audio, t_utter)
                     if isinstance(r1, dict):
@@ -1015,10 +1023,14 @@ class Brain(threading.Thread):
             hit = self.router.route(text, True)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
             self._last_stt_s = round(sec, 2)
             self._last_stt_lp = self.router.last_logprob
+            self._router_fails = 0
             print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
             return hit or (text or None)
         except Exception as e:
-            print(f"[1단 오류 → 승격] {e}")
+            self._router_fails += 1
+            if self._router_fails >= 3:  # 모델 로드가 계속 실패하는 환경 — 발화마다 수 초 재시도하지 않고 LLM 단독으로
+                self._router_dead = True
+            print(f"[1단 오류 → 승격] {e}" + (" — 3회 연속 실패, 1단 라우터 비활성" if self._router_dead else ""))
             return None
 
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---
