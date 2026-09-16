@@ -68,6 +68,7 @@ class VadSegmenter:
         self.min_speech_blocks = int(min_speech_s / self.block_dur)
         self.floor = floor
         self.noise = floor
+        self.last_rms = 0.0  # 마지막 블록 rms — 시동어 점수 줄에 같이 찍어 "조각이 왜 안 열렸나" 를 가른다
         self.recording = False
         self._preroll = []
         self._buf = []
@@ -94,6 +95,7 @@ class VadSegmenter:
     def feed(self, block_i16, t):
         """블록 하나 투입. 반환: None | ("onset", t) | ("utter", t_onset, audio)."""
         rms = float(np.sqrt(np.mean(block_i16.astype(np.float32) ** 2)))
+        self.last_rms = rms
         if self.noise_win:
             self._ring[self._ring_i] = rms
             self._ring_i = (self._ring_i + 1) % self.noise_win
