@@ -542,17 +542,19 @@ def wake_clip(audio, i_max, lead=0, sr=16000):
     return audio[int(lo * sr):int(hi * sr)], round(lo, 2), round(hi, 2), True
 
 
-def wake_clip_is_clean(audio, clip, clip_end_s, certain=False, sr=16000, *, min_s=WAKE_MIN_S):
+def wake_clip_is_clean(audio, clip, clip_end_s, certain=False, sr=16000, *, min_s=WAKE_MIN_S, skip_noise=False):
     """호출어 구간의 품질 검사 → (통과 여부, 사유, 거절 코드).
 
     길이·소음·클리핑·잘린 경계·뒤이은 말소리를 확인한다. 거절 코드는 wakeword_rejected에 사용한다.
+    skip_noise: 실행 경로(wake_only)는 소음 검사를 건너뛴다 — 등록 녹음은 조용해야 하지만, 부르는 건 시끄러운 데서도
+    부르는 것이다. 유튜브 배경(바닥 rms 700)에서 단독 "시아야" 가 전부 NOISY 로 명령 취급돼 대답 없이 버려졌다.
     """
     spoken = speech_s(clip)
     if spoken < min_s:
         return False, f"말소리 {spoken:.2f} s < {min_s}", "TOO_SHORT"
     if spoken > WAKE_MAX_S:
         return False, f"말소리 {spoken:.2f} s > {WAKE_MAX_S}", "TOO_LONG"
-    if noise_level(audio) != "낮음":
+    if not skip_noise and noise_level(audio) != "낮음":
         return False, "주변 소음 높음", "NOISY"
     if float(np.mean(np.abs(np.asarray(clip, dtype=np.int32)) >= 32000)) > 0.005:
         return False, "입력이 포화됨(클리핑)", "LOW_QUALITY"
@@ -580,7 +582,7 @@ def wake_only(audio, i_max, lead=0, sr=16000):
     if not certain or span is None or span[0] < start or span[1] > min(end, boundary):
         return False
     # 단독 호출 판정에는 등록용 길이 하한을 적용하지 않는다. 짧아도 모델·개인화 인증은 필수다.
-    return wake_clip_is_clean(audio, clip, end, certain, sr, min_s=0.0)[0]
+    return wake_clip_is_clean(audio, clip, end, certain, sr, min_s=0.0, skip_noise=True)[0]
 
 
 def wake_rejects(score, in_session, shadow=False):
@@ -716,9 +718,15 @@ class Brain(threading.Thread):
     def session_left(self):
         return max(0.0, self._session_until() - time.monotonic())
 
-    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, dom=None):
+    def session_open_at(self, t):
+        """t(모노토닉) 시점에 세션이 열려 있었나. 발화는 시작 시각으로 판정한다 — 15 s 세션 안에서 시작한 명령이
+        끝날 때는 세션이 닫혀 있을 수 있는데, 그걸 '세션 밖'으로 버리면 안 된다 (worker 의 in_session 과 같은 기준)."""
+        return t < self._session_until()
+
+    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, dom=None, wake_live=None):
         """t_utter = 발화 시작 시각, target_hwnd = 그 순간의 포커스 창, dom = 브라우저
-        컨텍스트(크롬 확장 실측, 없으면 None). 세션·확인 만료 판정과 창 조작 대상은
+        컨텍스트(크롬 확장 실측, 없으면 None), wake_live = 상시 추론이 이 조각에서 잡은 (점수, 앞을
+        잘랐는지) 또는 None — 로그 기록용. 세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
         if self.enabled and not self.paused:
             with self._audio_lock:
@@ -726,7 +734,7 @@ class Brain(threading.Thread):
                 if t_utter < self._audio_since:
                     return
                 self.queue.append((audio_i16, full_img, crop_img,
-                                   t_utter, target_hwnd, dom))
+                                   t_utter, target_hwnd, dom, wake_live))
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -825,7 +833,8 @@ class Brain(threading.Thread):
             with self._audio_lock:
                 if not self.queue:
                     continue
-                audio, full_img, crop_img, t_utter, hwnd, dom = self.queue.pop(0)
+                audio, full_img, crop_img, t_utter, hwnd, dom, wake_live = self.queue.pop(0)
+                live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
             self.busy += 1
@@ -869,6 +878,7 @@ class Brain(threading.Thread):
                             self._say("네, 듣고 있어요")
                             log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                           wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                          wake_live=live_score, wake_cut=live_cut,
                                           seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
                             continue  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
                     elif not WAKE_SHADOW:
@@ -876,6 +886,7 @@ class Brain(threading.Thread):
                               + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
                         log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
                                       wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                      wake_live=live_score, wake_cut=live_cut,
                                       seg_t0=seg_t0, seg_t1=seg_t1,
                                       session=in_session, **audio_stats(audio))
                         continue
@@ -965,6 +976,7 @@ class Brain(threading.Thread):
                               queue_s=round(t_proc - t_end, 2), pre_s=round(t_pre - t_proc, 2) if t_pre else None, dom_s=dom_s,
                               wake_why=wake_why,  # 세션 개시 판정 경로 (in_session / ok / content_only)
                               wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                              wake_live=live_score, wake_cut=live_cut,
                               seg_t0=seg_t0, seg_t1=seg_t1,  # 개인화 판정에 쓴 호출어 구간
                               speaker_sim=round(sim, 3) if sim is not None else None,
                               accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0

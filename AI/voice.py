@@ -10,6 +10,7 @@
   ("onset", t)          — 발화 시작 감지 (이 순간 화면·응시를 캡처할 것)
   ("utter", t, audio)   — 발화 종료, int16 mono 오디오 전체
   ("reset", t)          — 장치 전환·입력 중단, 이전 발화의 화면 캡처 폐기
+  ("wake_live", t, 점수, 절단여부) — 상시 추론이 호출어를 잡음. 절단여부 = 앞서 열린 조각의 앞을 잘랐는지
   ("notice", message)   — 마이크 실패 안내, BE에는 notice {message}로 전달
 """
 import ctypes
@@ -85,6 +86,11 @@ class VadSegmenter:
         """유지 임계 (녹음 중). 시작 임계보다 높아지지 않게 묶는다."""
         return max(self.noise * min(self.ratio_lo, self.ratio), self.floor)
 
+    @property
+    def onset_t(self):
+        """지금 열려 있는(또는 마지막) 조각의 시작 시각 — 호출어를 잡은 시각과 견주는 쪽이 쓴다."""
+        return self._onset_t
+
     def feed(self, block_i16, t):
         """블록 하나 투입. 반환: None | ("onset", t) | ("utter", t_onset, audio)."""
         rms = float(np.sqrt(np.mean(block_i16.astype(np.float32) ** 2)))
@@ -133,6 +139,76 @@ class VadSegmenter:
                 return ("utter", self._onset_t, np.concatenate(buf))
             return None  # 너무 짧음 (기침, 소음) — 버림
         return None
+
+    def cut(self, t_now, keep_s):
+        """녹음 중인 조각의 앞을 버리고 마지막 keep_s 초만 남긴다 — 배경이 먼저 연 조각에서 호출어가
+        잡히면 그 앞은 배경이고, 화자 대조 구간에 딸려 들어가면 안 된다. 노이즈 바닥 창은 그대로 둔다."""
+        if not self.recording:
+            return
+        n = max(int(keep_s / self.block_dur), 1)
+        self._buf = self._buf[-n:]
+        self._onset_t = t_now - len(self._buf) * self.block_dur
+        self._speech = min(self._speech, len(self._buf))  # 버린 구간의 유성 계수는 함께 버린다
+
+
+WAKE_STREAM_DEBOUNCE_S = 1.5   # NOTE(튜닝): 같은 호출을 이웃 블록에서 여러 번 잡지 않게 두는 간격.
+WAKE_STREAM_LO = 0.3           # NOTE(튜닝): 하한. 주 임계엔 못 미쳐도 이 위면 "부른 것 같다"로 보고 민감 상태를 켠다. 아직 안 잰 초기값.
+WAKE_STREAM_SENSITIVE_S = 3.0  # NOTE(튜닝): 민감 상태 길이 — 그 안에 다시 부르면 하한만 넘어도 잡는다.
+WAKE_STREAM_REARM_S = 0.7      # NOTE(튜닝): 첫 상승 뒤 이 간격 안의 재상승은 같은 한 마디의 점수 흔들림으로 보고 무시한다
+                               # (호출어 한 마디가 0.6~0.8 s — 그보다 짧으면 다시 부른 것이 아니다).
+WAKE_CUT_S = 1.5               # NOTE(튜닝): 호출어가 잡혔을 때 조각이 이보다 먼저 열려 있었으면 배경이 연 조각으로 보고 앞을 자른다.
+                               # 호출은 조각 시작 뒤 중앙 0.94 s·p90 1.89 s 에 잡혔다 (유튜브 배경 실녹음 36건) — 남기는 길이도 같은 값.
+
+
+class WakeStream:
+    """마이크 블록을 시동어 모델에 그대로 흘려 호출어를 말하는 도중에 잡는다.
+
+    여기서 잡힌 시각이 발화 시작의 기준이다 — 세션 밖에서 히트가 없는 조각은 assistant 가 brain 에
+    넘기기 전에 버리고, 히트보다 훨씬 전에 열린 조각은 앞을 자른다(WAKE_CUT_S). 발화를 통째로
+    채점하는 기존 경로(brain.wake_score_of)는 그대로 한 번 더 돈다 — 2차 확인.
+    블록(480 샘플)을 그대로 넣는다 — 모델이 안에서 1280 샘플을 모아 처리하고, 비용도 모아 넣을 때와 같다 (코어 하나의 2.9 %).
+    """
+
+    def __init__(self, model, key, threshold=0.5, debounce_s=WAKE_STREAM_DEBOUNCE_S,
+                 threshold_lo=WAKE_STREAM_LO, sensitive_s=WAKE_STREAM_SENSITIVE_S):
+        self.model = model
+        self.key = key            # 모델 파일 이름(siaya_v1) — predict 가 이 이름으로 점수를 돌려준다
+        self.threshold = threshold
+        self.threshold_lo = min(threshold_lo, threshold)
+        self.sensitive_s = sensitive_s
+        self.debounce_s = debounce_s
+        self.last_score = 0.0
+        self._prev = 0.0
+        self._last_hit = float("-inf")
+        self._sensitive_until = float("-inf")
+        self._armed_at = float("-inf")   # 민감 상태를 켠 첫 상승의 시각 — 같은 마디의 흔들림을 걸러내는 기준
+
+    def feed(self, block_i16, t):
+        """블록 하나 투입. 반환: None | ("wake_live", t, score)."""
+        score = float(self.model.predict(block_i16)[self.key])
+        rising = self._prev < self.threshold_lo <= score  # 하한을 새로 넘어선 순간 = 새로 부른 것
+        self._prev, self.last_score = score, score
+        # 라이브러리의 debounce_time 은 한 번에 넣은 샘플 수로 프레임 수를 환산한다. 블록을 그대로
+        # 넣는 지금은 그 수가 들쭉날쭉해 간격이 흔들리므로, 시각으로 직접 재는 편이 확실하다.
+        if t - self._last_hit < self.debounce_s:
+            return None
+        again = rising and self._armed_at + WAKE_STREAM_REARM_S <= t < self._sensitive_until
+        if score >= self.threshold or again:
+            self._last_hit = t
+            self._sensitive_until = float("-inf")
+            return ("wake_live", t, round(score, 3))
+        if rising and t >= self._sensitive_until:
+            # 주 임계 미달 — 같은 호출을 낮은 임계로 다시 재지 않고(오탐이 그대로 하한까지 내려간다),
+            # 잠시 뒤 다시 부르는 것만 하한으로 받는다. 창 안의 이른 재상승은 같은 마디의 흔들림이라 여기 안 온다.
+            self._armed_at = t
+            self._sensitive_until = t + self.sensitive_s
+        return None
+
+    def reset(self):
+        """장치 전환·오버플로로 오디오가 끊기면 모델 안에 남은 앞 문맥을 버린다."""
+        self.model.reset()
+        self.last_score = self._prev = 0.0
+        self._last_hit = self._sensitive_until = self._armed_at = float("-inf")
 
 
 @cache
@@ -201,11 +277,13 @@ def resolve_input_device(sd, device_id):
 class VoiceListener(threading.Thread):
     """마이크 전용 스레드 — VadSegmenter 이벤트를 out_queue로 흘린다."""
 
-    def __init__(self, out_queue, device=None, on_reset=None):
+    def __init__(self, out_queue, device=None, on_reset=None, wake_stream=None, cut_ok=None):
         super().__init__(daemon=True)
         self.out_queue = out_queue
         self.device = device
         self.seg = VadSegmenter()
+        self.wake_stream = wake_stream  # WakeStream 또는 None (시동어 모델이 없을 때 — 조각 완성 뒤 채점하는 예전 경로)
+        self.cut_ok = cut_ok      # 조각 시작 시각 → 앞을 잘라도 되는지 답하는 함수. 없으면 항상 자른다.
         self.running = True
         self.error = None
         self.on_reset = on_reset
@@ -234,6 +312,8 @@ class VoiceListener(threading.Thread):
         """잠금 안에서 호출 — 이전 발화와 연결된 화면 캡처까지 폐기한다."""
         self._generation += 1
         self.seg = VadSegmenter()
+        if self.wake_stream is not None:
+            self.wake_stream.reset()
         notices = [event for event in self.out_queue if event[0] == "notice"]
         self.out_queue.clear()
         self.out_queue.append(("reset", time.monotonic()))
@@ -312,6 +392,8 @@ class VoiceListener(threading.Thread):
                             if overflowed:
                                 # 끊긴 현재 세그먼트만 버린다 — 완성된 발화·확인 대기·추론은 유효하다.
                                 self.seg = VadSegmenter()
+                                if self.wake_stream is not None:
+                                    self.wake_stream.reset()
                                 if last_data - self._last_overflow_log >= MIC_OVERFLOW_LOG_S:
                                     print("[마이크] 입력 오버플로 — 진행 중인 발화만 폐기합니다.")
                                     self._last_overflow_log = last_data
@@ -320,6 +402,17 @@ class VoiceListener(threading.Thread):
                                 # 열기 직후 다시 실패하는 장치도 있다 — 정상 블록을 받은 뒤 안내를 재허용한다.
                                 self._reported.clear()
                                 recovered = True
+                            # 시동어를 조각보다 먼저 본다 — 한 블록에서 히트와 조각 종료가 같이 나면 히트가
+                            # 먼저 들어가야 assistant 가 그 조각을 "호출어 없음" 으로 버리지 않는다.
+                            if self.wake_stream is not None:
+                                hit = self.wake_stream.feed(data[:, 0], last_data)
+                                if hit is not None:
+                                    # 세션 안에서는 자르지 않는다 — 긴 명령 도중 오탐이 나면 명령 앞이 잘린다.
+                                    cut = (self.seg.recording and last_data - self.seg.onset_t > WAKE_CUT_S
+                                           and (self.cut_ok is None or self.cut_ok(self.seg.onset_t)))
+                                    if cut:
+                                        self.seg.cut(last_data, WAKE_CUT_S)
+                                    self.out_queue.append(hit + (cut,))
                             ev = self.seg.feed(data[:, 0], last_data)
                             if ev is not None:
                                 self.out_queue.append(ev)

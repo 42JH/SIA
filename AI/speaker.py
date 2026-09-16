@@ -9,29 +9,33 @@ ECAPA-TDNN(SpeechBrain, voxceleb 사전학습)으로 발화를 192차원 임베�
 있다. 그래서 임계는 실측 튜닝 노브이고, 입술 검증과 병행하면 더 강하다.
 """
 import io
+import threading
 
 import numpy as np
 
 MODEL_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
 EMBED_DIM = 192
+THRESHOLD = 0.45          # NOTE(튜닝): 화자 인증 코사인 유사도 하한. voxceleb ECAPA 실측 기준 본인 발화는 0.4~0.7.
+                          # 값은 여기 한 곳만 본다 — npz 의 threshold 칸은 형식만 검사하고 값은 무시한다. 파일 값을 쓰면
+                          # 재등록 때 그 순간의 메모리 값이 파일에 박혀 정한 값이 조용히 되돌아간다 (0.45 → 0.25 로 돌아간
+                          # 사례 있음, gitignore 라 보이지도 않았다).
 
 
 class SpeakerVerifier:
     """모델은 무겁게(12초) 로드되므로, 화자 인증을 켤 때만 생성한다."""
 
-    def __init__(self, profile_path, threshold=0.25):
-        # NOTE(튜닝): threshold는 코사인 유사도 하한. voxceleb ECAPA 실측 기준
-        # 본인 발화는 보통 0.4~0.7, 타인/미디어는 0.0~0.25. 조용한 환경에서 올리고,
-        # 본인이 자주 거부되면 내린다. 실사용 로그(아래 verify 반환값) 보고 조정.
+    def __init__(self, profile_path, threshold=THRESHOLD):
         self.profile_path = str(profile_path)
         self.default_threshold = threshold
         self._profile = (None, threshold, None, None)  # centroid, threshold, 활성 ID, sha256
         self._clf = None
+        self._load_lock = threading.Lock()
         self.reload()
 
     @staticmethod
-    def read_profile(source, default_threshold=0.25):
-        """메모리에 적용하기 전에 npz 구조·차원·수치를 검증한다. 객체 역직렬화는 금지한다."""
+    def read_profile(source, default_threshold=THRESHOLD):
+        """메모리에 적용하기 전에 npz 구조·차원·수치를 검증한다. 객체 역직렬화는 금지한다.
+        threshold 칸은 형식만 확인하고 값은 default_threshold(코드 상수)를 쓴다 — 위 THRESHOLD 주석 참고."""
         with np.load(source, allow_pickle=False) as data:
             centroid = data["centroid"]
             threshold = data["threshold"] if "threshold" in data.files else np.asarray(default_threshold)
@@ -41,7 +45,7 @@ class SpeakerVerifier:
             if threshold.shape != () or threshold.dtype.kind not in "fi" or not -1 <= float(threshold) <= 1:
                 raise ValueError("보이스 threshold는 -1~1 범위의 유한 스칼라여야 합니다")
         centroid.setflags(write=False)
-        return centroid, float(threshold)
+        return centroid, float(default_threshold)
 
     def snapshot(self):
         """한 발화가 판정 도중 프로필을 바꿔 읽지 않도록 불변 묶음을 반환한다."""
@@ -78,13 +82,14 @@ class SpeakerVerifier:
         return self.centroid is not None
 
     def _model(self):
-        if self._clf is None:
-            import torch
-            from speechbrain.inference.speaker import EncoderClassifier
+        with self._load_lock:  # 워밍업 스레드와 판정 스레드가 첫 호출을 겹쳐 부르면 모델을 두 번 올린다
+            if self._clf is None:
+                import torch
+                from speechbrain.inference.speaker import EncoderClassifier
 
-            dev = "cuda:0" if torch.cuda.is_available() else "cpu"
-            self._clf = EncoderClassifier.from_hparams(source=MODEL_SOURCE, run_opts={"device": dev})
-            self._torch = torch
+                dev = "cuda:0" if torch.cuda.is_available() else "cpu"
+                self._clf = EncoderClassifier.from_hparams(source=MODEL_SOURCE, run_opts={"device": dev})
+                self._torch = torch
         return self._clf
 
     def embed(self, audio_i16):
