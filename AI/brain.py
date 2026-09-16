@@ -620,7 +620,7 @@ class Brain(threading.Thread):
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
         else:
-            print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
+            print("GEMINI_API_KEY 없음 → 1단 로컬 명령(음소거·볼륨 등)만 동작, 나머지 발화는 안내 후 버림.")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
 
     @property
@@ -721,13 +721,17 @@ class Brain(threading.Thread):
         컨텍스트(크롬 확장 실측, 없으면 None), wake_live = 상시 추론이 이 조각에서 잡은 (점수, 앞을
         잘랐는지) 또는 None — 로그 기록용. 세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
-        if self.enabled and not self.paused:
-            with self._audio_lock:
-                t_utter = time.monotonic() if t_utter is None else t_utter
-                if t_utter < self._audio_since:
-                    return
-                self.queue.append((audio_i16, full_img, crop_img,
-                                   t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
+        # 버리는 발화는 사유를 남긴다 — 시동어 점수만 찍히고 아무 줄도 없는 재현(271)을 여기서 가른다.
+        if self.paused:
+            print("[발화 무시] 일시정지 중 (제스처 등록·카메라 미리보기 화면)")
+            return
+        with self._audio_lock:
+            t_utter = time.monotonic() if t_utter is None else t_utter
+            if t_utter < self._audio_since:
+                print("[발화 무시] 입력 장치 교체 전 발화")
+                return
+            self.queue.append((audio_i16, full_img, crop_img,
+                               t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -820,8 +824,8 @@ class Brain(threading.Thread):
 
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
-        라우터가 이미 있거나(테스트의 대역 포함), 음성 명령이 비활성이거나, STT_WARM=0 이면 건너뛴다."""
-        if self.router is not None or self._router_dead or not self.enabled or os.environ.get("STT_WARM") == "0":
+        라우터가 이미 있거나(테스트의 대역 포함) STT_WARM=0 이면 건너뛴다. Gemini 키가 없어도 1단 로컬 명령은 도니 예열한다."""
+        if self.router is not None or self._router_dead or os.environ.get("STT_WARM") == "0":
             return
         try:
             from router import Router
@@ -1061,6 +1065,8 @@ class Brain(threading.Thread):
 
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---
     def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None, stt_draft=None):
+        if self._client is None:  # 키 없이도 1단 로컬 명령은 돌리고, LLM 이 필요한 발화만 여기서 안내 — except 가 "오류: …" 로 화면·FE 에 띄운다
+            raise RuntimeError("Gemini 키가 없어 이 명령은 처리하지 못해요 (AI/gemini_api_key.txt)")
         from google.genai import types
 
         t_utter = t_utter or time.monotonic()
