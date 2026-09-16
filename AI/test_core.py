@@ -1101,6 +1101,70 @@ def test_be_dom_text():
     assert be_dom_text(None) is None                                                       # 링크 없음
 
 
+def test_mcp_delegation():
+    """동작은 BE 몫 — 창·스크롤·캡처·탐색기가 MCP 도구로 나가는지, 못 나갈 때만 로컬로 떨어지는지.
+
+    BE 는 hwnd 를 안 내주고 win:N 은 스냅샷 인덱스라(RefResolver) 제목으로 맞춘다. 같은 제목이
+    여럿이면 엉뚱한 창을 건드리느니 None 을 돌려 로컬 폴백으로 보낸다.
+    """
+    from unittest.mock import Mock, patch
+
+    from brain import Brain, virtual_screen_offset
+
+    class FakeBE:
+        def __init__(self, ctx):
+            self.ctx, self.calls = ctx, []
+
+        def call(self, tool, args=None):
+            self.calls.append((tool, args))
+            if tool == "context.get":
+                return (True, self.ctx) if self.ctx is not None else (False, {"code": "FAILED", "message": ""})
+            return True, {"message": "실행했습니다"}
+
+    def brain_with(ctx):
+        b = Brain.__new__(Brain)
+        b.overlay = Mock()
+        be = FakeBE(ctx)
+        b._be = lambda: be
+        return b, be
+
+    two = {"foreground": {"ref": "win:1", "title": "메모장", "app": "notepad"},
+           "windows": [{"ref": "win:1", "title": "메모장"}, {"ref": "win:2", "title": "크롬"}]}
+    with patch("brain.window_title_of", return_value="크롬"):
+        b, be = brain_with(two)
+        assert b._win_ref(1234) == "win:2"                      # 제목 하나면 그 창
+        assert be.calls[0][0] == "context.get"                  # 스냅샷을 새로 뜨고 나서 쓴다
+    dup = {"foreground": {"ref": "win:2", "title": "크롬"},
+           "windows": [{"ref": "win:1", "title": "크롬"}, {"ref": "win:2", "title": "크롬"}]}
+    with patch("brain.window_title_of", return_value="크롬"), \
+            patch("brain.foreground_hwnd", return_value=1234):
+        assert brain_with(dup)[0]._win_ref(1234) == "win:2"     # 내가 포그라운드 → 확정
+    with patch("brain.window_title_of", return_value="크롬"), \
+            patch("brain.foreground_hwnd", return_value=9999):
+        assert brain_with(dup)[0]._win_ref(1234) is None        # 제목만 같은 남의 창 → 조작하지 않는다
+    dup_bg = {"foreground": {"ref": "win:3", "title": "메모장"},
+              "windows": [{"ref": "win:1", "title": "크롬"}, {"ref": "win:2", "title": "크롬"}]}
+    with patch("brain.window_title_of", return_value="크롬"):
+        assert brain_with(dup_bg)[0]._win_ref(1234) is None     # 못 고르면 로컬 폴백
+    with patch("brain.window_title_of", return_value="크롬"):
+        assert brain_with(None)[0]._win_ref(1234) is None       # context.get 실패
+        assert brain_with(two)[0]._win_ref(0) is None           # hwnd 없음
+
+    b, be = brain_with(two)                                     # 탐색기 선택은 BE selected 로
+    be.call = lambda tool, args=None: (True, {"items": [
+        {"path": "C:\\a.txt", "selected": True}, {"path": "C:\\b.txt", "selected": False}]})
+    assert b._explorer_selection() == ["C:\\a.txt"]
+    b2, _ = brain_with(two)
+    b2._be = lambda: None
+    assert b2._explorer_selection() == []                        # BE 없으면 빈 목록
+
+    import ctypes  # 캡처 좌표: 스크린샷이 가상 스크린 전체와 같을 때만 오프셋을 준다
+    u = ctypes.windll.user32
+    size = (u.GetSystemMetrics(78), u.GetSystemMetrics(79))
+    assert virtual_screen_offset(size) == (u.GetSystemMetrics(76), u.GetSystemMetrics(77))
+    assert virtual_screen_offset((size[0] - 1, size[1])) is None
+
+
 def test_wake_model_load():
     """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
     온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
@@ -1169,4 +1233,5 @@ if __name__ == "__main__":
     test_wake_model_load()
     test_notice_data()
     test_be_dom_text()
-    print("OK - 27/27 통과")
+    test_mcp_delegation()
+    print("OK - 28/28 통과")
