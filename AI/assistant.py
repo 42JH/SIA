@@ -25,14 +25,12 @@ import math
 import os
 import threading
 import numpy as np
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 import cv2
 
-from dombridge import DomBridge
 from gesture_be import (
     GesturePreview,
     GestureRegistration,
@@ -66,7 +64,6 @@ STATIC_TRIGGER_POLICY = {
     "Thumb_Up": {"hold_s": 0.70, "cooldown_s": 0.9, "grace_s": 0.40},
     "Thumb_Down": {"hold_s": 0.70, "cooldown_s": 0.9, "grace_s": 0.40},
 }
-SCROLL_WHEEL_MULTIPLIER = 3  # 편 손 연속 스크롤의 휠 단계 증폭값
 POSE_MAX_FPS = 10.0          # Pose는 보조 신호이므로 손 제스처보다 낮은 주기로 실행
 POSE_MAX_WIDTH = 640         # Pose 입력 축소 폭. 카메라 전체 해상도는 유지한다.
 CROP_FRAC = 0.32       # 응시 영역 크롭 크기 = 화면 폭 × 이 비율 (해상도 무관하게 동작)
@@ -99,7 +96,6 @@ BUILTIN_STATIC_GESTURES = {
     "Victory", "ILoveYou",
 }
 DYNAMIC_PREFIXES = ("Swipe", "Screen_", "Volume_", "Scroll_")
-DYNAMIC_FALLBACK_PATH = HERE / "dynamic_gesture_fallbacks.json"
 
 
 def be_gesture_target(name, context, custom_names=()):
@@ -132,19 +128,6 @@ def is_ebook(title):
 def is_webex(title):
     t = (title or "").lower()
     return any(token in t for token in WEBEX_TITLE_TOKENS)
-
-
-def load_dynamic_fallbacks():
-    """BE에 없는 동적 제스처의 로컬 fallback만 불러온다 (dynamic_gesture_fallbacks.json).
-
-    정적/커스텀 제스처 매핑은 BE가 소유하므로 여기서는 읽지 않는다.
-    """
-    if DYNAMIC_FALLBACK_PATH.exists():
-        data = json.loads(DYNAMIC_FALLBACK_PATH.read_text(encoding="utf-8"))
-    else:
-        data = {}
-    data.setdefault("default", {})
-    return data
 
 
 def capture_screen(fix_xy):
@@ -186,8 +169,6 @@ def main():
     ap.add_argument("--no-pose", action="store_true", help="Pose 보조 추론 끄기")
     ap.add_argument("--two-hand-preview", action="store_true",
                     help="양손 벌리기/모으기 후보만 표시하고 기존 제스처 액션은 차단")
-    ap.add_argument("--be-gesture-only", action="store_true",
-                    help="실측용: BE 매핑이 없는 로컬 키·휠 fallback을 차단")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--camera", type=int, default=0)
     args = ap.parse_args()
@@ -339,12 +320,7 @@ def main():
     if custom.n:
         print(f"커스텀 제스처 로드: {custom.class_names()} (등록: python gesture_studio.py)")
     last_usage_flush = time.monotonic()
-    bridge = DomBridge()
-    bridge.start()  # BE 크롬 확장이 POST할 수신부 — 확장 없으면 스크린샷 폴백
-    # Static/custom mappings are owned by BE. This file only owns dynamic fallback.
-    # Dynamic fallback mappings are intentionally not loaded in the
-    # Closed_Fist-only MVP, so no local mapping file is generated at runtime.
-    gesture_map = load_dynamic_fallbacks() if ENABLE_DYNAMIC_GESTURES else {"default": {}}
+    # 제스처 매핑은 BE 가 소유한다 — AI 는 감지만 하고 실행은 gesture_exec 로 넘긴다.
     # 정적 제스처만 홀드 토글 대상 — 스와이프는 SwipeDetector가 자체 무장/재무장
     # Only gestures explicitly enabled for this MVP may reach the executor.
     static_names = set(BUILTIN_STATIC_GESTURES & AI_ENABLED_GESTURES)
@@ -535,7 +511,7 @@ def main():
                 pending_capture = None
 
             # --- 음성 이벤트 처리 ---
-            from brain import active_window_title, foreground_hwnd, press_keys
+            from brain import active_window_title, foreground_hwnd
 
             while (ev := voice.take_event()) is not None:
                 if ev[0] == "reset":
@@ -589,25 +565,10 @@ def main():
                     full, crop, hwnd = pending_capture
                     pending_capture = None
                     brain.submit(ev[2], full, crop, t_utter=ev[1], target_hwnd=hwnd,
-                                 dom=bridge.context(max_age=10.0),
                                  wake_live=(wake_live_score, wake_cut) if wake_stream is not None and heard else None)
 
             # --- 제스처 커맨드 (컨텍스트 의존: 유튜브가 활성 창이면 미디어 제어) ---
             from brain import is_youtube
-
-            def fire_entry(entry, name, kind, wheel_steps=1):
-                if args.no_actions:
-                    overlay.toast(f"[시늉만] {kind}: {entry.get('label', name)}")
-                elif "wheel" in entry:
-                    pyautogui.scroll(int(entry["wheel"]) * wheel_steps * SCROLL_WHEEL_MULTIPLIER,
-                                     _pause=False)
-                elif "key" in entry:
-                    press_keys(entry["key"])
-                    overlay.toast(f"{kind}: {entry.get('label', name)}")
-                else:
-                    subprocess.Popen(["cmd", "/c", "start", "", entry["run"]])
-                    overlay.toast(f"{kind}: {entry.get('label', name)}")
-                print(f"{kind} {name} ({context}) → {entry}")
 
             session_left = brain.session_left()
             # 제스처 실행은 음성 ACTIVE 세션에서만 허용한다. 양손 미리보기는 예외로
@@ -695,10 +656,7 @@ def main():
             fg_title = active_window_title()
             fg_is_browser = (is_youtube(fg_title)
                              or any(b in fg_title.lower() for b in BROWSERS))
-            dom = bridge.context()
-            dom_video = bool(dom and isinstance(dom.get("video"), dict)
-                             and dom["video"].get("present"))
-            if is_youtube(fg_title) or (dom_video and fg_is_browser):
+            if is_youtube(fg_title):
                 context = "youtube"
             elif is_webex(fg_title):
                 context = "webex"
@@ -711,23 +669,9 @@ def main():
             else:
                 context = "default"
             # 컨텍스트 단위 폴백만 — 제스처 단위로 default를 부활시키면
-            # 유튜브 섹션에서 지운 제스처가 영상 위에 앱을 띄우는 사고가 난다
-            # Context-specific entries override the common defaults. This lets
-            # a general command (for example, opening File Explorer) remain
-            # available in browser/e-book contexts without duplicating it.
-            mapping = {**gesture_map["default"], **gesture_map.get(context, {})}
-            # Two-hand gestures are local fallbacks for now: they do not have a
-            # BE default mapping yet, but use the same context map as swipes.
-            if (two_hand_event and gesture_active and not registration_active and not args.two_hand_preview
-                    and two_hand_event not in disabled_gestures):
-                entry = mapping.get(two_hand_event)
-                if entry and not args.be_gesture_only:
-                    hud_feedback = entry.get("label", two_hand_event)
-                    hud_feedback_until = now + 0.9
-                    print(f"[TWO_HAND→LOCAL] event={two_hand_event} | context={context}")
-                    fire_entry(entry, two_hand_event, "양손 제스처")
+            # NOTE: 양손 제스처는 BE 기본 매핑이 아직 없어 감지만 하고 실행되지 않는다.
+            # BE 가 매핑을 소유하면 정적·동적과 같은 gesture_exec 경로로 나간다.
             for name in static_names:
-                entry = mapping.get(name)
                 # 등록 중이거나 커스텀 동작 후보를 추적 중이면(claimed, 그리고 이
                 # 이름이 그 후보가 아니면) false를 넣어 홀드 상태도 해제한다.
                 # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
@@ -748,10 +692,8 @@ def main():
                                                               "context": be_context})
                         hud_feedback = name
                         hud_feedback_until = now + 0.9
-                    elif entry and not args.be_gesture_only:
-                        if link and link.gesture_ready:
-                            print(f"[GESTURE→LOCAL] no BE mapping: {name} ({context})")
-                        fire_entry(entry, name, "제스처")
+                    elif link and link.gesture_ready:
+                        print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
                     if link:
                         link.queue_usage("gesture",
                                          sessionId=link.be_session_id,
@@ -791,7 +733,6 @@ def main():
                     # be_gesture_target에 물어보기 전에 Screen_Next/Prev로 미리 바꿔치기
                     # 하면 BE가 절대 모르는 이름이 되어 항상 로컬 폴백으로 샌다. 원래
                     # 이름을 그대로 두고, BE가 모를 때만(로컬 단독 모드 등) 아래에서
-                    # 컨텍스트별 로컬 매핑(mapping.get)으로 대체한다.
                     dynamic_event = motion_event
                 elif scroll_steps > 0:
                     dynamic_event = "Scroll_Up"
@@ -814,7 +755,6 @@ def main():
             if (ENABLE_DYNAMIC_GESTURES and not registration_active and dynamic_event
                     and dynamic_event not in disabled_gestures
                     and not args.two_hand_preview):
-                entry = mapping.get(dynamic_event)
                 be_target = be_gesture_target(
                     dynamic_event, context, {ref.get("name") for ref in remote_refs.values()}
                 )
@@ -837,26 +777,8 @@ def main():
                                      # custom_score(exp(-거리))가 실린다.
                                      accuracy=custom_score,
                                      payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
-                elif entry and not args.be_gesture_only:
-                    if link and link.gesture_ready:
-                        print(f"[GESTURE→LOCAL] no BE mapping: {dynamic_event} ({context})")
-                    # 핀치 슬라이더의 즉시 피드백. YouTube에서는 위/아래 화살표가
-                    # 보통 5% 단위의 실제 볼륨 제어로 전달된다.
-                    if dynamic_event == "Volume_Up":
-                        hud_volume = min(100, hud_volume + 5)
-                    elif dynamic_event == "Volume_Down":
-                        hud_volume = max(0, hud_volume - 5)
-                    hud_feedback = entry.get("label", dynamic_event)
-                    hud_feedback_until = now + 0.9
-                    print(f"[제스처 제어] 명령={dynamic_event} | "
-                          f"키={entry.get('key', '-')} | 표시={entry.get('label', dynamic_event)}")
-                    fire_entry(entry, dynamic_event, "제스처", wheel_steps=abs(scroll_steps) or 1)
-                    if link:
-                        link.queue_usage("gesture",
-                                         sessionId=link.be_session_id,
-                                         action=dynamic_event,
-                                         context=context,
-                                         payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
+                elif link and link.gesture_ready:
+                    print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {dynamic_event} ({context})")
 
             # --- 상태 표시 (세션 남은 시간 포함) ---
             if link and now - last_usage_flush >= 5.0:

@@ -133,11 +133,11 @@ class GestureRuntimeTests(unittest.TestCase):
         for branch in branches:
             code = compile(ast.Module(body=[branch], type_ignores=[]), 'assistant.py', 'exec')
             for no_actions in (True, False):
-                for be_only in (True, False):
-                    with self.subTest(line=branch.lineno, no_actions=no_actions, be_only=be_only):
+                if True:  # be_gesture_only 는 제거됐다 — 이 분기는 no_actions 만 본다
+                    with self.subTest(line=branch.lineno, no_actions=no_actions):
                         link, overlay, foreground = Mock(), Mock(), Mock(return_value=123)
                         env = dict(link=link, overlay=overlay, foreground_hwnd=foreground,
-                                   args=SimpleNamespace(no_actions=no_actions, be_gesture_only=be_only),
+                                   args=SimpleNamespace(no_actions=no_actions),
                                    be_target=('Victory', 'youtube'), name='Victory',
                                    dynamic_event='Screen_Next', context='youtube', now=10,
                                    usage_events=[], uuid=Mock(), custom_score=None,

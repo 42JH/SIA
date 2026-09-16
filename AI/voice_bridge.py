@@ -50,7 +50,6 @@ REJECT_REASONS = {   # 품질 판정 사유 → FE 에 보여 줄 문구
     "LOW_QUALITY": "또렷하게 들리지 않았어요. 마이크에 조금 더 가까이, 호출어만 불러주세요.",
 }
 WAKE_DEFAULT_WORD = "시아야"   # 설정(settings.wakeWord)이 오기 전에 쓰는 기본 호출어 — brain.WAKE_WORD 와 같은 값
-WAKE_TEMPLATE_PATH = "wake.npz"  # models/ 안 파일 이름. 호출어 개인화 템플릿(speaker.WakeTemplate)
 WAKE_UPLOAD_RETRY_S = 5   # 업로드가 실패하면 이만큼 쉬었다가 다시 보낸다 — 그 사이 더 새 작업이 오면 그것부터
 WAKE_UPLOAD_TRIES = 3     # 같은 본문을 보낼 최대 횟수. 넘으면 서버는 이전 상태로 남는다 (로그로 알린다)
 

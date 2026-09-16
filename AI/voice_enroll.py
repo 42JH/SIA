@@ -16,7 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 
 from speaker import SpeakerVerifier
 from voice import SR, VadSegmenter
