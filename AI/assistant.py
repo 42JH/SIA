@@ -51,7 +51,6 @@ from main import Camera, GazeWorker, open_camera
 
 HERE = Path(__file__).parent
 
-WAKE_STREAM = os.environ.get("WAKE_STREAM", "") == "1"  # 1이면 시동어 상시 추론을 켠다 (실측 스위치, 기본 꺼짐)
 GESTURE_HOLD_S = 0.8   # 제스처 커맨드: 이 시간 유지해야 발동 (오작동 방지)
 GESTURE_COOLDOWN_S = 1.2  # 연타 용도(10초 건너뛰기 반복)를 위해 짧게 — 홀드+재무장이 있어 안전
 # 정적 제스처는 동적 제스처보다 보수적으로 처리한다. 토글 성격의 명령은
@@ -292,13 +291,12 @@ def main():
     from voice import WAKE_CUT_S, WAKE_FOLLOW_S, WakeStream
 
     wake_stream = None
-    if WAKE_STREAM:
-        stream_model = load_wake_model()
-        if stream_model is not None:
-            wake_stream = WakeStream(stream_model, WAKE_MODEL.stem, WAKE_THRESHOLD)
-            print(f"시동어 상시 추론 켜짐 (임계 {WAKE_THRESHOLD}, 하한 {wake_stream.threshold_lo}) — 세션 밖 호출어 없는 조각은 버립니다")
+    stream_model = load_wake_model()
+    if stream_model is not None:
+        wake_stream = WakeStream(stream_model, WAKE_MODEL.stem, WAKE_THRESHOLD)
+        print(f"시동어 상시 추론 켜짐 (임계 {WAKE_THRESHOLD}, 하한 {wake_stream.threshold_lo}) — 세션 밖 호출어 없는 조각은 버립니다")
     else:
-        print("시동어 상시 추론 꺼짐 — 켜기: WAKE_STREAM=1")
+        print("시동어 모델 파일이 없어 상시 추론 없이 돕니다 — 조각이 끝난 뒤 통째로 채점합니다")
 
     voice_events = collections.deque(maxlen=16)
     voice = VoiceListener(voice_events, on_reset=brain.reset_audio, wake_stream=wake_stream,
