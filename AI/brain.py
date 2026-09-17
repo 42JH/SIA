@@ -33,7 +33,9 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5
 WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
-SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
+SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전용.
+# 저장물 자체는 BE 가 Pictures\SIA · Documents\SIA 에 쓴다. 예전엔 바탕화면 "비서_저장" 이었는데
+# 이름이 저장물처럼 보여, 오버레이를 실제 결과물로 오해하는 일이 두 번 있었다(9/17 라이브).
 # BE scroll.step 의 휠 노치 수(1~10). 로컬 PageDown 한 번(≈한 화면)에 맞춘 값 —
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
@@ -291,6 +293,33 @@ def log_utterance(**fields):
             f.write(json.dumps(fields, ensure_ascii=False) + "\n")
     except Exception:
         pass  # 로깅 실패가 비서를 멈추면 안 됨
+
+
+def where(message, path):
+    """안내 문구 뒤에 저장 경로를 붙인다.
+
+    BE 가 정하는 위치(Pictures/SIA · Documents/SIA)는 사용자가 짐작할 수 없고, 바탕화면엔
+    EVAL_CAPTURE 검증용 오버레이만 남아 오해를 부른다 — 실측으로 한 번 겪었다. 그래서 경로를
+    LLM 의 say 와 '또는'으로 묶지 않고 항상 덧붙인다."""
+    return f"{message} -> {path}" if path else message
+
+
+def log_save(t_utter, kind, result, box=None, screen=None, ok=None, payload=None):
+    """저장 1건의 결과. 발화 줄(gate=router|llm)과 ts 로 잇는다.
+
+    저장은 드문 사건이라 줄을 하나 더 쓰는 비용이 싸고, log_utterance 가 _execute 보다
+    먼저 도는 구조라 같은 줄에는 못 넣는다. 이게 없으면 "원한 부분을 저장했나"는
+    EVAL_CAPTURE 를 켜 둔 날이 아니면 사후에 판정할 방법이 없다(9/17 실측)."""
+    text = (result.get("save_text") or "").strip()
+    p = payload if isinstance(payload, dict) else {}
+    log_utterance(gate="save", save_kind=kind,
+                  bbox=result.get("bbox"), box=list(box) if box else None,
+                  screen=list(screen) if screen else None,
+                  save_len=len(text), save_head=text[:40] or None,
+                  be_ok=ok, path=p.get("path"), width=p.get("width"), height=p.get("height"),
+                  # 발화 시작 → BE 캡처 호출. BE 는 '호출 시점' 화면을 새로 찍으므로 이 값이
+                  # 곧 "LLM 이 본 화면과 저장된 화면의 시차"다.
+                  utter_to_save_s=round(time.monotonic() - t_utter, 2))
 
 
 def capture_case(audio_i16, full_img, crop_img, session, pending_q, dom):
@@ -1138,7 +1167,13 @@ class Brain(threading.Thread):
                               is_command=result.get("is_command"),
                               action=result.get("action"),
                               transcript=result.get("transcript", "")[:120],
-                              had_dom=dom is not None, **audio_stats(audio))
+                              had_dom=dom is not None,
+                              # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
+                              # 세션 없음/브라우저 없음/타임아웃을 못 가른다.
+                              dom_via=(dom or {}).get("via"),
+                              dom_chars=len((dom or {}).get("text") or "") or None,
+                              dom_cut=(dom or {}).get("truncated"),
+                              **audio_stats(audio))
                 with self._audio_lock:
                     stale = generation != self._audio_generation
                 # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
@@ -1414,9 +1449,11 @@ class Brain(threading.Thread):
                 name = f"저장_{ts}.txt"
                 # 저장 위치는 BE 가 정한다(~/Documents/SIA). 이름이 겹치면 BE 가 " (1)" 을 붙이므로
                 # 우리가 지어 보낸 이름이 아니라 BE 가 실제로 쓴 경로를 그대로 말한다.
-                if self._be_ok("files.save", {"name": name, "content": text}):
+                ok = self._be_ok("files.save", {"name": name, "content": text})
+                log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
+                if ok:
                     saved = (self._last_be_payload or {}).get("path") or name
-                    self._say(f"글로 저장했습니다 → {saved}")
+                    self._say(where(say or "글로 저장했습니다", saved))
                     return completed
                 return self._be_down("글 저장")
             if box:
@@ -1437,15 +1474,21 @@ class Brain(threading.Thread):
                 # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
                 # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
                 off = virtual_screen_offset(full_img.size) or (0, 0)
-                if self._be_ok("screen.capture_region",
-                               {"x1": box[0] + off[0], "y1": box[1] + off[1],
-                                "x2": box[2] + off[0], "y2": box[3] + off[1]}):
-                    p = self._last_be_payload or {}
-                    self._say(say or f"화면을 저장했습니다 → {p.get('path') or '완료'}")
+                ok = self._be_ok("screen.capture_region",
+                                 {"x1": box[0] + off[0], "y1": box[1] + off[1],
+                                  "x2": box[2] + off[0], "y2": box[3] + off[1]})
+                p = self._last_be_payload or {}
+                log_save(t_utter, "region", result, box=box, screen=full_img.size,
+                         ok=ok, payload=p)
+                if ok:
+                    # say 와 'or' 로 묶지 않는다 — LLM 이 say 를 거의 항상 채워서 경로가 늘
+                    # 가려졌고, 저장물은 눈에 안 띄는 폴더로 간다 (9/17 라이브에서 오해 발생).
+                    self._say(where(say or "화면을 저장했습니다", p.get("path")))
                     return completed
                 return self._be_down("화면 저장")
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
                 print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
+                log_save(t_utter, "none", result, screen=full_img.size if full_img else None)
                 self._say("저장할 영역을 찾지 못했습니다")
             return None
         elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
