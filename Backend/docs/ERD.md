@@ -509,11 +509,11 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 
 | 순서 | 대상 | 조건 | 내용 |
 |---|---|---|---|
-| 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 30개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
+| 1 | `tool` | 매 기동 | 코드의 도구 카탈로그 31개를 UPSERT 한다. 카탈로그에 없는 기존 행은 `available = 0` 으로 바꾼다 |
 | 2 | `gesture` | 없는 `name` 만 | 기본 제공 제스처 9종. 이미 있는 행의 `steps` · `enabled` · `repeatable` 은 그대로 두고, `label` · `description` · `hands` · `motion` 만 카탈로그 값으로 맞춘다 |
 | 3 | `app_target` | 없는 `app_key` 만 | Windows 기본 앱 `notepad` · `calc` 2건 (§2.7) |
 
-`tool` 30행:
+`tool` 31행:
 
 | name | S | C |
 |---|:-:|:-:|
@@ -537,6 +537,7 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 | `media.mute_toggle` | 1 | 0 |
 | `media.next` | 1 | 0 |
 | `media.prev` | 1 | 0 |
+| `media.seek` | 1 | 0 |
 | `volume.step` | 1 | 0 |
 | `volume.set` | 1 | 0 |
 | `files.open` | 1 | 0 |
@@ -661,7 +662,7 @@ CREATE TABLE `calib_profile` (
 );
 
 CREATE TABLE `tool` (
-	`name`	VARCHAR(64)	NOT NULL	COMMENT 'MCP 도구 이름. 카탈로그 30개',
+	`name`	VARCHAR(64)	NOT NULL	COMMENT 'MCP 도구 이름. 카탈로그 31개',
 	`description`	TEXT	NOT NULL	COMMENT 'LLM 에 노출되는 설명 원문',
 	`input_schema_json`	TEXT	NOT NULL	COMMENT '인자 JSON Schema',
 	`session_required`	TINYINT	NOT NULL	DEFAULT 0	COMMENT '0 | 1. S 플래그',

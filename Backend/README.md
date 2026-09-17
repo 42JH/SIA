@@ -29,7 +29,7 @@
   `bootRun` 은 자동으로 맞고, IDE 는 커밋된 공유 실행 설정(`.run/Backend bootRun.run.xml`, `.run/Backend.run.xml`)을 쓴다.
 - `127.0.0.1:8080` 에만 바인딩된다 — 이 프로세스는 창을 닫고 파일을 지운다. LAN 에 열면 그 권한이 네트워크로 나간다.
 - 첫 기동에 Flyway 가 스키마와 설정 싱글턴 시드를 만들고, `ToolCatalogSync` 가 코드의 도구 목록
-  (`ToolCatalog` 30개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
+  (`ToolCatalog` 31개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
   `DefaultGestureBootstrap` 이 기본 제공 제스처 9종 중 없는 이름을 gesture 테이블에 넣는다 (기능은 빈칸).
 - AI 파트는 `%APPDATA%/SIA/runtime.json` 의 `{token, port, pid}` 를 읽어 접속한다.
 
@@ -89,7 +89,7 @@ com.sia.assistant
 | 호출어 | `시아야` | V1 시드를 V4 가 갱신 (`seed/default-settings.json` 과 동일 값). 온보딩 녹음 문장과 같다 |
 | 설정 키 | 6종 (`wakeWord`·`sessionSeconds`·`autoStart`·`gazeCursor`·`micDevice`·`cameraDevice`) | `settings/SettingsSchema` — 자유 JSON 이지만 이 키들은 유실·오타입이 막힌다. 옛 `screen` 은 삭제 |
 | 세션 유지 | 15초 (기본, 변경 가능) | `settings.sessionSeconds` — 개시·갱신마다 다시 읽어 다음 세션부터 적용 |
-| 도구 | 30개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region`, 2026-09-07 `volume.set`·`browser.search`, 2026-09-09 `browser.dom_text` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
+| 도구 | 31개 | `ToolCatalog.SPECS` — 유일한 원천 (2026-09-01 `files.open`·`system.lock`, 2026-09-02 `screen.capture`·`screen.capture_region`, 2026-09-07 `volume.set`·`browser.search`, 2026-09-09 `browser.dom_text`, 2026-09-17 `media.seek` 추가). 기동 시 `ToolCatalogSync` 가 tool 테이블에 UPSERT |
 | 기본 제공 제스처 | 9종 (기능은 빈칸) | `DefaultGestures` — 기동마다 없는 이름만 주입(2026-09-11 확정). MediaPipe 기본 7종 + 좌우 스와이프, 전부 `context=NULL`·`hands=1`, 스와이프만 `motion=DYNAMIC`. 스텝이 없어 지정 전에는 `runnable=false` 이고, 어떤 기능을 걸지는 사용자가 `PUT /api/gestures/{id}` 로 정한다 |
 | 기록 보존 | 400일 | 대시보드의 가장 긴 축이 12개월 |
 | 프로필 | 보이스·시선 각 최대 4개 (사용 1+스톡 3) | 회의 확정 2026-09-01. 시선 재측정은 세션당 3회 (BE 카운트) |

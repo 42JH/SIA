@@ -67,6 +67,16 @@ public final class ToolCatalog {
             "다음 트랙 또는 다음 영상으로 넘어갑니다. 포그라운드가 유튜브면 해당 창의 단축키를 사용합니다.";
     public static final String D_MEDIA_PREV =
             "이전 트랙 또는 이전 영상으로 돌아갑니다. 포그라운드가 유튜브면 해당 창의 단축키를 사용합니다.";
+    public static final String D_MEDIA_SEEK =
+            "재생 중인 영상을 조금 앞으로 보내거나 뒤로 되돌립니다. dir 은 forward 또는 backward 이고, "
+                    + "amount 는 방향키를 누를 횟수 1~10 (생략 시 1)입니다. 범위 밖 값은 1~10 으로 잘라서 누릅니다. "
+                    + "★ 좌·우 방향키를 보내는 도구라 그 키는 앞에 있는 창이 받습니다. "
+                    + "context.get 의 foreground 가 영상 창이 아니면 반드시 그 영상 창의 ref 를 winRef 로 넘기세요 — "
+                    + "넘기지 않으면 지금 앞에 있는 엉뚱한 앱(문서 편집기 등)이 방향키를 받습니다. "
+                    + "배경에서 재생 중인 영상을 이 도구로 제어하려면 winRef 가 필요합니다. "
+                    + "한 번에 움직이는 초는 플레이어가 정합니다(유튜브 5초, 플레이어마다 다름) — "
+                    + "사용자에게 몇 초 움직였다고 단정하지 마세요. 다음 곡·다음 영상으로 넘기는 것은 media.next 입니다. "
+                    + "유튜브는 영상 플레이어에 포커스가 있어야 반응하므로, 변화가 없다고 하면 영상을 한 번 클릭해 달라고 안내하세요.";
     public static final String D_VOLUME_STEP =
             "시스템 볼륨을 한 단계 조절합니다. dir 은 up 또는 down 입니다. 값을 정해 맞출 때는 volume.set 을 쓰세요.";
     public static final String D_VOLUME_SET =
@@ -94,7 +104,7 @@ public final class ToolCatalog {
             "활성 세션의 만료 시간을 연장합니다. 유효한 명령을 처리한 직후에만 호출하세요.";
     public static final String D_SESSION_CANCEL =
             "활성 세션을 즉시 종료합니다.";
-    // 도구 30개 — 이 목록이 tool 테이블의 원천이다
+    // 도구 31개 — 이 목록이 tool 테이블의 원천이다
     private static final Map<String, ToolSpec> SPECS = build();
 
     private static Map<String, ToolSpec> build() {
@@ -119,6 +129,7 @@ public final class ToolCatalog {
         put(m, "media.mute_toggle", true,  false, D_MEDIA_MUTE_TOGGLE);
         put(m, "media.next",        true,  false, D_MEDIA_NEXT);
         put(m, "media.prev",        true,  false, D_MEDIA_PREV);
+        put(m, "media.seek",        true,  false, D_MEDIA_SEEK);
         put(m, "volume.step",       true,  false, D_VOLUME_STEP);
         put(m, "volume.set",        true,  false, D_VOLUME_SET);
         put(m, "files.open",        true,  false, D_FILES_OPEN);

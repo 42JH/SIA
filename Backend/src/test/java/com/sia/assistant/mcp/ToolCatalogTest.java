@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test;
 class ToolCatalogTest {
 
     @Test
-    @DisplayName("카탈로그는 30개다 — tool 테이블의 원천")
-    void catalogHas30Tools() {
-        assertThat(ToolCatalog.all()).hasSize(30);
+    @DisplayName("카탈로그는 31개다 — tool 테이블의 원천")
+    void catalogHas31Tools() {
+        assertThat(ToolCatalog.all()).hasSize(31);
         // 확인 게이트가 사라지면서 confirm.* 두 개는 카탈로그에 없다
         assertThat(ToolCatalog.spec("confirm.accept")).isNull();
         assertThat(ToolCatalog.spec("confirm.reject")).isNull();
@@ -27,6 +27,9 @@ class ToolCatalogTest {
         // 절대값 볼륨 — 단계(volume.step)와 같은 급이다
         assertThat(ToolCatalog.spec("volume.set").sessionRequired()).isTrue();
         assertThat(ToolCatalog.spec("volume.set").confirmRequired()).isFalse();
+        // 영상 앞뒤 이동 — 나머지 media.* 와 같은 급이다
+        assertThat(ToolCatalog.spec("media.seek").sessionRequired()).isTrue();
+        assertThat(ToolCatalog.spec("media.seek").confirmRequired()).isFalse();
         // 브라우저 검색 — 탭을 열 뿐 지우지 않으므로 C 없이 S 만 받는다 (확장 연결 여부와 무관하게 같다)
         assertThat(ToolCatalog.spec("browser.search").sessionRequired()).isTrue();
         assertThat(ToolCatalog.spec("browser.search").confirmRequired()).isFalse();

@@ -99,6 +99,8 @@ public class ToolInvoker {
             case "media.mute_toggle" -> mediaTools.muteToggleResult();
             case "media.next" -> mediaTools.nextResult();
             case "media.prev" -> mediaTools.prevResult();
+            case "media.seek" -> mediaTools.seekResult(
+                    str(args, "dir"), intOrNull(args, "amount"), str(args, "winRef"));
             case "volume.step" -> volumeTools.stepResult(str(args, "dir"));
             case "volume.set" -> volumeTools.setResult(intOrNull(args, "level"));
             case "files.open" -> filesTools.openResult(str(args, "path"));

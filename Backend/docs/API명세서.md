@@ -10,7 +10,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 | [0](#0-공통-규약) | 공통 규약 — 주소 · 인증 · 시각 · 오류 응답 · 목록 형식 |
 | [1](#1-rest--fe-용) | REST (FE) — 상태 · 설정 · 도구 · 앱 · 제스처 · 기록 · 대시보드 · 미리보기 · 백업 · 프로필 · 장치 목록 · 장비 맵핑 |
 | [2](#2-rest--ai-용) | REST (AI) — npz · 오디오 업/다운로드, 통계 배치 |
-| [3](#3-mcp-도구-30개) | MCP 도구 30개 — 인자 · 응답 · 실패 코드 |
+| [3](#3-mcp-도구-31개) | MCP 도구 31개 — 인자 · 응답 · 실패 코드 |
 | [4](#4-websocket-메시지-양식) | WebSocket 메시지 양식 — 봉투 · 채널별 이벤트의 필드 타입 · 예시 |
 | [5](#5-부록--엔드포인트--이벤트-색인) | 부록 — 엔드포인트 · 이벤트 색인 |
 
@@ -79,7 +79,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 
 | code | 나가는 자리 |
 |---|---|
-| `SESSION_REQUIRED` · `REF_NOT_FOUND` · `APP_NOT_REGISTERED` · `APP_PATH_INVALID` · `ELEVATED_WINDOW` · `FILE_NOT_FOUND` | MCP 도구 결과의 `structuredContent.code` (§3.1) |
+| `SESSION_REQUIRED` · `REF_NOT_FOUND` · `APP_NOT_REGISTERED` · `APP_PATH_INVALID` · `ELEVATED_WINDOW` · `FOREGROUND_BLOCKED` · `FILE_NOT_FOUND` | MCP 도구 결과의 `structuredContent.code` (§3.1) |
 | `PROFILE_LIMIT` | WS `error` — `voice_commit` · `calib_commit` 시점에 프로필이 이미 4개인 경우 (§4.2) |
 | `EXTENSION_UNAVAILABLE` | 도구 내부 전용. `browser.dom_text` 의 결과는 `FAILED` 로 나간다 |
 | `MODEL_DOWNLOAD_FAILED` | 쓰이지 않는다. 모델 실패는 WS `model_error` 로 알린다 (§4.3) |
@@ -1526,7 +1526,7 @@ If-None-Match: "8c22b1de44a0…"
 
 ---
 
-## 3. MCP 도구 30개
+## 3. MCP 도구 31개
 
 ### 3.1 호출 · 반환 형식 요약
 
@@ -1550,11 +1550,12 @@ If-None-Match: "8c22b1de44a0…"
 | `APP_NOT_REGISTERED` | 등록되지 않은 앱 |
 | `APP_PATH_INVALID` | 등록된 실행 파일 없음 |
 | `ELEVATED_WINDOW` | 관리자 권한 창 |
+| `FOREGROUND_BLOCKED` | 창을 앞으로 가져오지 못함 (Windows 포그라운드 잠금. 권한 문제가 아니다) |
 | `FILE_NOT_FOUND` | 파일 없음 |
 | `INVALID_REQUEST` | 인자 형식 오류 — 같은 인자로 재시도하면 또 실패한다. 인자를 고쳐 다시 호출해야 한다 |
 | `FAILED` | 그 외 실패 (실행 자체가 실패) |
 
-`code` 는 위 8개뿐이다. 앞의 6개는 정책 게이트가 막은 것으로 `tool_call.outcome = BLOCKED` 이고, `INVALID_REQUEST` 와 `FAILED` 는 둘 다 `outcome = FAILED` 로 기록된다 — 기록의 어휘는 세 값(`EXECUTED` · `BLOCKED` · `FAILED`)뿐이고, `INVALID_REQUEST` 는 LLM 이 읽는 결과 코드에만 나타난다.
+`code` 는 위 9개뿐이다. 앞의 7개는 정책 게이트가 막은 것으로 `tool_call.outcome = BLOCKED` 이고, `INVALID_REQUEST` 와 `FAILED` 는 둘 다 `outcome = FAILED` 로 기록된다 — 기록의 어휘는 세 값(`EXECUTED` · `BLOCKED` · `FAILED`)뿐이고, `INVALID_REQUEST` 는 LLM 이 읽는 결과 코드에만 나타난다.
 
 `INVALID_REQUEST` 가 나는 자리는 다음과 같다.
 
@@ -1673,9 +1674,13 @@ If-None-Match: "8c22b1de44a0…"
 | 실패 | `code` | `message` |
 |---|---|---|
 | 없는 ref | `REF_NOT_FOUND` | 대상을 찾을 수 없습니다. context.get으로 목록을 다시 확인하세요 |
-| 관리자 권한 창 (`window.focus` 만) | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
+| 관리자 권한 창 | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
+| 창을 앞으로 못 가져옴 (`window.focus` 만) | `FOREGROUND_BLOCKED` | 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 깜빡이는 창을 눌러 주세요 |
+| 상태가 바뀌지 않음 (`minimize` · `maximize` · `restore`) | `FAILED` | 창 상태를 바꾸지 못했습니다. 잠시 후 다시 시도해주세요 |
 
-`window.minimize` · `window.maximize` · `window.restore` 는 `ELEVATED_WINDOW` 로 실패하지 않는다.
+성공 응답은 창이 **실제로** 그렇게 됐다는 뜻이다. Win32 반환값이 아니라 결과(포그라운드 창 · 창 상태)를 확인하고 돌려준다.
+
+`FOREGROUND_BLOCKED` 는 권한 문제가 아니라 Windows 의 포그라운드 잠금이다. 이때 BE 는 그 창의 작업 표시줄 단추를 깜빡이게 해 두므로, AI 는 사용자에게 **깜빡이는 단추를 누르라고** 안내한다. 관리자 권한 창(`ELEVATED_WINDOW`)과 달리 사용자가 직접 누르면 해결된다.
 
 ### 3.7 `window.resize` — 크기 · 위치 프리셋 · S
 
@@ -1718,7 +1723,7 @@ AI 는 호출 전에 사용자 동의를 받는다. BE 는 동의가 끝난 요�
 { "content": [{ "type": "text", "text": "{\"focused\":{…}}" }], "isError": false, "structuredContent": { "focused": { "ref": "win:3", "title": "다운로드 - 파일 탐색기", "app": "explorer", "state": "NORMAL" } } }
 ```
 
-창이 하나도 없으면 `REF_NOT_FOUND` + `"전환할 창이 없습니다"`. 전환 대상이 관리자 권한 창이면 포커스 단계에서 `ELEVATED_WINDOW` 다 (문장은 §3.6 과 같다).
+창이 하나도 없으면 `REF_NOT_FOUND` + `"전환할 창이 없습니다"`. 포커스 단계의 실패(`ELEVATED_WINDOW` · `FOREGROUND_BLOCKED`)는 `window.focus` 와 같다 (문장은 §3.6 과 같다).
 
 ### 3.10 `explorer.items` — 탐색기 항목
 
@@ -1796,6 +1801,8 @@ AI 는 호출 전에 사용자 동의를 받는다. BE 는 동의가 끝난 요�
 | `media.mute_toggle` | `m` | MUTE |
 | `media.next` | `Shift+n` | NEXT |
 | `media.prev` | `Shift+p` | PREV |
+
+영상을 조금 앞뒤로 움직이는 것은 이 분기 밖의 §3.25 `media.seek` 이다.
 
 ### 3.13 `volume.step` — 시스템 볼륨 한 단계 · S
 
@@ -2114,6 +2121,32 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | 읽었지만 비어 있음 (접근성) | `FAILED` | 페이지에서 읽을 본문이 없습니다 |
 
 접근성 경로일 때는 BE 가 FE 에 `notice` 를 직접 보내 확장 부재를 알린다 (60초 1회, 프로토콜.md §6.6). 도구 호출 하나가 최대 4초(확장) · 4.5초(접근성) 걸린다.
+
+### 3.25 `media.seek` — 영상 앞으로 · 뒤로 · S
+
+좌 · 우 방향키를 보낸다. `media.*` 중 유일하게 유튜브 분기가 없다 — 시스템 미디어 키에는 탐색에 해당하는 가상 키가 없어 폴백이 성립하지 않는다.
+
+| 인자 | 필수 | 규칙 |
+|---|:-:|---|
+| `dir` | O | `forward`(→ 오른쪽 방향키) / `backward`(→ 왼쪽 방향키) |
+| `amount` | | 방향키를 누를 횟수 1~10. 생략 시 1. 범위 밖 값은 거절하지 않고 1~10 으로 클램프한다. 연타는 30ms 간격으로 나가므로 10 이면 호출이 0.3초쯤 걸린다 |
+| `winRef` | | 영상 창의 `win:N`. 주면 그 창을 앞으로 가져온 뒤 방향키를 보낸다. 생략하면 지금 앞에 있는 창이 받는다 |
+
+```json
+{ "dir": "forward", "amount": 2, "winRef": "win:3" }
+```
+```json
+{ "content": [{ "type": "text", "text": "실행했습니다" }], "isError": false }
+```
+```json
+{ "content": [{ "type": "text", "text": "지원하지 않는 이동 방향입니다: rewind (forward|backward)" }], "isError": true, "structuredContent": { "code": "INVALID_REQUEST", "message": "지원하지 않는 이동 방향입니다: rewind (forward|backward)" } }
+```
+
+**방향키는 앞에 있는 창이 받는다.** 나머지 `media.*` 넷은 시스템 미디어 키가 재생 세션으로 가서 배경 재생도 제어하지만, 이 도구는 그렇지 않다. `context.get` 의 `foreground` 가 영상 창이 아니면 `winRef` 를 넘겨야 하며, 넘기지 않으면 지금 앞에 있는 앱(문서 편집기 등)이 방향키를 받는다.
+
+`winRef` 를 준 경우의 실패는 `window.focus` 와 같다 (`REF_NOT_FOUND` · `ELEVATED_WINDOW` · `FOREGROUND_BLOCKED`, 문장은 §3.6 과 같다). 창을 앞으로 가져오지 못하면 **방향키를 아예 보내지 않는다** — 엉뚱한 앱이 키를 받느니 실패로 돌려준다.
+
+한 번에 움직이는 초는 BE 가 정하지 않는다. 방향키 한 번이 몇 초인지는 플레이어가 정하며(유튜브 5초), AI 는 사용자에게 초를 단정하지 않는다. 유튜브는 영상 플레이어에 포커스가 있어야 방향키에 반응한다.
 
 ---
 
@@ -2707,6 +2740,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `explorer.items` | | | §3.10 |
 | `scroll.step` | ● | | §3.11 |
 | `media.play_pause` · `media.mute_toggle` · `media.next` · `media.prev` | ● | | §3.12 |
+| `media.seek` | ● | | §3.25 |
 | `volume.step` | ● | | §3.13 |
 | `volume.set` | ● | | §3.22 |
 | `files.open` | ● | | §3.14 |
