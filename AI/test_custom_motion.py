@@ -266,6 +266,32 @@ class MotionTests(unittest.TestCase):
         self.assertIn("스와이프", payload["reason"])
         self.assertEqual(payload["similarTo"], "Swipe_Right")
 
+    def test_two_hand_dynamic_allows_clapping_motion_despite_each_hand_resembling_swipe(self):
+        """박수처럼 두 손이 서로를 향해 모이면, 손 하나만 떼어 보면 스와이프와
+        똑같아 보여도 등록이 통과해야 한다 — 두 손 사이 거리가 뚜렷이 줄어드는
+        중이면 "따로 움직인 스와이프"가 아니라 "서로 다가가는 동작"으로 본다."""
+        pair = lambda t: [hand(0.2 + t * 0.2, "Left"), hand(0.65 - t * 0.2, "Right")]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            reg._collect(pair(t), t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
+    def test_two_hand_dynamic_allows_spreading_motion_despite_each_hand_resembling_swipe(self):
+        """모아진 두 손을 양옆으로 펼치는 동작(박수의 반대)도 같은 이유로 통과해야
+        한다 — 손 하나만 보면 스와이프처럼 보이지만, 두 손 사이 거리가 뚜렷이
+        늘어나는 중이면 "서로 멀어지는 동작"으로 본다(방향과 무관하게 적용)."""
+        pair = lambda t: [hand(0.45 - t * 0.2, "Left"), hand(0.45 + t * 0.2, "Right")]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            reg._collect(pair(t), t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
     def test_two_hand_dynamic_allows_motion_neither_hand_alone_resembles(self):
         """두 손이 서로 반대로 제자리에서 회전만 하는(손목 이동은 거의 없는) 동작은
         어느 손만 따로 봐도 내장 동작(스와이프/스크롤/핀치)과 안 겹치므로 통과해야
@@ -473,6 +499,54 @@ class MotionTests(unittest.TestCase):
         tilted = self.encode_static_pose(facing_pose(global_tilt_deg=20))
         self.assertTrue(np.isfinite(tilted).all())
         self.assertGreater(distance(tilted, base, 2), 0.05)
+
+    @staticmethod
+    def clap_hands(i, n=30, glitch_at=None):
+        """두 손이 서서히 모이는(박수) 프레임들. glitch_at 프레임에서는 핸디드니스가
+        둘 다 같은 쪽으로 오판된 것처럼 만든다(ordered_landmarks가 None을 내는 상황)."""
+        left, right = hand(0.35 - i / n * 0.15, "Left"), hand(0.65 + i / n * 0.15, "Right")
+        if glitch_at is not None and i == glitch_at:
+            right = dict(right); right["handedness"] = "Left"
+        return [left, right]
+
+    def test_tracking_glitch_does_not_falsely_claim_when_nothing_registered(self):
+        """등록된 제스처가 하나도 없으면, 핸디드니스가 한 프레임 오판돼도 claimed가
+        거짓으로 True가 되면 안 된다 — 그러면 내장 동적 제스처(스와이프 등)가
+        아무 이유 없이 억제된다."""
+        store = CustomGestureStore(self.root / "missing.npz")
+        t = 0.0
+        claimed_log = []
+        for i in range(20):
+            t += 1 / 30
+            _, _, claimed, _ = store.update(self.clap_hands(i, glitch_at=10), t)
+            claimed_log.append(claimed)
+        self.assertFalse(claimed_log[10])
+        self.assertFalse(any(claimed_log))
+
+    def test_tracking_glitch_bridges_when_matching_gesture_is_in_progress(self):
+        """등록된 2손 동적 제스처(박수)를 추적하는 도중 핸디드니스가 한 프레임
+        오판돼도, claimed가 끊기지 않고 결국 동작이 완성돼야 한다 — 안 그러면
+        그 찰나에 커스텀 동작이 새어나간 raw 판정(내장 스와이프 등)으로 잘못
+        해석될 수 있고, 누적 중이던 궤적도 지워져 인식 자체가 실패할 수 있다."""
+        store = CustomGestureStore(self.root / "missing.npz")
+        times = np.linspace(0, 1, 30)
+        points = [ordered_landmarks(self.clap_hands(i, n=30)) for i in range(30)]
+        seq = encode_sequence(list(times), points)
+        store.data["sequences"] = np.stack([seq])
+        store.data["sequence_names"] = np.array(["clap"])
+        store.data["motions"] = np.array(["DYNAMIC"])
+        store.data["hand_counts"] = np.array([2], dtype=np.int32)
+        store.data["durations"] = np.array([1.0], dtype=np.float32)
+
+        t = 0.0
+        claimed_log, completed = [], None
+        for i in range(30):
+            t += 1 / 30
+            _, motion_done, claimed, _ = store.update(self.clap_hands(i, glitch_at=15), t)
+            claimed_log.append(claimed)
+            completed = completed or motion_done
+        self.assertTrue(claimed_log[15], "글리치 프레임에서 추적이 끊기면 안 된다")
+        self.assertEqual(completed, "clap", "글리치를 넘기고 결국 인식에 성공해야 한다")
 
     def test_capture_tick_upload_download_roundtrip(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))

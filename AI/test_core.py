@@ -1153,6 +1153,30 @@ def test_wake_model_load():
     assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
 
 
+def test_brain_paused_drops_already_queued_utterance():
+    """submit()은 paused 동안 새 발화를 안 쌓지만, 제스처 등록이 막 시작돼 paused가 켜지기
+    *직전*에 이미 큐에 들어간 발화는 소비 스레드(run())가 따로 걸러야 한다 — 안 그러면
+    등록 중에도 그 발화가 그대로 처리되어 세션이 열린다(S15P21D106-279가 노리던 것과 반대)."""
+    import time as time_mod
+    from unittest.mock import Mock, patch
+
+    import brain as brain_mod
+    from brain import Brain
+
+    with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()):
+        b = Brain(Mock())
+    b.submit(b"\x00" * 100, None, None, t_utter=0.0)  # paused=False일 때 정상적으로 큐잉
+    assert len(b.queue) == 1
+    b.paused = True                                    # 등록이 막 시작된 상황을 흉내낸다
+    b.start()
+    for _ in range(40):                                # 최대 ~2초 대기 — 소비 스레드가 버릴 시간을 준다
+        if not b.queue:
+            break
+        time_mod.sleep(0.05)
+    assert not b.queue          # 큐에서 빠졌고(버려졌고)
+    assert b.busy == 0          # 실제 처리 파이프라인(busy 증가)까지는 안 갔다
+
+
 if __name__ == "__main__":
     import sys
     try:
@@ -1181,6 +1205,7 @@ if __name__ == "__main__":
     test_voice_bridge()
     test_wake_enroll()
     test_wake_model_load()
+    test_brain_paused_drops_already_queued_utterance()
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
