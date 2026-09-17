@@ -77,6 +77,15 @@ class EnrollmentRelayTest {
     }
 
     @Test
+    @DisplayName("중단은 AI 에 wakeword_enroll_cancel 만 보낸다 — FE 로는 아무것도 가지 않는다")
+    void cancelGoesToAgentOnly() {
+        relay.cancelWakeword();
+
+        verify(agentHub).send(eq("wakeword_enroll_cancel"), eq(Map.of()));
+        verifyNoInteractions(feHub);
+    }
+
+    @Test
     @DisplayName("거절 본문이 객체가 아니면 빈 객체로 방어한다")
     void nonObjectRejectionFallsBackToEmpty() {
         relay.onWakewordRejected(om.readTree("[1,2]"));
