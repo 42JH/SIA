@@ -373,6 +373,22 @@ def test_stale_inference_or_session_renewal_emits_nothing():
             assert not events(link)
 
 
+def test_eval_capture_does_not_break_utterance():
+    """EVAL_CAPTURE=1(골든셋 수집) 로 켜도 발화가 정상 처리돼야 한다.
+
+    capture_case 는 게이트보다 먼저 불린다 — 그 시점에 아직 정의되지 않은 값을 읽으면
+    UnboundLocalError 가 바깥 except 에 삼켜져 '오류:' 토스트만 뜨고 발화가 통째로 버려진다.
+    실제로 9/16 DomBridge 제거 때 dom 이 이 상태가 됐고, 수집기가 하루 동안 죽어 있었다.
+    """
+    with assistant() as (brain_obj, link, _):
+        with patch("brain.EVAL_CAPTURE", True), patch("brain.capture_case") as cap:
+            utter(brain_obj, command("open_app", app="calc"))
+        cap.assert_called_once()
+        assert cap.call_args.args[5] is None  # dom 은 이 시점에 아직 없다(2단에서 BE 로 가져온다)
+        assert not any(str(c.args[0]).startswith("오류:")
+                       for c in brain_obj.overlay.toast.call_args_list)
+
+
 def test_confirmation_records_original_task_only_after_approval():
     for action, fields in (("window", {"window_op": "close"}), ("delete_file", {"query": "test.txt"})):
         with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"):

@@ -916,6 +916,9 @@ class Brain(threading.Thread):
                 if not self.queue:
                     continue
                 audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
+                # 이 시점엔 아직 본문이 없다 — DomBridge 은퇴 후 dom 은 2단에서 BE 로 가져온다(아래).
+                # EVAL_CAPTURE 골든셋 수집이 여기서 dom 을 읽으므로 반드시 먼저 정의한다.
+                dom = None
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
@@ -1034,7 +1037,7 @@ class Brain(threading.Thread):
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
                 result, stt_draft, tier = None, None, 2
-                dom, dom_s, t_pre = None, None, None  # dom 은 2단(LLM) 경로에서만 채운다
+                dom_s, t_pre = None, None  # dom 은 2단(LLM) 경로에서만 채운다(위에서 None 으로 시작)
                 self._last_stt_s = self._last_stt_lp = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연 — 확인 대기 경로(라우터 생략)도 리셋
                 if not (self._pending and t_utter < self._pending[2]):
                     t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
