@@ -68,6 +68,7 @@ class VadSegmenter:
         self.min_speech_blocks = int(min_speech_s / self.block_dur)
         self.floor = floor
         self.noise = floor
+        self.last_rms = 0.0  # 마지막 블록 rms — 시동어 점수 줄에 같이 찍어 "조각이 왜 안 열렸나" 를 가른다
         self.recording = False
         self._preroll = []
         self._buf = []
@@ -94,6 +95,7 @@ class VadSegmenter:
     def feed(self, block_i16, t):
         """블록 하나 투입. 반환: None | ("onset", t) | ("utter", t_onset, audio)."""
         rms = float(np.sqrt(np.mean(block_i16.astype(np.float32) ** 2)))
+        self.last_rms = rms
         if self.noise_win:
             self._ring[self._ring_i] = rms
             self._ring_i = (self._ring_i + 1) % self.noise_win
@@ -152,7 +154,8 @@ class VadSegmenter:
 
 
 WAKE_STREAM_DEBOUNCE_S = 1.5   # NOTE(튜닝): 같은 호출을 이웃 블록에서 여러 번 잡지 않게 두는 간격.
-WAKE_STREAM_LO = 0.3           # NOTE(튜닝): 하한. 주 임계엔 못 미쳐도 이 위면 "부른 것 같다"로 보고 민감 상태를 켠다. 아직 안 잰 초기값.
+WAKE_STREAM_LO = 0.47          # NOTE(튜닝): 하한. 주 임계엔 못 미쳐도 이 위면 "부른 것 같다"로 보고 민감 상태를 켠다.
+                               # 주 임계 0.5 시절의 0.3 과 같은 비율로 0.78 에 맞춘 값 — 아직 안 잰 초기값.
 WAKE_STREAM_SENSITIVE_S = 3.0  # NOTE(튜닝): 민감 상태 길이 — 그 안에 다시 부르면 하한만 넘어도 잡는다.
 WAKE_STREAM_REARM_S = 0.7      # NOTE(튜닝): 첫 상승 뒤 이 간격 안의 재상승은 같은 한 마디의 점수 흔들림으로 보고 무시한다
                                # (호출어 한 마디가 0.6~0.8 s — 그보다 짧으면 다시 부른 것이 아니다).
@@ -175,7 +178,7 @@ class WakeStream:
     def __init__(self, model, key, threshold=0.5, debounce_s=WAKE_STREAM_DEBOUNCE_S,
                  threshold_lo=WAKE_STREAM_LO, sensitive_s=WAKE_STREAM_SENSITIVE_S):
         self.model = model
-        self.key = key            # 모델 파일 이름(siaya_v1) — predict 가 이 이름으로 점수를 돌려준다
+        self.key = key            # 모델 파일 이름(siaya_v2) — predict 가 이 이름으로 점수를 돌려준다
         self.threshold = threshold
         self.threshold_lo = min(threshold_lo, threshold)
         self.sensitive_s = sensitive_s

@@ -368,6 +368,7 @@ def main():
     pending_capture = None  # 발화 시작 순간의 (full, crop) — 종료 시 오디오와 페어링
     wake_live_t = float("-inf")   # 상시 추론이 마지막으로 호출어를 잡은 시각 — 조각이 호출어를 담았는지 판정하는 기준
     wake_live_score, wake_cut = None, False   # 그때의 점수와 조각 앞부분을 잘랐는지 — 로그에 남겨 나중에 실측한다
+    hits_no_utter, mic_low_warned = 0, False  # 시동어는 잡히는데 VAD 조각이 안 나오는 횟수 — 마이크 입력이 작다는 신호
     # DOM에서 플레이어 볼륨을 읽지는 못하므로, 이 값은 AI가 보낸 볼륨 키 입력을
     # 기준으로 표시하는 HUD용 추정치다. 실제 재생기 볼륨과는 다를 수 있다.
     hud_volume = 50
@@ -414,8 +415,6 @@ def main():
                         link.voice.on_cancel(data.get("tempId"))
                     elif event_type == "voice_registered" and link.voice:
                         link.voice.on_registered(data.get("id"), data.get("active"))
-                        # 호출어를 먼저 등록했으므로, 이번 온보딩의 템플릿을 방금 생성된 보이스 프로필에 연결한다.
-                        wake_store.bind_profile(data.get("id"))
                     elif event_type == "model_load":
                         model_name = data.get("name", "")
                         model_path = Path(data.get("path", ""))
@@ -522,6 +521,14 @@ def main():
                     overlay.toast(ev[1])
                 elif ev[0] == "wake_live":
                     wake_live_t, wake_live_score, wake_cut = ev[1], ev[2], ev[3]
+                    hits_no_utter += 1
+                    if hits_no_utter >= 3 and not mic_low_warned:
+                        # 시동어 모델은 멜 정규화 입력이라 작은 소리에도 점수를 내지만 에너지 VAD(floor 350)는 조각을 안 연다 — 팀원 재현(271)
+                        mic_low_warned = True
+                        msg = "마이크 입력이 너무 작습니다 — Windows 소리 설정에서 마이크 볼륨을 올려주세요."
+                        if link:
+                            link.notice(msg)
+                        overlay.toast(msg)
                     if pending_capture is None or not brain.session_open_at(ev[1]):
                         # 세션 밖에 남아 있는 캡처는 조각 없이 끝난 앞선 히트의 옛 화면이라 지금 화면으로 덮는다 —
                         # 안 덮으면 몇 분 전 화면과 그때의 창이 이번 호출에 붙는다. 세션 안은 onset 에 찍은 것이 맞다.
@@ -530,7 +537,8 @@ def main():
                         t_gaze = voice.seg.onset_t if voice.recording else ev[1]
                         fix, _ = buffer.fixation_at(t_gaze, lookback=GAZE_LOOKBACK_S, window=0.4)
                         pending_capture = (*capture_screen(fix), foreground_hwnd())
-                    print(f"[상시 시동어] 점수 {ev[2]:.2f}"
+                    print(f"[상시 시동어] 점수 {ev[2]:.2f} 조각 {'열림' if voice.recording else '닫힘'}"
+                          f" rms {voice.seg.last_rms:.0f}/임계 {voice.seg.threshold:.0f}"
                           + (" 하한" if wake_stream is not None and ev[2] < wake_stream.threshold else "")
                           + (f" 앞 절단 {WAKE_CUT_S} s" if wake_cut else ""))
                 elif ev[0] == "onset":
@@ -540,6 +548,7 @@ def main():
                     fix, _ = buffer.fixation_at(ev[1], lookback=GAZE_LOOKBACK_S, window=0.4)
                     pending_capture = (*capture_screen(fix), foreground_hwnd())
                 elif ev[0] == "utter":
+                    hits_no_utter = 0
                     # 등록·온보딩 수집 중이면 그쪽으로. 둘 다 켜져 있으면 나중에 시작한 쪽 — 화자 등록을 끝내지 않고
                     # 이름 불러보기로 되돌아가면 BE 가 등록을 접지 않아, 순서를 고정하면 "시아야" 가 낭독 문장으로 먹힌다
                     open_ = [s for s in (link.voice, link.wake) if s and s.active] if link else []

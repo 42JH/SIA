@@ -48,16 +48,16 @@ def test_wake_template_npz():
     """호출어 템플릿 npz 저장·복원과 검증 — 형식 버전·임베딩 모델·차원이 다르면 읽지 않는다.
     서버에서 받은 바이트를 그대로 믿고 판정 기준으로 쓰면 안 되기 때문이다."""
     emb = unit(0)
-    t = WakeTemplate("시아야", (0.99,), np.stack([emb] * 5), 5, 3)
+    t = WakeTemplate("시아야", (0.99,), np.stack([emb] * 5), 5)
     back = WakeTemplate.read(io.BytesIO(t.npz_bytes()))
-    assert back.wake_text == "시아야" and back.base_n == 5 and back.profile_id == 3 and back.bound
+    assert back.wake_text == "시아야" and back.base_n == 5 and not hasattr(back, "profile_id")
     assert back.extractor == MODEL_SOURCE and np.allclose(back.embs, t.embs)
 
     def broken(**fields):
         buf = io.BytesIO()
         base = {"version": 2, "extractor": MODEL_SOURCE, "sr": 16000, "wake_text": "시아야",
                 "scores": np.asarray([0.99], np.float32), "embs": np.stack([emb]),
-                "base_n": 1, "profile_id": -1}
+                "base_n": 1, "profile_id": -1}   # profile_id 는 이전 형식의 필드 — 있어도 무시하고 읽는다
         np.savez(buf, **(base | fields))
         return buf.getvalue()
 
@@ -78,7 +78,7 @@ def test_wake_uses_only_enrolled_samples():
     from brain import Brain
     from test_usage_events import assistant
 
-    legacy = WakeTemplate("시아야", (0.99,), np.vstack([np.stack([unit(0)] * 5), unit(1)]), 5, 7)
+    legacy = WakeTemplate("시아야", (0.99,), np.vstack([np.stack([unit(0)] * 5), unit(1)]), 5)
     loaded = WakeTemplate.read(io.BytesIO(legacy.npz_bytes()))
     assert len(loaded.embs) == 6 and loaded.base_n == 5
     assert loaded.similarity(unit(0)) == 1.0 and loaded.similarity(unit(1)) == 0.0
@@ -90,7 +90,6 @@ def test_wake_uses_only_enrolled_samples():
             store.commit(loaded, "이전 파일")
             body, generation = store.path.read_bytes(), store.generation
             brain.wake_template, brain.wake = store, object()
-            brain.speaker.profile_id = 7
             brain._wake_ok = Brain._wake_ok.__get__(brain)
             with patch.object(store, "commit") as commit, patch.object(store, "_queue_upload") as upload:
                 brain.speaker.embed = lambda _: unit(1)
@@ -147,7 +146,7 @@ def test_wake_only_keeps_attached_commands():
     assert not wake_only(np.full(48000, 1000, np.int16), peak)  # 배경음·잘린 구간
     lead = 16000
     assert wake_only(np.concatenate([np.zeros(lead, np.int16), head, silence]), peak, lead)
-    fast = np.concatenate([np.zeros(6720, np.int16), np.full(6240, 1000, np.int16), silence])  # 말소리 0.39초
+    fast = np.concatenate([np.zeros(6720, np.int16), np.full(2400, 1000, np.int16), silence])  # 말소리 0.15초
     fast_peak = int(round((speech_span(fast)[1] + WAKE_PAD_S) / WAKE_FRAME_S))
     assert wake_only(fast, fast_peak)
     clip, _, end, certain = wake_clip(fast, fast_peak)
@@ -168,10 +167,9 @@ def test_wake_only_run_skips_command_processing():
         with tempfile.TemporaryDirectory() as directory, assistant() as (brain, link, clock):
             store = WakeTemplateStore(Path(directory) / "wake.npz")
             try:
-                store.commit(template().bound_to(7), "등록")
+                store.commit(template(), "등록")
                 brain.wake_template, brain.wake = store, object()
                 brain._wake_ok = Brain._wake_ok.__get__(brain)
-                brain.speaker.profile_id = 7
                 brain.speaker.embed = lambda _: unit(0 if owner else 1)
                 brain.speaker.verify.return_value = (False, 0.1)  # 이어진 명령에는 화자 인증이 필요하다
                 link.connected = not local

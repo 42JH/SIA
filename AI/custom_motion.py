@@ -19,6 +19,11 @@ FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
 PREFIX_DISTANCE = 0.16
 PREFIX_MIN_MOTION = 0.08
+# 2손 추적 중 ordered_landmarks가 한 프레임만 실패해도(핸디드니스 오판 등,
+# 박수처럼 손이 가까워지는 동작에서 흔함) 즉시 추적 후보를 놓치지 않도록 주는
+# 짧은 유예. latched(동작 완성 뒤 재무장 대기)의 0.3초와는 다른, 훨씬 짧은
+# "이 프레임만 노이즈였을 뿐" 판단용 값이다.
+TRACKING_GRACE_S = 0.15
 # 두 손 평균 방향 벡터(손목 중점→중지MCP 중점)의 최소 길이 — 이 값 미만이면
 # "두 손이 거의 정반대를 향한다"는 뜻이라 회전 기준 자체가 정의되지 않는다.
 # 길이 = 2*cos(두 손 사이 각도/2)이므로, 0.35는 두 손이 약 160도 이상
@@ -239,6 +244,7 @@ class CustomGestureStore:
         self.latched = False
         self.latched_name = None
         self.missing_since = None
+        self._last_claimed = False  # 가장 최근 정상 프레임의 claimed — 찰나의 추적 실패를 이어붙이는 데 쓴다
 
     @property
     def n(self):
@@ -282,6 +288,7 @@ class CustomGestureStore:
         self.latched = False
         self.latched_name = None
         self.missing_since = None
+        self._last_claimed = False
 
     def update(self, hands, now, disabled=()):
         """Return (held two-hand pose, completed motion, suppress other commands, distance).
@@ -296,14 +303,28 @@ class CustomGestureStore:
             self.reset_motion()
         points = ordered_landmarks(hands)
         if points is None:
-            self.history.clear()
+            # ordered_landmarks는 핸디드니스가 한 프레임만 애매해도(두 손이 순간
+            # 같은 쪽으로 잡히는 등, 손이 가까워지는 동작에서 흔함) None을 낸다.
+            # 그 찰나에 바로 추적 후보를 놓치면(claimed=False) 호출측이 그 프레임의
+            # 원본 raw 판정(1손 내장/커스텀)으로 새서 엉뚱한 게 발동할 수 있다 —
+            # TRACKING_GRACE_S 동안은 이력을 유지하고, 직전 정상 프레임이 실제로
+            # "추적 중(claimed)"이었을 때만 그 상태를 이어준다 — 손이 있었다는
+            # 사실 자체(self.history)가 아니라 그때 진짜 후보를 물고 있었는지를
+            # 봐야, 아무 매칭도 없는 상태에서 글리치만으로 claimed가 켜지지 않는다.
+            # latched(완성 뒤 재무장 대기)의 0.3초 유예는 별개 개념이라 그대로 둔다.
+            had_progress = self._last_claimed
             if self.missing_since is None:
                 self.missing_since = now
-            if now - self.missing_since >= 0.3:
+            elapsed = now - self.missing_since
+            if elapsed >= TRACKING_GRACE_S:
+                self.history.clear()
+            if elapsed >= 0.3:
                 self.latched = False
-            return None, None, self.latched, None
+            claimed = self.latched or (elapsed < TRACKING_GRACE_S and had_progress)
+            return None, None, claimed, None
         self.missing_since = None
         if self.latched:
+            self._last_claimed = True
             return None, None, True, None
         identity = tuple(sorted(h.get("handedness", "Unknown") for h in hands))
         if self.history and (now - self.history[-1][0] > 0.25 or now <= self.history[-1][0]
@@ -356,7 +377,10 @@ class CustomGestureStore:
             self.latched = True
             self.latched_name = best_dynamic[1]
             self.history.clear()
+            self._last_claimed = True
             return None, best_dynamic[1], True, best_dynamic[0]
         if pending_motion:
+            self._last_claimed = True
             return None, None, True, None
-        return best_static[1], None, bool(best_static[1]), (best_static[0] if best_static[1] else None)
+        self._last_claimed = bool(best_static[1])
+        return best_static[1], None, self._last_claimed, (best_static[0] if best_static[1] else None)

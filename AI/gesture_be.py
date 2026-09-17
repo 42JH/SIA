@@ -14,6 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from gesture_diagnostics import save_registration_diagnostic
 
 from hands import (REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, normalize_landmarks,
@@ -70,11 +71,15 @@ class GesturePreview:
         self.active = False
         self.last_queued_at = 0.0
         self._seq = 0
+        self._generation = 0
+        self._preview_error = False
         self._queue = queue.Queue(maxsize=1)
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
     def start(self):
+        self._generation += 1
+        self._preview_error = False
         self.active = True
         self._seq = 0
         self.last_queued_at = 0.0
@@ -83,6 +88,7 @@ class GesturePreview:
     def stop(self):
         if self.active:
             self.active = False
+            self._generation += 1
             self.link.send_event("cam_preview_state", {"phase": "STOPPED"})
 
     def tick(self, frame, now):
@@ -94,18 +100,42 @@ class GesturePreview:
             self._queue.get_nowait()  # 워커가 못 따라오면 오래된 프레임을 버린다
         except queue.Empty:
             pass
-        self._queue.put_nowait(frame.copy())
+        # reg_frame과 동일한 단조 시계 기준(ms). 인코딩 대기 전 시각을 보존한다.
+        self._queue.put_nowait((self._generation, int(now * 1000), frame.copy()))
 
     def _worker(self):
         while True:
-            frame = self._queue.get()
-            jpeg_b64 = encode_jpeg(frame)
-            if jpeg_b64 is None:
+            generation, ts_ms, frame = self._queue.get()
+            if not self.active or generation != self._generation:
                 continue
-            self._seq += 1
-            self.link.send_event("cam_preview_frame", {
-                "seq": self._seq, "jpegB64": jpeg_b64,
-            })
+            try:
+                jpeg_b64 = encode_jpeg(frame)
+                if jpeg_b64 is None:
+                    raise ValueError('미리보기 JPEG 변환 실패')
+                if not self.active or generation != self._generation:
+                    continue
+                if self._preview_error:
+                    self.link.send_event('cam_preview_state', {'phase': 'READY'})
+                self._seq += 1
+                sent = self.link.send_event("cam_preview_frame", {
+                    "seq": self._seq, "jpegB64": jpeg_b64, "tsMs": ts_ms,
+                })
+                if sent is False:
+                    raise RuntimeError('미리보기 전송 실패')
+                self._preview_error = False
+            except Exception as exc:
+                if not self.active or generation != self._generation:
+                    continue
+                if not self._preview_error:
+                    print(f'[카메라 미리보기 오류] {exc}')
+                    try:
+                        self.link.send_event('cam_preview_state', {
+                            'phase': 'ERROR',
+                            'message': '카메라 미리보기 전송에 실패했습니다. 연결을 확인하며 다시 시도합니다.',
+                        })
+                    except Exception:
+                        pass
+                self._preview_error = True
 
 
 class GestureTemplateCache:
@@ -238,6 +268,7 @@ class GestureRegistration:
         self.builtin_hits = {}
         self.hand_counts = []
         self.take_frames = {}
+        self.comparison_diagnostics = []
 
     @property
     def active(self):
@@ -419,13 +450,16 @@ class GestureRegistration:
             print(f"[제스처 등록] 중단: {reason}")
             self.reset()
             return
+        outcome, diagnostic_reason = 'error', ''
         try:
             hand_count = (2 if self.hand_counts and sum(n >= 2 for n in self.hand_counts)
                           >= len(self.hand_counts) * 0.7 else 1)
             self._validate_and_upload(hand_count)
             self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hand_count})
             print("[제스처 등록] 품질 검사 통과. 기능 지정 대기")
+            outcome = 'captured'
         except (OSError, TimeoutError, RuntimeError) as exc:
+            outcome, diagnostic_reason = 'upload_failed', str(exc)
             # put_gesture_npz(서버 업로드) 실패 — URLError·TimeoutError·(runtime.json
             # 없음 등) RuntimeError는 검증 실패가 아니라 인프라 문제라 str(exc)가
             # "<urlopen error offline>" 같은 개발자용 문구다. 사용자에게는 원인
@@ -436,6 +470,7 @@ class GestureRegistration:
                 "reason": "서버에 업로드하지 못했습니다. 네트워크 연결을 확인하고 다시 시도해주세요",
             })
         except ValueError as exc:
+            outcome, diagnostic_reason = 'rejected', str(exc)
             payload = {"tempId": temp_id, "reason": str(exc)}
             if isinstance(exc, GestureRegistrationRejected) and exc.similar_to:
                 payload["similarTo"] = exc.similar_to
@@ -443,6 +478,12 @@ class GestureRegistration:
             self.link.send_event("reg_rejected", payload)
             print(f"[제스처 등록] 거부: {exc}")
         finally:
+            try:
+                path = save_registration_diagnostic(self, outcome, diagnostic_reason)
+                if path:
+                    print(f"[제스처 진단 저장] {path}")
+            except Exception as exc:
+                print(f"[제스처 진단 저장 실패] {exc}")
             self.reset()
 
     def _validate_and_upload(self, hand_count):
@@ -525,6 +566,14 @@ class GestureRegistration:
         순간(2손 커스텀 인식이 그 프레임만 실패하는 경우) 내장 동작이 조용히
         발동할 수 있기 때문이다.
 
+        다만 2손이 서로를 향해 모이는 동작(박수 등)은 손 하나만 보면 항상
+        스와이프처럼 보인다 — 그런 동작까지 전부 막으면 등록 자체가 너무
+        제한적이다. 그래서 2손 프레임에서는 두 손 사이 거리도 같이 추적해,
+        발동 시점에 그 거리가 뚜렷이 줄어들고 있었으면(서로 다가가는 중)
+        충돌로 세지 않고 계속 스캔한다 — 두 손이 독립적으로 같은 방향을
+        모두 따라 움직이는(진짜 우연히 같이 스와이프하는) 경우는 거리가
+        안 줄어드니 여전히 걸린다.
+
         겹치면 (표시용 이름, 구체적인 이벤트값) 튜플을, 안 겹치면 (None, None)을
         돌려준다. 감지기 반환값이 문자열이면(SwipeDetector의 "Swipe_Left" 등,
         BE 기본 제스처 이름과 그대로 일치) 그걸 similar_to로 쓸 수 있게 넘기고,
@@ -534,13 +583,21 @@ class GestureRegistration:
         for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
             for take in range(1, self.takes + 1):
                 detectors = {}
+                separations = []  # (t, 두 손 사이 거리) — 2손 프레임에서만 채워진다
                 for t, hands in self.take_frames.get(take, []):
+                    if len(hands) == 2:
+                        p0, p1 = hands[0]["landmarks"][9], hands[1]["landmarks"][9]
+                        separations.append((t, float(np.hypot(p0[0] - p1[0], p0[1] - p1[1]))))
                     seen = set()
                     for h in hands:
                         side = h.get("handedness") or "?"
                         seen.add(side)
                         detector = detectors.setdefault(side, make_detector())
                         event = detector.update(extract(h), t, size=h.get("size", REFERENCE_PALM_SIZE))
+                        if event and self._hands_were_converging(separations, t):
+                            print(f"[제스처 스와이프 제외] tempId={self.temp_id} take={take} hand={side} "
+                                  f"direction={event} (두 손이 서로 다가가는 중이라 충돌로 안 셈)")
+                            event = None
                         if event:
                             start = self.take_frames[take][0][0]
                             print(f"[제스처 스와이프 충돌] tempId={self.temp_id} take={take} elapsed={t-start:.3f}s hand={side} direction={event}")
@@ -549,6 +606,26 @@ class GestureRegistration:
                         if side not in seen:
                             detector.update(None, t)
         return None, None
+
+    @staticmethod
+    def _hands_were_converging(separations, t, lookback=None, min_change=0.5):
+        """t 시점 직전 lookback초 동안 두 손 사이 거리가 뚜렷이 변했는지(모이거나 벌어지거나).
+
+        min_change는 SwipeDetector 발동 기준(dist, 손 크기 기준 비율)의 절반 —
+        스와이프를 낼 만큼 한 손이 움직이는 동안 두 손 간격도 그만큼(의 절반
+        이상) 좁혀지거나 넓혀졌다면, 그 손은 "따로" 움직인 게 아니라 상대 손을
+        향해(또는 상대 손에서 멀어지며) 움직인 것으로 본다 — 박수(모임)와
+        양손 펼치기(벌어짐) 둘 다 손 하나만 보면 스와이프처럼 보이는 동작이라
+        방향에 상관없이 같은 예외를 적용한다. 2손 프레임이 없었던 촬영(1손
+        동적)에서는 항상 False — 기존 동작 그대로 유지된다.
+        """
+        if len(separations) < 2:
+            return False
+        lookback = SCREEN_SWIPE_CONFIG.get("max_t", 0.5) if lookback is None else lookback
+        window = [sep for ts, sep in separations if t - lookback - 0.04 <= ts <= t]
+        if len(window) < 2:
+            return False
+        return abs(window[0] - window[-1]) > SCREEN_SWIPE_CONFIG.get("dist", 0.12) * min_change
 
     def _upload_motion(self, hand_count):
         """양손 정적 또는 (한손/양손) 동적 — 회차별 궤적을 NPZ v2로 올린다.
@@ -609,7 +686,12 @@ class GestureRegistration:
             durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
         matches = []
         for take, seq in enumerate(sequences, 1):
-            score, name = self.custom_store.nearest_sequence(seq, self.motion, hand_count)
+            candidates = self.custom_store.sequence_comparisons(seq, self.motion, hand_count)
+            score, name = ((candidates[0]['score'], candidates[0]['name']) if candidates
+                           else (float('inf'), None))
+            self.comparison_diagnostics.append(dict(take=take, candidates=candidates))
+            if candidates:
+                print(f"[제스처 특징 비교] tempId={self.temp_id} take={take} " + json.dumps(candidates[0], ensure_ascii=False))
             matches.append((score, name))
             print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion={self.motion} hands={hand_count} nearest={name!r} distance={score:.4f} threshold={self.COLLISION_DIST}")
         # 내장 동적 감지기(스와이프 등)는 NPZ 템플릿이 아니라 별도 상태기계라

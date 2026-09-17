@@ -30,7 +30,7 @@ LOG_DIR = HERE / "logs"
 EVAL_DIR = HERE / "eval" / "cases"
 EVAL_CAPTURE = os.environ.get("EVAL_CAPTURE", "") == "1"  # 회귀 케이스 수집 스위치
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5 Flash / 3.1 Flash-Lite
-WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v1.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
+WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
@@ -40,9 +40,11 @@ SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠
 HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
-WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
-WAKE_THRESHOLD = 0.5      # NOTE(튜닝): predict_clip 최대 점수 하한. 노트북 마이크+Windows 오디오 향상
-                          # 채널 실측 기준 인식 98.3%·본인 비호출 오발 0 — 채널이 바뀌면 재선정할 것
+WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
+WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
+                          # 배경 오발 1.41건/h(봉인 스트림 17.7 h). 0.5 로 두면 배경 오발이 3.11건/h 로 v1(2.49)보다 나빠진다.
+                          # 타인 4명 "시아야" 92건 중 시동어 통과 88(v1 73) — 발음만 보는 단계라 의도한 방향이고,
+                          # 화자 게이트까지 거친 끝단 타인 통과는 14/92 로 v1 과 같다 (2026-09-17 실측). 채널이 바뀌면 재선정할 것
 WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정만 로그, 발화는 그대로 LLM으로 (실측용)
 SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(첫 임계 넘음) 앞 1 s + 뒤 2 s 만 넣는다.
                           # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
@@ -52,7 +54,7 @@ WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수
                         # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
                           # (실측: 프레임 수 = (길이 + 1.94 s) / 0.08)
-WAKE_MIN_S = 0.4          # NOTE(튜닝): 호출어 말소리 하한. 헛기침·"어"·클릭음을 거른다 (voice_bridge.MIN_SPEECH_S 와 같은 근거)
+WAKE_MIN_S = 0.2          # NOTE(튜닝): 호출어 등록 말소리 하한. 클릭음·헛기침을 거른다. 0.4 는 정상 호출도 걸린다는 피드백으로 낮춤 (2026-09-16)
 WAKE_MAX_S = 2.0          # NOTE(튜닝): 호출어 말소리 상한. 이보다 길면 이름 부르기가 아니라 문장이다
 NOISE_RMS = 350.0         # NOTE(튜닝): 조용한 블록(하위 20%)의 rms 가 이보다 크면 소음 "높음" — VAD 시작 임계 하한과 같은 값
 WAKE_CLIP_MAX_S = 2.5     # NOTE(튜닝): 호출어 구간으로 잘라낼 수 있는 최대 길이. WAKE_MAX_S(말소리 2.0 s)에
@@ -360,7 +362,7 @@ def load_api_key():
 def load_wake_model():
     """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (호출어 인식·등록 비활성).
 
-    siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
+    siaya_v2: sha256 a72b4dc7…, W1800_checkpoint1(시드 22), 2026-09-14 확정. 공용 특징 추출기
     (melspectrogram·embedding)는 패키지에 없고 별도 다운로드다 — 신규 클론에서 없으면
     자동으로 한 번 받아온다. 학습·판정 채널은 노트북 마이크 배열 + Windows 오디오
     향상 켜짐 — 헤드셋·다른 PC는 미검증.
@@ -692,7 +694,7 @@ class Brain(threading.Thread):
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
         else:
-            print("GEMINI_API_KEY 없음 → 음성 명령 비활성 (제스처 커맨드만 동작).")
+            print("GEMINI_API_KEY 없음 → 1단 로컬 명령(음소거·볼륨 등)만 동작, 나머지 발화는 안내 후 버림.")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
 
     @property
@@ -821,13 +823,17 @@ class Brain(threading.Thread):
         컨텍스트(크롬 확장 실측, 없으면 None), wake_live = 상시 추론이 이 조각에서 잡은 (점수, 앞을
         잘랐는지) 또는 None — 로그 기록용. 세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
-        if self.enabled and not self.paused:
-            with self._audio_lock:
-                t_utter = time.monotonic() if t_utter is None else t_utter
-                if t_utter < self._audio_since:
-                    return
-                self.queue.append((audio_i16, full_img, crop_img,
-                                   t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
+        # 버리는 발화는 사유를 남긴다 — 시동어 점수만 찍히고 아무 줄도 없는 재현(271)을 여기서 가른다.
+        if self.paused:
+            print("[발화 무시] 일시정지 중 (제스처 등록·카메라 미리보기 화면)")
+            return
+        with self._audio_lock:
+            t_utter = time.monotonic() if t_utter is None else t_utter
+            if t_utter < self._audio_since:
+                print("[발화 무시] 입력 장치 교체 전 발화")
+                return
+            self.queue.append((audio_i16, full_img, crop_img,
+                               t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -892,13 +898,6 @@ class Brain(threading.Thread):
             self._wake_notice("stale_template",
                               f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
             return False, "template_stale", None, None, None
-        profile_id = self.speaker.profile_id if self.speaker is not None else None
-        if not template.usable_by(profile_id):
-            # BE 의 호출어 blob 은 전역 한 개라 프로필별로 나뉘지 않는다 — 템플릿에 적어 둔 등록 당시
-            # 보이스 프로필과 지금 활성 프로필이 다르면 다른 사람의 등록본이다.
-            self._wake_notice("other_profile",
-                              "이 호출어 등록본은 다른 보이스 프로필의 것입니다 — 지금 프로필로 다시 등록해 주세요.")
-            return False, "other_profile", None, None, None
         clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max, lead)
         if self.speaker is None:
             return True, "content_only", None, clip_t0, clip_t1  # --no-speaker로 화자 인증을 끈 상태
@@ -920,8 +919,8 @@ class Brain(threading.Thread):
 
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
-        라우터가 이미 있거나(테스트의 대역 포함), 음성 명령이 비활성이거나, STT_WARM=0 이면 건너뛴다."""
-        if self.router is not None or self._router_dead or not self.enabled or os.environ.get("STT_WARM") == "0":
+        라우터가 이미 있거나(테스트의 대역 포함) STT_WARM=0 이면 건너뛴다. Gemini 키가 없어도 1단 로컬 명령은 도니 예열한다."""
+        if self.router is not None or self._router_dead or os.environ.get("STT_WARM") == "0":
             return
         try:
             from router import Router
@@ -946,6 +945,12 @@ class Brain(threading.Thread):
                 if not self.queue:
                     continue
                 audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
+                # 제스처 등록이 시작되는 순간에는 submit() 이전에 들어와 있던 발화가
+                # 큐에 남아 있을 수 있다. 소비 단계에서도 한 번 더 버려야 등록 중
+                # 세션/명령이 뒤늦게 실행되지 않는다. 버릴 발화는 먼저 버린다.
+                if self.paused:
+                    print("[발화 무시] 일시정지 중 큐에 남은 발화")
+                    continue
                 # 이 시점엔 아직 본문이 없다 — DomBridge 은퇴 후 dom 은 2단에서 BE 로 가져온다(아래).
                 # EVAL_CAPTURE 골든셋 수집이 여기서 dom 을 읽으므로 반드시 먼저 정의한다.
                 dom = None
@@ -1164,6 +1169,8 @@ class Brain(threading.Thread):
 
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---
     def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None, stt_draft=None):
+        if self._client is None:  # 키 없이도 1단 로컬 명령은 돌리고, LLM 이 필요한 발화만 여기서 안내 — except 가 "오류: …" 로 화면·FE 에 띄운다
+            raise RuntimeError("Gemini 키가 없어 이 명령은 처리하지 못해요 (AI/gemini_api_key.txt)")
         from google.genai import types
 
         t_utter = t_utter or time.monotonic()
