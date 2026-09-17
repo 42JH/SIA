@@ -30,7 +30,7 @@ LOG_DIR = HERE / "logs"
 EVAL_DIR = HERE / "eval" / "cases"
 EVAL_CAPTURE = os.environ.get("EVAL_CAPTURE", "") == "1"  # 회귀 케이스 수집 스위치
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5 Flash / 3.1 Flash-Lite
-WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v1.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
+WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
 SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
@@ -40,9 +40,11 @@ SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠
 HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
 SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
-WAKE_MODEL = HERE / "models" / "siaya_v1.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
-WAKE_THRESHOLD = 0.5      # NOTE(튜닝): predict_clip 최대 점수 하한. 노트북 마이크+Windows 오디오 향상
-                          # 채널 실측 기준 인식 98.3%·본인 비호출 오발 0 — 채널이 바뀌면 재선정할 것
+WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
+WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
+                          # 배경 오발 1.41건/h(봉인 스트림 17.7 h). 0.5 로 두면 배경 오발이 3.11건/h 로 v1(2.49)보다 나빠진다.
+                          # 타인 4명 "시아야" 92건 중 시동어 통과 88(v1 73) — 발음만 보는 단계라 의도한 방향이고,
+                          # 화자 게이트까지 거친 끝단 타인 통과는 14/92 로 v1 과 같다 (2026-09-17 실측). 채널이 바뀌면 재선정할 것
 WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정만 로그, 발화는 그대로 LLM으로 (실측용)
 SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(첫 임계 넘음) 앞 1 s + 뒤 2 s 만 넣는다.
                           # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
@@ -360,7 +362,7 @@ def load_api_key():
 def load_wake_model():
     """시동어 모델 로드 — openwakeword 미설치·모델 없음이면 None (호출어 인식·등록 비활성).
 
-    siaya_v1: sha256 0656c7d1…, r3734(시드 34), 2026-09-06 확정. 공용 특징 추출기
+    siaya_v2: sha256 a72b4dc7…, W1800_checkpoint1(시드 22), 2026-09-14 확정. 공용 특징 추출기
     (melspectrogram·embedding)는 패키지에 없고 별도 다운로드다 — 신규 클론에서 없으면
     자동으로 한 번 받아온다. 학습·판정 채널은 노트북 마이크 배열 + Windows 오디오
     향상 켜짐 — 헤드셋·다른 PC는 미검증.
