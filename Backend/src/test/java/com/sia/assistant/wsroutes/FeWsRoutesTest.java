@@ -36,6 +36,7 @@ class FeWsRoutesTest {
     private CameraPreviewRelay cameraPreview;
     private MicPreviewRelay micPreview;
     private VoiceRegistrationOrchestrator voiceRegistration;
+    private EnrollmentRelay enrollment;
     private FeWsRoutes routes;
 
     @BeforeEach
@@ -46,8 +47,9 @@ class FeWsRoutesTest {
         cameraPreview = mock(CameraPreviewRelay.class);
         micPreview = mock(MicPreviewRelay.class);
         voiceRegistration = mock(VoiceRegistrationOrchestrator.class);
+        enrollment = mock(EnrollmentRelay.class);
         routes = new FeWsRoutes(agentHub, registration, voiceRegistration, calibration,
-                mock(EnrollmentRelay.class), cameraPreview, micPreview);
+                enrollment, cameraPreview, micPreview);
     }
 
     @Test
@@ -99,6 +101,14 @@ class FeWsRoutesTest {
         routes.on(new WsEvents.FeMessage("user_choice", om.readTree("[1,2]")));
 
         verify(agentHub).send(eq("user_choice"), eq(Map.of()));
+    }
+
+    @Test
+    @DisplayName("wakeword_enroll_cancel 은 등록 중계로 넘어간다 — 보이스의 voice_reg_cancel 과 같은 자리")
+    void wakewordCancelIsRouted() throws Exception {
+        routes.on(new WsEvents.FeMessage("wakeword_enroll_cancel", om.readTree("{}")));
+
+        verify(enrollment).cancelWakeword();
     }
 
     @Test

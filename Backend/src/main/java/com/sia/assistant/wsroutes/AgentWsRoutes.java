@@ -97,6 +97,8 @@ public class AgentWsRoutes {
             case "reg_captured" -> registration.onCaptured(d.path("tempId").asText(), d);
             // ---- 온보딩: 이름 불러보기
             case "wakeword_sample" -> enrollment.onWakewordSample(d);
+            // 샘플 거절 · 모델 저장 실패 사유 — FE 가 이것 없이는 멈춘 진행바의 이유를 알 수 없다
+            case "wakeword_rejected" -> enrollment.onWakewordRejected(d);
             case "wakeword_done" -> enrollment.onWakewordDone();
             // ---- 보이스 등록 (5문장) — 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다
             case "voice_ready" -> voiceRegistration.onReady(d.path("tempId").asText());
