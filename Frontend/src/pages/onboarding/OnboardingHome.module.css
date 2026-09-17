@@ -18,6 +18,7 @@
 .card audio { width: 100%; accent-color: var(--color-accent); }
 .card blockquote { margin: 0; padding: var(--spacing-lg); background: var(--setup-panel); width: 100%; }
 .card .error { color: var(--color-danger); }
+.rejection { width: 100%; margin: var(--spacing-sm) 0 0; color: var(--color-danger) !important; font-weight: 700; }
 .connection { color: var(--setup-muted); font-size: var(--font-size-sm); }
 .plot { width: 100%; border: var(--setup-border); background: var(--setup-panel); }
 .plot svg { width: 100%; height: var(--setup-plot-height); }

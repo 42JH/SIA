@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { fetchDevices } from '../../api/devices';
 import { fetchSettings, updateSettings } from '../../api/settings';
 import { activateProfile, deleteProfile, fetchProfiles, remapDevice } from '../../api/profiles';
+import { useOnboardingStore } from '../../store/onboardingStore';
 import styles from './DashboardHome.module.css';
 
 export default function SettingsPanel() {
@@ -36,6 +37,7 @@ export default function SettingsPanel() {
   async function removeAndEnroll(id) { setPending(true); try { await deleteProfile(changeKind, id); startEnrollment(); } catch (e) { setError(e.message); setPending(false); } }
   function startEnrollment() {
     const item = list.find((device) => device.id === selected);
+    if (changeKind === 'mic') useOnboardingStore.getState().resetVoiceEnrollment();
     navigate(`/onboarding?step=${changeKind === 'mic' ? 'micStart' : 'gazeStart'}&mode=${changeKind}`, {
       state: { deviceChange: { kind: changeKind, deviceId: item?.id ?? null, deviceName: item?.name ?? null } },
     });

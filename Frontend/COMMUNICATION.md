@@ -9,7 +9,8 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 기본 설정 | GET /api/settings, GET /api/devices | 설정·장치 목록 표시 |
 | 설정 저장 | PUT /api/settings | 전체 settings와 updatedAt 전송. 장치 이름과 ID 포함 |
 | 앱 등록 | POST /api/apps/scan | 실제 응답 이후 마이크 단계로 이동 |
-| 호출어 | wakeword_enroll_start | wakeword_progress, wakeword_done |
+| 호출어 | wakeword_enroll_start | wakeword_progress, wakeword_rejected, wakeword_done |
+| 마이크 입력 미리보기 | mic_preview_start, mic_preview_stop | mic_preview_state, mic_preview_level |
 | 보이스 | voice_reg_start | voice_sentence, voice_progress, voice_sentence_rejected, voice_quality_warn, voice_review, voice_reg_denied |
 | 보이스 다음 문장 | voice_sentence_next | voice_sentence 수신 후 진행 |
 | 보이스 재시도 | voice_sentence_retry, voice_reg_retry | voice_sentence 수신 후 진행 |
@@ -23,7 +24,9 @@ FE는 `http://127.0.0.1:8080` REST와 `ws://127.0.0.1:8080/ws/fe`만 사용한�
 | 시선 중단 | calib_cancel | 현재 계약에 완료 응답 없음. 전송만 기록 |
 | 연결 상태 | GET /api/status 주기 조회 | agent_status, settings_sync도 반영 |
 
-`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 문장 통과 뒤에는 판독 결과를 확인하고 `voice_sentence_next {tempId}`를 보내야 다음 문장을 받는다. `voice_sentence_rejected`는 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다. 알려진 `TOO_SHORT`·`INCONSISTENT` 코드는 FE 문구를 사용하고, 없거나 모르는 코드는 서버의 `reason`을 사용한다.
+`voiceTempId`는 서버가 제공한 값만 저장·재사용한다. FE가 임의로 생성하지 않는다. 문장은 사용자 확정 원문 5개를 순번에 맞춰 표시한다. 등록 진행률이나 성공을 가짜로 생성하지 않는다. 문장 통과 뒤에는 판독 결과를 확인하고 `voice_sentence_next {tempId}`를 보내야 다음 문장을 받는다. `voice_sentence_rejected`는 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과로 반영하고, 같은 문장의 `voice_sentence_retry`만 허용한다. 알려진 `TOO_SHORT`·`TOO_LONG`·`NOISY`·`INCONSISTENT` 코드는 FE 문구를 사용하고, 없거나 모르는 코드는 서버의 `reason`을 사용한다.
+
+호출어 등록 중 `wakeword_rejected`가 오면 `reason`을 표시하고 순번을 유지한다. `wakeword_progress`가 5/5여도 완료로 처리하지 않으며, `wakeword_done`을 받은 뒤에만 다음 단계로 진행할 수 있다. 호출어·보이스 등록 화면은 `mic_preview_start`로 미리보기를 켜고 `mic_preview_level {seq, level}`을 막대 하나씩 반영하며, 등록 화면을 벗어날 때 `mic_preview_stop`을 보낸다.
 
 시선은 안내 중 받은 점을 보관한 뒤 주 모니터 전체화면의 실제 코 중심 좌표를 물리 픽셀로 보내며, 오차는 서버 결과를 표시한다.
 
