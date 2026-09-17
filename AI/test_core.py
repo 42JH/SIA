@@ -467,6 +467,25 @@ def test_speech_s():
     assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
 
 
+def test_speaker_input_lead():
+    """3 s 크롭을 못 하는 발화는 말소리 앞 여유를 SPEAKER_LEAD_S 로 줄이고 뒤 꼬리는 둔다.
+    앞 여유가 이미 짧거나 배경이 계속 커서 말 시작을 못 가리면 원본 그대로."""
+    from brain import SPEAKER_LEAD_S, speaker_input
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(16000) * 2000).astype(np.int16)   # 말소리 1 s (rms ≈ 2000 > 350)
+    audio = np.concatenate([np.zeros(int(1.9 * 16000), np.int16), loud, np.zeros(int(0.54 * 16000), np.int16)])
+    out, t0, t1 = speaker_input(audio, None)
+    assert abs(len(out) / 16000 - (SPEAKER_LEAD_S + 1.54)) < 0.05   # 앞 1.9 → 0.5 s, 말 1 s + 꼬리 0.54 s 는 그대로
+    assert abs(t0 - (1.9 - SPEAKER_LEAD_S)) < 0.05 and t1 == round(len(audio) / 16000, 2)
+    assert np.array_equal(out, audio[-len(out):])
+    short = audio[int(1.6 * 16000):]                                # 앞 여유 0.3 s — 자를 것 없음
+    assert speaker_input(short, None)[0] is short
+    noisy = (rng.standard_normal(3 * 16000) * 2000).astype(np.int16)  # 배경이 처음부터 큼 — 말 시작을 못 가림
+    out, t0, _ = speaker_input(noisy, None)
+    assert out is noisy and t0 is None
+    assert speaker_input(np.zeros(16000, np.int16), None)[1] is None  # 말소리 없음
+
+
 def test_speaker_accum():
     """짧은 호출어 조각 이어붙이기(185) — 화자 모델 없이 합성 오디오로 버퍼 규칙만 확인.
     조각 길이를 서로 다르게 줘서, 이어붙인 결과 길이만 봐도 어떤 조각이 들어갔는지 알 수 있게 했다."""
@@ -1288,6 +1307,7 @@ if __name__ == "__main__":
     test_mouse_subpixel_accumulator()
     test_wake_first_frame()
     test_speech_s()
+    test_speaker_input_lead()
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
@@ -1298,4 +1318,4 @@ if __name__ == "__main__":
     test_mcp_delegation()
     test_llm_retry()
     test_app_ref_resolution()
-    print("OK - 28/28 통과")
+    print("OK - 29/29 통과")

@@ -49,7 +49,12 @@ WAKE_SHADOW = os.environ.get("WAKE_SHADOW", "") == "1"  # 1이면 점수·판정
 SPEAKER_CROP_BEFORE_S, SPEAKER_CROP_AFTER_S = 1.0, 2.0  # NOTE(튜닝): 화자 인증엔 발화 전체가 아니라 "시아야" 끝(첫 임계 넘음) 앞 1 s + 뒤 2 s 만 넣는다.
                           # 발화 앞뒤에 배경음이 길게 붙으면 목소리 특징이 흐려져 본인도 거부됨(같은 호출이 유사도 0.458 → 0.373 으로 하락).
                           # 앞을 1.7 s 로 늘리거나 앞뒤 1.5 s 씩 잡으면 배경음이 더 들어와 본인 호출을 놓친 사례 있음.
-                          # 발화가 3 s 이하거나 시동어를 못 넘은 발화(세션 안 명령)는 자르지 않는다.
+                          # 발화가 3 s 이하거나 시동어를 못 넘은 발화(세션 안 명령)는 3 s 로 자르지 않고 앞 여유만 줄인다(SPEAKER_LEAD_S).
+SPEAKER_LEAD_S = 0.5  # NOTE(튜닝): 3 s 크롭을 못 하는 발화는 말소리 시작 앞을 이만큼만 남긴다. VAD 앞 여유(≈1.9 s)가 통째로
+                      # 들어가면 짧은 명령은 입력 대부분이 말이 아니라 본인 유사도가 내려간다. 연속 녹음 재생(2026-09-17):
+                      # 본인 명령 68건 임계 0.45 통과 40 → 57, 타인 녹음 130건 4 → 5, 유튜브 3 h 오통과 4 → 4.
+                      # 0.15 s 까지 바짝 떼면 덜 오른다 — 등록 문장도 앞 여유가 붙은 채 임베딩돼서다 (0.3~0.7 s 는 같은 결과).
+                      # 뒤 꼬리(0.55 s)는 그대로 둔다. 3 s 크롭 경로에 더 자르면 오히려 내려간다(−0.03).
 WAKE_LEAD_TRIM_S = 1.3  # NOTE(튜닝): VAD 프리롤 2.0 − 0.7. 통째 점수가 임계 미만이면 앞 1.3 s 를 뗀 오디오로 한 번 더 채점 —
                         # 호출어 앞에 실제 배경이 0.8 s 이상 붙으면 약한 단독 "시아야" 점수가 0.78 → 0.04 로 무너진다 (무음은 무해).
 WAKE_FRAME_S, WAKE_PAD_S = 0.08, 0.97  # 시동어 모델 predict_clip 의 프레임 간격 / 앞 무음 패딩 — 프레임 번호 → 발화 안 시각 환산용
@@ -391,7 +396,8 @@ def load_wake_model():
 
 
 def speaker_input(audio, i_max, lead=0, sr=16000):
-    """화자 인증에 넣을 오디오 → (audio, 시작 s, 끝 s). 시동어를 못 넘었거나(i_max None) 발화가 3 s 이하면 원본 그대로, (None, None).
+    """화자 인증에 넣을 오디오 → (audio, 시작 s, 끝 s). 시동어를 못 넘었거나(i_max None) 발화가 3 s 이하면
+    말소리 시작 앞을 SPEAKER_LEAD_S 만 남기고 자른다. 자를 게 없으면(앞 여유가 이미 짧거나 배경이 계속 커서 말 시작을 못 가림) 원본 그대로, (None, None).
 
     발화 앞뒤(녹음 시작 전 여유분·말 끝난 뒤 꼬리)에 배경음이 길게 붙을수록 목소리 특징(임베딩)이 흐려져 본인 유사도가 내려간다.
     그래서 화자 판정은 항상 호출어 끝 기준 3 s 만 보게 해 VAD 설정 변화와 떼어 놓는다. 호출어 없는 발화(세션 안 명령)는
@@ -399,7 +405,11 @@ def speaker_input(audio, i_max, lead=0, sr=16000):
     """
     win = int((SPEAKER_CROP_BEFORE_S + SPEAKER_CROP_AFTER_S) * sr)
     if i_max is None or len(audio) <= win:
-        return audio, None, None
+        span = speech_span(audio, sr)
+        if span is None or span[0] <= SPEAKER_LEAD_S:
+            return audio, None, None
+        lo = int((span[0] - SPEAKER_LEAD_S) * sr)
+        return audio[lo:], round(lo / sr, 2), round(len(audio) / sr, 2)
     c = int((i_max * WAKE_FRAME_S - WAKE_PAD_S) * sr) + lead  # lead: 재채점에 쓴 오디오가 원본에서 시작한 샘플
     lo = min(max(c - int(SPEAKER_CROP_BEFORE_S * sr), 0), len(audio) - win)
     return audio[lo:lo + win], round(lo / sr, 2), round((lo + win) / sr, 2)
