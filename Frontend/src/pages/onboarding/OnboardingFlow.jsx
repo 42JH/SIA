@@ -11,9 +11,36 @@ import GazeMeasurement from '../../components/onboarding/GazeMeasurement';
 import VoiceEnrollment from '../../components/onboarding/VoiceEnrollment';
 import MicLevelWaveform from '../../components/onboarding/MicLevelWaveform';
 import { useMicPreview } from '../../hooks/useMicPreview';
+import logo from '../../assets/sia-logo.png';
+import onboardingOrb from '../../assets/onboarding-orb.png';
 import styles from './OnboardingHome.module.css';
 
 import { ENROLLMENT_SENTENCES as sentences } from './enrollmentConstants';
+
+function MicGraphic() {
+  return <div className={styles.micGraphic} aria-hidden="true"><span /><i /><b /></div>;
+}
+
+function CheckGraphic() {
+  return <div className={styles.checkGraphic} aria-hidden="true"><span>✓</span></div>;
+}
+
+function WelcomeOrb() {
+  return <div className={styles.welcomeOrb} aria-hidden="true"><img src={onboardingOrb} alt="" /></div>;
+}
+
+function FrameChrome() {
+  return (
+    <svg className={styles.frameChrome} viewBox="0 0 920 550" preserveAspectRatio="none" aria-hidden="true">
+      <path className={styles.frameSurface} d="M25 2H895L918 25V525L895 548H25L2 525V25L25 2Z" />
+      <path className={styles.frameGuide} d="M70 516H250" />
+    </svg>
+  );
+}
+
+function FrameTitle({ children }) {
+  return <h1 className={styles.frameTitle}>{children}</h1>;
+}
 
 export default function OnboardingFlow() {
   useOnboarding();
@@ -106,15 +133,6 @@ export default function OnboardingFlow() {
       change({ pending: false });
     });
   }
-  async function discover() {
-    await run(async () => {
-      const list = await fetchDevices();
-      setDevices(list);
-      setMic((current) => list.mics.some((d) => d.id === current) ? current : '');
-      setCamera((current) => list.cameras.some((d) => d.id === current) ? current : '');
-      change({ pending: false });
-    });
-  }
   async function save() {
     await run(async () => {
       try { setConfig(await updateSettings({ settings: { ...config.settings, wakeWord: name, micDevice: label(mic, 'mics'), micDeviceId: mic || null, cameraDevice: label(camera, 'cameras'), cameraDeviceId: camera || null }, updatedAt: config.updatedAt })); }
@@ -142,16 +160,16 @@ export default function OnboardingFlow() {
   useEffect(() => {
     if (f.step !== 'measuring' && document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }, [f.step]);
-  const btn = (text, action, disabled = false) => <button onClick={action} disabled={disabled || f.pending}>{text}</button>;
+  const btn = (text, action, disabled = false, tone = 'primary') => <button className={styles[tone]} onClick={action} disabled={disabled || f.pending}>{text}</button>;
   const foot = (children) => <footer className={styles.footer}>{children}</footer>;
-  const center = (children) => <div className={styles.center}>{children}</div>;
-  const done = (title, message, action) => <><h1>{title}</h1>{center(<><div className={styles.icon}>✓</div><h2>{title} 완료!</h2><p>{message}</p></>)}{foot(action)}</>;
+  const center = (children, className = '') => <div className={`${styles.center} ${className}`}>{children}</div>;
+  const done = (title, heading, message, action) => <><FrameTitle>{title}</FrameTitle>{center(<><CheckGraphic /><h2>{heading}</h2><p>{message}</p></>, styles.doneCenter)}{foot(action)}</>;
   let content;
   switch (f.step) {
-    case 'welcome': content = <><h1>SIA</h1>{center(<><div className={styles.icon}>S</div><h2>SIA</h2><p>당신의 AI 비서</p>{btn('SIA 시작하기', basic)}</>)}</>; break;
-    case 'basic': content = <><h1>기본 설정</h1><div className={styles.fields}><label>비서 이름<input value={name} readOnly aria-readonly="true" /></label>{[['mics', '마이크 선택', mic, setMic], ['cameras', '카메라 선택 (내장 / 외장)', camera, setCamera]].map(([kind, title, value, setter]) => <label key={kind}>{title}<select value={value} onChange={(e) => setter(e.target.value)}><option value="">시스템 기본 장치</option>{devices[kind].map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? " (기본)" : ""}</option>)}</select></label>)}{btn('장치 목록 새로고침', discover)}{!config && btn('설정 다시 불러오기', basic)}</div>{foot(btn('다음', save, !config))}</>; break;
-    case 'micStart': content = <><h1>마이크 설정</h1>{center(<><h2>마이크 설정을 시작합니다</h2><div className={styles.icon}>♩</div></>)}{foot(<>{isMicOnly ? btn('취소', cancelMicEnrollment) : btn('건너뛰기', () => go('gazeStart'))}{btn('시작하기', () => send('wakeword_enroll_start', {}, { step: 'wake', wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null, pending: false }), !ready)}</>)}</>; break;
-    case 'wake': content = <><h1>이름 불러보기</h1>{center(<><h2>"시아야" 라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p><MicLevelWaveform levels={micPreview.levels} />{f.wakeRejection && <p className={styles.rejection} role="status">{f.wakeRejection.reason}</p>}{micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>)}{foot(btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone))}</>; break;
+    case 'welcome': content = <div className={styles.welcomeContent}><div className={styles.welcomeCopy}><h1>어서오세요!</h1><span className={styles.titleRule} /><h2>SIA</h2><p>당신의 AI 비서</p></div><WelcomeOrb />{btn('SIA 시작하기', basic)}</div>; break;
+    case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>비서 이름<input value={name} readOnly aria-readonly="true" /></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config))}</>; break;
+    case 'micStart': content = <><FrameTitle>마이크 설정</FrameTitle>{center(<><p className={styles.lead}>마이크 설정을 시작합니다</p><MicGraphic /></>, styles.startCenter)}{foot(<>{isMicOnly && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isMicOnly && btn('건너뛰기', () => go('gazeStart'), false, 'secondary')}{btn('시작하기', () => send('wakeword_enroll_start', {}, { step: 'wake', wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null, pending: false }), !ready)}</>)}</>; break;
+    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<><h2>“시아야”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p><MicLevelWaveform levels={micPreview.levels} />{f.wakeRejection && <p className={styles.rejection} role="status">{f.wakeRejection.reason}</p>}{micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone))}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
       content = <VoiceEnrollment mode="recording" current={current} total={5} sentence={sentences[current - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} micLevels={micPreview.levels} />; break;
@@ -167,19 +185,22 @@ export default function OnboardingFlow() {
         : send('voice_sentence_next', { tempId }, { step: 'voice', voiceSentence: null, voiceResult: null, finalVoiceReview: null });
       content = <VoiceEnrollment mode="review" review={review ?? {}} current={current} total={5} rejected={review?.rejected === true} ready={ready} pending={f.pending} canRetry={Boolean(tempId)} canAccept={current < 5 || Boolean(f.finalVoiceReview)} onRetry={retry} onAccept={accept} />; break;
     }
-    case 'micDone': content = done('마이크 설정', '목소리 등록이 완료되었습니다', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;
-    case 'gazeStart': content = <><h1>시선 설정</h1>{center(<><h2>시선 설정을 시작합니다</h2><div className={styles.icon}>◎</div></>)}{foot(btn('시작하기', () => send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, poorCount: 0, gazeWaitingSince: Date.now(), gazeDelayed: false, pending: false }), !ready))}</>; break;
-    case 'position': content = <><h1>위치 확인</h1>{center(<><p>앉아야 할 자리에 앉아주세요</p><p>화면을 정면으로 바라보고 바른 자세로 앉아주세요</p><p>서버 확인값 — 얼굴: {f.precheck ? (f.precheck.face ? '인식됨' : '미인식') : '확인 중'} · 거리: {f.precheck?.distance ?? '확인 중'} · 조명: {f.precheck?.lighting ?? '확인 중'}</p></>)}{f.gazeDelayed && <p role="status">위치 확인 응답이 지연되고 있습니다. 카메라 설정과 AI 상태를 확인해주세요.</p>}{foot(<>{btn('카메라 설정', cameraSettings, !connected)}{btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', gazeWaitingSince: null, gazeDelayed: false, pending: false }), !connected)}{btn('다음', () => go('gazeGuide'), !ready || !f.point || !f.precheck?.face || f.precheck.distance !== 'ok' || f.precheck.lighting !== 'ok')}</>)}</>; break;
-    case 'gazeGuide': content = center(<><div className={styles.icon}>◎</div><h2>시선 측정을 시작하겠습니다</h2><p>화면에 튀어나오는 두더지의 코를 바라보면 됩니다.<br />약 1분 정도 걸립니다.</p><div className={styles.preview}>· 화면과 60~80cm 거리를 유지해주세요<br />· 보정 중에는 고개를 크게 움직이지 마세요<br />· 안경을 쓴다면 평소 사용하는 상태로 진행해주세요</div><div className={styles.actions}>{btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', pending: false }), !ready)}{btn('시작하기', () => measure(), !ready)}</div></>); break;
-    case 'measuring': content = <GazeMeasurement point={f.point} ready={ready} connected={connected} onCancel={() => send('calib_cancel', {}, { step: 'gazeStart', pending: false })} />; break;
+    case 'micDone': content = done('마이크 설정', '마이크 설정 완료!', '목소리 등록이 완료되었습니다.', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;
+    case 'gazeStart': content = <><FrameTitle>시선 설정</FrameTitle>{center(<><p className={styles.lead}>시선 설정을 시작합니다</p><div className={styles.gazeStartGraphic} aria-hidden="true"><span className={styles.scopeOuter} /><span className={styles.scopeMiddle} /><span className={styles.scopeInner} /><i className={styles.scopeCross} /><b className={styles.scopeDot} /></div></>, styles.startCenter)}{foot(btn('시작하기', () => send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, poorCount: 0, gazeWaitingSince: Date.now(), gazeDelayed: false, pending: false }), !ready))}</>; break;
+    case 'position': content = <><FrameTitle>위치 확인</FrameTitle>{center(<div className={styles.cameraPreview}><span className={styles.cameraLive}>● CAMERA LIVE</span><div className={styles.personGuide}><i /><b /></div><p>얼굴이 원 안에 들어오도록 위치해주세요</p><small>얼굴: {f.precheck ? (f.precheck.face ? '인식됨' : '미인식') : '확인 중'} · 거리: {f.precheck?.distance ?? '확인 중'} · 조명: {f.precheck?.lighting ?? '확인 중'}</small></div>, styles.positionCenter)}{f.gazeDelayed && <p className={styles.inlineNotice} role="status">위치 확인 응답이 지연되고 있습니다. 카메라 설정과 AI 상태를 확인해주세요.</p>}{foot(<>{btn('카메라 설정', cameraSettings, !connected, 'secondary')}{btn('다음', () => go('gazeGuide'), !ready || !f.point || !f.precheck?.face || f.precheck.distance !== 'ok' || f.precheck.lighting !== 'ok')}</>)}</>; break;
+    case 'gazeGuide': content = <><FrameTitle>시선 측정</FrameTitle>{center(<><div className={styles.guideGraphic}>◎</div><h2>시선 측정을 시작하겠습니다</h2><p>화면에 나타나는 두더지의 코를 바라보면 됩니다.<br />화면과 60~80cm 거리를 유지하고 고개를 크게 움직이지 마세요.</p></>, styles.guideCenter)}{foot(<>{btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', pending: false }), !ready, 'secondary')}{btn('시작하기', () => measure(), !ready)}</>)}</>; break;
+    case 'measuring': content = <GazeMeasurement point={f.point} ready={ready} />; break;
     case 'result': {
       const r = f.result; const poor = r.grade === 'poor'; const exhausted = f.poorCount >= 3 || r.remeasuresLeft === 0;
       const extent = Math.max(100, ...(r.points ?? []).flatMap((p) => [Math.abs(p.dx), Math.abs(p.dy)])) * 1.2;
-      content = <><h1>시선 학습 결과</h1>{center(<><div className={styles.plot}><svg viewBox={`${-extent} ${-extent} ${extent * 2} ${extent * 2}`} aria-label="목표점 기준 시선 오차 분포"><circle cx="0" cy="0" r={extent / 40} className={styles.target} />{r.points?.map((p) => <circle key={p.n} cx={p.dx} cy={p.dy} r={extent / 30} />)}</svg><p>점: 목표 지점 · 원: 실제 측정된 시선 위치 (오차)</p></div><h2>오차 범위 : {{ excellent: '우수', good: '양호', poor: '나쁨' }[r.grade] ?? '미제공'}</h2>{poor && <p>{exhausted ? '지속적으로 큰 오차가 발생하고 있습니다. 카메라 설정을 확인한 후 다시 측정해주십시오.' : '오차가 다소 큽니다. 시선을 다시 측정해주세요.'}</p>}<p>남은 재측정: {r.remeasuresLeft}회</p></>)}{foot(<>{exhausted && poor ? btn('카메라 설정', cameraSettings, !connected) : btn('다시 측정', () => measure(true), !ready || !r.remeasuresLeft)}{!poor && btn('계속 진행', () => send('calib_commit', selectedDeviceLabel('camera') ? { deviceLabel: selectedDeviceLabel('camera') } : {}), !ready || r.pass !== true)}</>)}</>; break;
+      const average = r.avgErrorPx == null ? '미제공' : `${Math.round(r.avgErrorPx)}px`;
+      const maximum = r.maxErrorPx == null ? '미제공' : `${Math.round(r.maxErrorPx)}px`;
+      content = <><FrameTitle>시선 측정 결과</FrameTitle>{center(<div className={styles.resultBoard}><span className={styles.cameraLive}>● CAMERA LIVE</span><div className={styles.plot}><svg viewBox={`${-extent} ${-extent} ${extent * 2} ${extent * 2}`} aria-label="목표점 기준 시선 오차 분포"><circle cx="0" cy="0" r={extent / 9} className={styles.guideCircle} /><circle cx="0" cy="0" r={extent / 40} className={styles.target} />{r.points?.map((p) => <circle key={p.n} cx={p.dx} cy={p.dy} r={extent / 30} />)}</svg></div><h2>평균 오차 {average} · 최대 오차 {maximum}</h2><strong>오차 범위 : {{ excellent: '우수', good: '양호', poor: '나쁨' }[r.grade] ?? '미제공'}</strong>{poor && <p>{exhausted ? '지속적으로 큰 오차가 발생했습니다. 카메라 설정을 다시 확인해주세요.' : '오차가 다소 큽니다. 시선을 다시 측정해주세요.'}</p>}</div>, styles.resultCenter)}{foot(<>{exhausted && poor ? btn('카메라 설정', cameraSettings, !connected) : btn('다시 측정', () => measure(true), !ready || !r.remeasuresLeft, 'secondary')}{!poor && btn('계속 진행', () => send('calib_commit', selectedDeviceLabel('camera') ? { deviceLabel: selectedDeviceLabel('camera') } : {}), !ready || r.pass !== true)}</>)}</>; break;
     }
-    case 'gazeDone': content = done('시선 설정', '시선 학습이 완료되었습니다', isCameraOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('camera')) : btn('다음', () => go('done'))); break;
-    default: content = done('설정', '이제 SIA를 시작할 수 있습니다.', <Link className={styles.linkButton} to="/dashboard">완료</Link>);
+    case 'gazeDone': content = done('시선 설정', '시선 설정 완료!', '시선 학습이 완료되었습니다.', isCameraOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('camera')) : btn('다음', () => go('done'))); break;
+    default: content = done('설정 완료', '완료!', '이제 SIA를 시작할 수 있습니다.', <Link className={styles.linkButton} to="/dashboard">완료</Link>);
   }
-  const cardClassName = ['voice', 'voiceProcessing', 'voiceReview'].includes(f.step) ? `${styles.card} ${styles.wideCard}` : styles.card;
-  return <main className={styles.page}><section className={cardClassName} aria-label="첫 설정">{content}{f.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{f.request?.delayed && <p role="status">{f.request.type} 응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요. 응답이 도착하면 계속 진행합니다.</p>}{f.connectionError && <p className={styles.error} role="alert">{f.connectionError}</p>}{f.error && <p className={styles.error} role="alert">{f.error}</p>}{f.interrupted && btn('처음부터 다시 설정', () => { change({ interrupted: false }); go('welcome'); }, !connected)}</section><p className={styles.connection}>실시간 연결: {connected ? '연결됨' : '대기 중'} · AI: {f.status?.agentConnected ? '연결됨' : '대기 중'}</p></main>;
+  const stepClassName = styles[`step_${f.step}`] ?? '';
+  const wide = ['voice', 'voiceProcessing', 'voiceReview', 'position', 'gazeGuide', 'result'].includes(f.step);
+  return <main className={styles.page}><section className={`${styles.card} ${wide ? styles.wideCard : ''} ${stepClassName}`} aria-label="첫 설정"><FrameChrome /><img className={styles.logo} src={logo} alt="SIA" />{content}<div className={styles.systemMessages}>{f.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{f.request?.delayed && <p role="status">{f.request.type} 응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요.</p>}{f.connectionError && <p className={styles.error} role="alert">{f.connectionError}</p>}{f.error && <p className={styles.error} role="alert">{f.error}</p>}{f.interrupted && btn('처음부터 다시 설정', () => { change({ interrupted: false }); go('welcome'); }, !connected, 'secondary')}</div></section><p className={styles.connection}>실시간 연결: {connected ? '연결됨' : '대기 중'} · AI: {f.status?.agentConnected ? '연결됨' : '대기 중'}</p></main>;
 }

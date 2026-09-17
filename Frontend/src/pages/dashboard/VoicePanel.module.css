@@ -51,7 +51,7 @@ button:disabled { cursor: default; opacity: .45; }
 .voiceCard:has(> input) { grid-template-columns: 28px minmax(180px, 1.4fr) minmax(110px, 1fr) auto; }
 .voiceCard > input { width: 25px; height: 25px; margin: 0; accent-color: var(--voice-navy); }
 .cardAudio { display: flex; min-width: 0; align-items: center; gap: 10px; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
-.cardAudio > span, .liveAudio > span, .reviewAudio > span { display: grid; width: 58px; height: 58px; flex: 0 0 auto; place-items: center; border: 2px solid var(--voice-navy); border-radius: 50%; }
+.cardAudio > span, .liveAudio > span, .reviewMicButton > span { display: grid; width: 58px; height: 58px; flex: 0 0 auto; place-items: center; border: 2px solid var(--voice-navy); border-radius: 50%; }
 .voiceInfo { display: grid; min-width: 0; gap: 6px; color: var(--voice-navy); text-align: left; }
 .nameRow { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .nameRow strong { min-width: 0; }
@@ -92,7 +92,9 @@ button:disabled { cursor: default; opacity: .45; }
 .previewError { margin: 8px 0 0; color: #a32838; font-size: 13px; text-align: left; }
 .actionRow { display: flex; justify-content: center; gap: 16px; margin-top: 32px; }
 .actionRow button { min-width: 160px; }
-.reviewAudio { display: grid; width: 100%; min-height: 84px; grid-template-columns: 64px 1fr 58px; align-items: center; gap: 14px; margin-top: 28px; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.reviewAudio { display: grid; width: 100%; min-height: 84px; grid-template-columns: 64px 1fr 58px; align-items: center; gap: 14px; margin-top: 28px; color: var(--voice-navy); }
+.reviewMicButton { display: grid; width: 58px; height: 58px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.reviewMicButton:disabled { cursor: default; opacity: .58; }
 .reviewAudio time { color: #6f91ca; font-size: 17px; }
 .qualityRow { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 0 24px; border: 1px solid #a9c0eb; border-radius: 4px; }
 .qualityRow span { color: #7392c7; }
