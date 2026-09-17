@@ -70,8 +70,9 @@ def assistant(profile=PROFILE, act=True):
                 link.close()
 
 
-def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0):
-    """무한 워커를 큐가 비는 순간 중단한다. 게이트·실행·통계는 실제 메서드를 쓴다."""
+def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
+    """무한 워커를 큐가 비는 순간 중단한다. 게이트·실행·통계는 실제 메서드를 쓴다.
+    fails=True 면 처리 중 예외로 끝나 "오류:" 안내가 뜨는 발화다(Gemini 호출 실패 등)."""
     class Done(BaseException):
         pass
 
@@ -85,7 +86,7 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0):
         except Done:
             pass
     assert brain.busy == 0
-    assert not any(str(call.args[0]).startswith("오류:") for call in brain.overlay.toast.call_args_list)
+    assert fails == any(str(call.args[0]).startswith("오류:") for call in brain.overlay.toast.call_args_list)
 
 
 def events(link, kind=None):
@@ -199,7 +200,7 @@ def test_success_pair_session_latency_and_rest_contract():
         link.call.side_effect = call
         utter(brain)
         assert events(link) == [
-            {"kind": "voice", "sessionId": 128, "profileId": 7, "accuracy": 0.877, "action": "open_app"},
+            {"kind": "voice", "sessionId": 128, "profileId": 7, "accuracy": 1.0, "action": "open_app"},
             {"kind": "command", "sessionId": 128, "action": "open_app", "complexity": "SIMPLE", "latencyMs": 2750}]
         assert [c.args[0] for c in link.call.call_args_list] == ["session.extend", "app.list", "app.launch"]
         brain._ask.assert_not_called()
@@ -226,16 +227,43 @@ def test_llm_complex_and_zero_utterance_start():
         brain._ask.assert_called_once()
         assert events(link, "command") == [{"kind": "command", "action": "answer", "sessionId": 128,
                                             "complexity": "COMPLEX", "latencyMs": 2500}]
+        assert events(link, "voice")[0]["accuracy"] == 1.0
 
 
-def test_unregistered_and_disabled_accuracy_omitted():
-    for profile in (None, (None, 0.45, None, None)):
+def test_accuracy_is_command_success_rate():
+    """음성 인식 정확도 = 명령으로 인식된 발화(1단 라우터 적중·Gemini 명령 판정) 중 실제 실행까지 간 비율.
+    voice 이벤트에 성공 1.0 / 실패 0.0 을 싣는다. 화자 등록 여부와 무관하고 유사도는 보내지 않는다.
+    Gemini 호출 실패는 명령으로 인식되기 전이라 세지 않는다."""
+    for profile in (PROFILE, None, (None, 0.45, None, None)):
         with assistant(profile) as (brain, link, _):
-            utter(brain)
-            assert events(link, "voice") == [{"kind": "voice", "sessionId": 128, "action": "open_app"}]
-            assert len(events(link, "command")) == 1
-            if brain.speaker:
+            utter(brain)                                     # 1단 라우터 성공
+            utter(brain, command("answer"), started=11.0)    # 2단 성공
+            utter(brain, command("none"), started=12.0)      # 2단 — 명령을 못 알아들음
+            brain._ask.side_effect = RuntimeError("쿼터 소진")
+            utter(brain, started=13.0, fails=True)           # Gemini 호출 실패 — 기록 없음
+            owner = {"profileId": 7} if profile is PROFILE else {}
+            assert events(link, "voice") == [
+                {"kind": "voice", "sessionId": 128, **owner, "accuracy": 1.0, "action": "open_app"},
+                {"kind": "voice", "sessionId": 128, **owner, "accuracy": 1.0, "action": "answer"},
+                {"kind": "voice", "sessionId": 128, **owner, "accuracy": 0.0, "action": "none"}]
+            assert len(events(link, "command")) == 2
+            if profile is not PROFILE and brain.speaker:
                 brain.speaker.verify.assert_not_called()
+
+    with assistant() as (brain, link, _):  # 실행 중 예외도 실패로 남는다 — voice 이벤트가 사라지지 않는다
+        def call(tool, args=None):
+            if tool == "browser.search":
+                raise RuntimeError("BE 응답 이상")
+            return True, {}
+
+        link.call.side_effect = call
+        try:
+            brain._execute(command("web_search", query="날씨"), None, t_utter=10.0, profile=PROFILE)
+            raise AssertionError("실행 예외가 삼켜졌다")
+        except RuntimeError:
+            pass
+        assert events(link) == [{"kind": "voice", "sessionId": 128, "profileId": 7,
+                                 "accuracy": 0.0, "action": "web_search"}]
 
 
 def test_profile_snapshot_and_accumulated_similarity():
@@ -253,7 +281,6 @@ def test_profile_snapshot_and_accumulated_similarity():
         assert brain.speaker.verify.call_count == 2
         assert len(brain.speaker.verify.call_args.args[0]) == len(AUDIO) * 2
         assert events(link, "voice")[0]["profileId"] == 7
-        assert events(link, "voice")[0]["accuracy"] == 0.765
         assert not events(link, "voice-rejected")
 
 
@@ -275,15 +302,6 @@ def test_verification_error_blocks_but_unregistered_passes():
     assert verifier.verify(AUDIO) == (True, None)                # 미등록 — 임베딩을 뽑지도 않는다
 
 
-def test_measurement_failure_never_becomes_accuracy():
-    for replies in ([(True, None)], [(False, 0.3), (True, None)]):
-        with assistant() as (brain, link, _):
-            brain.speaker.verify.side_effect = replies
-            utter(brain)
-            assert "accuracy" not in events(link, "voice")[0]
-            assert len(events(link, "command")) == 1
-
-
 def test_verification_error_blocks_utterance_and_next_one_runs():
     """인증 오류 발화는 조각 누적·STT·LLM·실행 어디로도 가지 않는다.
     타인 거부로 기록하지 않고 안내만 보내며, 다음 정상 발화는 평소대로 처리된다."""
@@ -301,7 +319,6 @@ def test_verification_error_blocks_utterance_and_next_one_runs():
         brain.speaker.verify.return_value = (True, 0.87654)
         utter(brain, started=11.0)
         assert len(events(link, "command")) == 1
-        assert events(link, "voice")[0]["accuracy"] == 0.877
 
         # 단독 불일치 뒤 재판정까지 오류로 끝나면(유사도 없음) 타인 거부가 아니라 오류 안내로 끝난다
         before = len(link._send.call_args_list)
@@ -312,6 +329,7 @@ def test_verification_error_blocks_utterance_and_next_one_runs():
         assert after == ["notice"]                   # voice_rejected 없음
         assert not events(link, "voice-rejected")
         assert len(events(link, "command")) == 1
+        assert len(events(link, "voice")) == 1       # 오류 발화는 정확도 분모에도 들지 않는다
 
 
 def test_only_long_fresh_final_rejection_emits_ws_and_rest():
@@ -392,11 +410,13 @@ def test_confirmation_records_original_task_only_after_approval():
         with assistant() as (brain, link, clock), patch("brain.window_title_of", return_value="창"):
             utter(brain, command(action, **fields), hwnd=42)
             assert brain._pending and len(events(link, "voice")) == 1 and not events(link, "command")
+            assert "accuracy" not in events(link, "voice")[0]  # 질문만 띄웠다 — 성패는 승인 발화에서 센다
             assert not any(c.args[0] in ("window.close", "files.delete") for c in link.call.call_args_list)
             clock.now, link.be_session_id = 18.0, 256
             utter(brain, command("confirm_yes"), started=16.0, hwnd=99)
             assert brain._pending is None and len(events(link, "voice")) == 2
             assert events(link, "voice")[-1]["sessionId"] == 256
+            assert events(link, "voice")[-1]["accuracy"] == 1.0
             assert events(link, "command") == [{"kind": "command", "action": action, "sessionId": 128,
                                                 "complexity": "COMPLEX", "latencyMs": 4000}]
             if action == "window":  # 동작은 BE 몫 — 로컬 close_window 는 이제 없다
@@ -415,6 +435,8 @@ def test_confirmation_cancel_expiry_and_no_pending():
             assert not any(c.args[0] == "window.close" for c in link.call.call_args_list)
             assert all(e["action"] == "confirm_no" for e in events(link, "command"))
             assert len(events(link, "command")) == int(reply == "confirm_no")
+            # 취소는 알아듣고 끝낸 명령(1.0), 만료·대기 없음의 승인은 끝내지 못한 명령(0.0)
+            assert events(link, "voice")[-1]["accuracy"] == float(reply == "confirm_no")
 
 
 def test_no_actions_never_records_completion():
@@ -432,6 +454,7 @@ def test_media_and_session_end_router_paths():
             brain.router.transcribe.return_value = (text, 0.5)
             utter(brain)
             assert len(events(link, "voice")) == 1
+            assert events(link, "voice")[0]["accuracy"] == 1.0  # 1단 라우터 명령도 정확도에 든다
             assert events(link, "command")[0]["action"] == action
             assert events(link, "command")[0]["complexity"] == "SIMPLE"
             assert events(link, "command")[0]["sessionId"] == 128
@@ -472,6 +495,7 @@ def test_unexecuted_actions_and_local_mode():
         with assistant() as (brain, link, _):
             utter(brain, result)
             assert len(events(link, "voice")) == 1 and not events(link, "command")
+            assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):  # BE 가 막으면 로컬로 대신 열지 않고 사실대로 말한다
         link.call.side_effect = None
         link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
@@ -479,6 +503,7 @@ def test_unexecuted_actions_and_local_mode():
         # BE 가 이유를 말해 줬으면 그대로 전한다 — '연결 안 됨'으로 뭉뚱그리면 원인을 못 찾는다
         assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 검색 실패"
         assert not events(link, "command")
+        assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):
         brain.link = None
         brain.session_until = 100.0  # BE 없이 도는 경우 — 세션은 로컬 미러가 들고 있다
