@@ -74,7 +74,7 @@ function calendarSummary(kind, buckets, fallback, period) {
     return { ...fallback, total, voiceTotal, gestureTotal, average: available.length ? Number((total / available.length).toFixed(1)) : 0, peak: peakBucket ? { label: peakBucket.label, count: peakBucket.count } : null };
   }
   if (!['week', 'year'].includes(period)) return fallback;
-  if (kind === 'accuracy') return { voice: averageOf(buckets, 'voice'), gaze: averageOf(buckets, 'gaze'), motion: averageOf(buckets, 'motion') };
+  if (kind === 'accuracy') return { voice: averageOf(buckets, 'voice'), motion: averageOf(buckets, 'motion') };
   if (kind === 'latency') {
     const simpleMs = averageOf(buckets, 'simpleMs'); const complexMs = averageOf(buckets, 'complexMs');
     const all = [simpleMs, complexMs].filter((value) => value != null);
@@ -92,13 +92,22 @@ export default function DashboardHome() {
   useEffect(() => { if (view === 'home') load(fetchDashboardOverview, setOverview); }, [view]);
   useEffect(() => { if (details[view]) load(() => details[view][2](period), setDetail); }, [view, period]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
-  const open = (next) => { if (next !== 'gestures') useGestureStore.getState().closeRegistration(); setMenu(false); setError(''); if (details[next]) { setPeriod('day'); setDetail(null); } navigate(next === 'home' ? '/dashboard' : `/dashboard?view=${next}`); };
+  const open = (next) => { if (next !== 'gestures') useGestureStore.getState().closeRegistration(); setMenu(false); setError(''); if (details[next]) { setPeriod('day'); setDetail(null); } navigate(next === 'home' ? '/dashboard' : `/dashboard?view=${next}`, { state: { previousDashboardView: view } }); };
   const registrationTitle = registration?.stage === 'complete' || registration?.stage === 'form' ? '제스처 등록' : registration?.stage === 'review' ? '촬영 결과' : '제스처 촬영';
   const panelTitle = view === 'gestures' ? (registration ? registrationTitle : '제스처') : view === 'voice' ? '보이스' : '시선';
-  const back = () => { if (view === 'gestures' && registration) { useGestureStore.getState().closeRegistration(); return; } open('home'); };
+  const back = () => {
+    if (view === 'gestures' && registration) { useGestureStore.getState().closeRegistration(); return; }
+    const previous = location.state?.previousDashboardView;
+    if (previous && previous !== view && views.includes(previous)) {
+      if (view !== 'gestures') useGestureStore.getState().closeRegistration();
+      navigate(previous === 'home' ? '/dashboard' : `/dashboard?view=${previous}`, { replace: true, state: null });
+      return;
+    }
+    open('home');
+  };
   return <main className={`${styles.page} ${styles[`view_${view}`] ?? ''}`}>
     <header className={styles.header}><button className={styles.brand} onClick={() => open('home')} aria-label="대시보드 홈"><SiaLogo /></button><span />{!(registration && ['form', 'complete'].includes(registration.stage)) && <button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴"><i /><i /><i /></button>}</header>
-    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
+    {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['home', '대시보드'], ['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
     <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
       {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} />}
@@ -112,6 +121,7 @@ function Intro({ title, description, eyebrow = '' }) { return <div className={st
 function Label({ overline, title, description }) { return <div className={styles.cardLabel}><small>{overline}</small><strong>{title}</strong>{description && <p>{description}</p>}</div>; }
 function SiaLogo() { return <img src={siaLogo} alt="SIA" />; }
 function NavIcon({ kind }) {
+  if (kind === 'home') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><path d="M8 29 32 8l24 21v27H39V39H25v17H8Z" /><path d="M18 22V11h9" /></svg>;
   if (kind === 'gestures') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><path d="M20 30V16a4 4 0 0 1 8 0v11-16a4 4 0 0 1 8 0v16-13a4 4 0 0 1 8 0v15-9a4 4 0 0 1 8 0v19c0 13-8 21-20 21S12 52 12 40v-8a4 4 0 0 1 8 0v5" /></svg>;
   if (kind === 'voice') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><rect x="23" y="7" width="18" height="34" rx="9" /><path d="M15 34v2c0 10 7 17 17 17s17-7 17-17v-2M32 53v9M23 62h18" /></svg>;
   if (kind === 'gaze') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="20" /><path d="M32 1v18M32 45v18M1 32h18M45 32h18M32 20v24" /><circle className={styles.gazeDot} cx="43" cy="23" r="3.4" /></svg>;
@@ -120,7 +130,7 @@ function NavIcon({ kind }) {
 
 function Overview({ data, open }) {
   if (!data) return null;
-  const accuracy = [['음성 인식 정확도', data.accuracy?.voice], ['시선처리 정확도', data.accuracy?.gaze], ['모션인식 정확도', data.accuracy?.motion]];
+  const accuracy = [['음성 인식 정확도', data.accuracy?.voice], ['모션인식 정확도', data.accuracy?.motion]];
   const buckets = calendarBuckets(data.usage?.buckets ?? [], 'week'); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
   return <><Intro title="SIA 대시보드" description="AI가 더 편리한 일상을 만들어갑니다." />
     <div className={styles.overviewGrid}>
@@ -137,7 +147,7 @@ function Detail({ kind, data, period, setPeriod, open }) {
   if (!data) return null; const buckets = calendarBuckets(data.buckets ?? [], period); const summary = calendarSummary(kind, buckets, data.summary ?? {}, period);
   return <><div className={styles.detailHead}><button className={styles.detailBack} onClick={() => open('home')}>‹</button><Intro eyebrow="분석" title={details[kind][0]} description={details[kind][1]} /><Periods period={period} setPeriod={setPeriod} /></div>
     <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} />
-      {kind === 'accuracy' && <><Legend items={['음성 인식', '시선처리', '모션인식']} /><LineChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gaze' }, { key: 'motion' }]} /></>}
+      {kind === 'accuracy' && <><Legend items={['음성 인식', '모션인식']} /><LineChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} /></>}
       {kind === 'latency' && <><Legend items={['간단한 작업', '복잡한 작업']} /><BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} /></>}
       {kind === 'usage' && <><Legend items={['보이스', '제스처', '전체 추세']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gesture' }]} lineKey="count" minimumMax={4} valueFormatter={(value) => Math.round(value)} /></>}
       {kind === 'apps' && ((data.items ?? []).length ? <HorizontalBars items={data.items} /> : <Empty />)}
@@ -152,10 +162,9 @@ function ChartHeading({ kind }) {
   return <div className={styles.chartHeading}><b>프로그램 사용 순위</b><small>TOP PROGRAMS / FREQUENCY</small><em>실행 횟수 기준</em></div>;
 }
 function Legend({ items }) { return <div className={styles.legend}>{items.map((item, index) => <span key={item}><i className={styles[`legend${index}`]} />{item}</span>)}</div>; }
-function Summary({ kind, summary }) { const items = kind === 'accuracy' ? [['평균 음성 인식 정확도', percent(summary.voice)], ['평균 시선처리 정확도', percent(summary.gaze)], ['평균 모션인식 정확도', percent(summary.motion)]] : kind === 'latency' ? [['간단한 작업 평균', seconds(summary.simpleMs)], ['복잡한 작업 평균', seconds(summary.complexMs)], ['전체 평균', seconds(summary.overallMs)]] : kind === 'usage' ? [['보이스 사용', `${summary.voiceTotal ?? 0}회`], ['제스처 사용', `${summary.gestureTotal ?? 0}회`], ['전체 사용량', `${summary.total ?? 0}회`]] : [['전체 프로그램 실행 횟수', `${summary.totalLaunches ?? 0}회`], ['가장 많이 사용한 프로그램', summary.topDisplayName ?? '데이터 없음'], ['해당 프로그램 사용 횟수', `${summary.topCount ?? 0}회`]]; return <div className={`${styles.summaryCards} ${styles[`summary_${kind}`]}`}>{items.map(([label, value], index) => <span className={index === 2 ? styles.summaryAccent : ''} key={label}><small>{label}</small><strong>{value}</strong><SummaryVisual kind={kind} index={index} /></span>)}</div>; }
+function Summary({ kind, summary }) { const items = kind === 'accuracy' ? [['평균 음성 인식 정확도', percent(summary.voice)], ['평균 모션인식 정확도', percent(summary.motion)]] : kind === 'latency' ? [['간단한 작업 평균', seconds(summary.simpleMs)], ['복잡한 작업 평균', seconds(summary.complexMs)], ['전체 평균', seconds(summary.overallMs)]] : kind === 'usage' ? [['보이스 사용', `${summary.voiceTotal ?? 0}회`], ['제스처 사용', `${summary.gestureTotal ?? 0}회`], ['전체 사용량', `${summary.total ?? 0}회`]] : [['전체 프로그램 실행 횟수', `${summary.totalLaunches ?? 0}회`], ['가장 많이 사용한 프로그램', summary.topDisplayName ?? '데이터 없음'], ['해당 프로그램 사용 횟수', `${summary.topCount ?? 0}회`]]; return <div className={`${styles.summaryCards} ${styles[`summary_${kind}`]}`}>{items.map(([label, value], index) => <span className={index === items.length - 1 ? styles.summaryAccent : ''} key={label}><small>{label}</small><strong>{value}</strong><SummaryVisual kind={kind} index={index} /></span>)}</div>; }
 function SummaryVisual({ kind, index }) {
-  if (kind === 'accuracy' && index === 1) return <svg viewBox="0 0 64 48"><path d="M4 24s10-14 28-14 28 14 28 14-10 14-28 14S4 24 4 24Z" /><circle cx="32" cy="24" r="7" /></svg>;
-  if (kind === 'accuracy' && index === 2) return <svg viewBox="0 0 64 48"><circle cx="34" cy="8" r="4" /><path d="m30 15 10 6 8-3M31 16l-6 12-9 7M26 28l12 4 6 12M22 22l-9 3" /></svg>;
+  if (kind === 'accuracy' && index === 1) return <svg viewBox="0 0 64 48"><circle cx="34" cy="8" r="4" /><path d="m30 15 10 6 8-3M31 16l-6 12-9 7M26 28l12 4 6 12M22 22l-9 3" /></svg>;
   if ((kind === 'latency' || kind === 'apps') && index === 2 || kind === 'usage' && index === 2) return <svg viewBox="0 0 64 48"><circle cx="32" cy="24" r="17" /><path d="M32 7a17 17 0 0 1 17 17H32Z" /></svg>;
   return <svg viewBox="0 0 72 48"><path d="M4 25h5l3-9 4 20 5-29 5 36 5-27 5 19 5-25 5 31 5-20 4 13 4-9h9" /></svg>;
 }

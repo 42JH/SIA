@@ -37,7 +37,7 @@
 .welcomeCopy h1 { margin: 0; font-size: 36px; letter-spacing: -.055em; }
 .welcomeCopy h2 { margin: 18px 0 3px; font-size: 26px; }
 .welcomeCopy p { margin: 0; font-size: 18px; }
-.welcomeContent > button { grid-column: 2; justify-self: end; }
+.welcomeCopy > button { margin-top: 26px; }
 .welcomeOrb { position: relative; width: 380px; height: 280px; justify-self: center; }
 .welcomeOrb img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .fields { display: grid; gap: 8px; margin-top: 16px; }
@@ -99,4 +99,4 @@
 .error, .rejection { color: #aa293b !important; font-weight: 700; }
 .connection { position: fixed; right: 24px; bottom: 9px; margin: 0; color: #8b9bbc; font-size: 11px; }
 @media (max-width: 1050px) { .page { padding: 18px; } .card { width: min(calc(100vw - 36px), var(--setup-card-width)); } .wideCard, .step_welcome { width: min(calc(100vw - 36px), var(--setup-voice-card-width)); } .welcomeOrb { width: 340px; height: 250px; } .positionCenter, .resultCenter { margin: 0; } }
-@media (max-width: 720px) { .page { padding: 12px; } .card, .wideCard { width: calc(100vw - 24px); min-height: var(--setup-card-height); padding: 88px 24px 28px; } .logo { top: 24px; left: 28px; width: 112px; height: 42px; } .welcomeContent { min-height: 360px; grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; } .welcomeCopy { padding: 0; } .welcomeOrb { width: 230px; height: 230px; } .welcomeContent > button { grid-column: 1; } .fields input, .fields select { height: 58px; } .micGraphic, .gazeStartGraphic { position: relative; top: auto; left: auto; width: 210px; height: 210px; margin: 24px auto; transform: none; } .footer { flex-wrap: wrap; } .footer > * { min-width: 130px; flex: 1; } .cameraPreview, .resultBoard { min-height: 360px; } .systemMessages { right: 24px; left: 24px; } }
+@media (max-width: 720px) { .page { padding: 12px; } .card, .wideCard { width: calc(100vw - 24px); min-height: var(--setup-card-height); padding: 88px 24px 28px; } .logo { top: 24px; left: 28px; width: 112px; height: 42px; } .welcomeContent { min-height: 360px; grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .welcomeCopy { padding: 0; } .welcomeOrb { width: 230px; height: 230px; } .fields input, .fields select { height: 58px; } .micGraphic, .gazeStartGraphic { position: relative; top: auto; left: auto; width: 210px; height: 210px; margin: 24px auto; transform: none; } .footer { flex-wrap: wrap; } .footer > * { min-width: 130px; flex: 1; } .cameraPreview, .resultBoard { min-height: 360px; } .systemMessages { right: 24px; left: 24px; } }

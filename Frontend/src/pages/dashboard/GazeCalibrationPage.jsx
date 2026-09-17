@@ -252,7 +252,7 @@ function CalibrationShell({ title, subtitle = '', children }) {
   return <><header className={styles.topbar}><img src={siaLogo} alt="SIA" /></header><section className={styles.shell}><div className={styles.pageTitle}><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div><span>SMART INTERACTION ASSISTANT<i /></span></div>{children}</section></>;
 }
 
-function FrameMarks() { return <><i className={styles.frameLine} /><i className={styles.frameDots}>•••</i></>; }
+function FrameMarks() { return <i className={styles.frameLine} />; }
 
 function EyeIcon() { return <span className={styles.eyeIcon}><svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="34" /><path d="M20 40s8-11 20-11 20 11 20 11-8 11-20 11S20 40 20 40Z" /><circle cx="40" cy="40" r="6" /></svg></span>; }
 
