@@ -79,7 +79,7 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 
 | code | 나가는 자리 |
 |---|---|
-| `SESSION_REQUIRED` · `REF_NOT_FOUND` · `APP_NOT_REGISTERED` · `APP_PATH_INVALID` · `ELEVATED_WINDOW` · `FILE_NOT_FOUND` | MCP 도구 결과의 `structuredContent.code` (§3.1) |
+| `SESSION_REQUIRED` · `REF_NOT_FOUND` · `APP_NOT_REGISTERED` · `APP_PATH_INVALID` · `ELEVATED_WINDOW` · `FOREGROUND_BLOCKED` · `FILE_NOT_FOUND` | MCP 도구 결과의 `structuredContent.code` (§3.1) |
 | `PROFILE_LIMIT` | WS `error` — `voice_commit` · `calib_commit` 시점에 프로필이 이미 4개인 경우 (§4.2) |
 | `EXTENSION_UNAVAILABLE` | 도구 내부 전용. `browser.dom_text` 의 결과는 `FAILED` 로 나간다 |
 | `MODEL_DOWNLOAD_FAILED` | 쓰이지 않는다. 모델 실패는 WS `model_error` 로 알린다 (§4.3) |
@@ -1550,11 +1550,12 @@ If-None-Match: "8c22b1de44a0…"
 | `APP_NOT_REGISTERED` | 등록되지 않은 앱 |
 | `APP_PATH_INVALID` | 등록된 실행 파일 없음 |
 | `ELEVATED_WINDOW` | 관리자 권한 창 |
+| `FOREGROUND_BLOCKED` | 창을 앞으로 가져오지 못함 (Windows 포그라운드 잠금. 권한 문제가 아니다) |
 | `FILE_NOT_FOUND` | 파일 없음 |
 | `INVALID_REQUEST` | 인자 형식 오류 — 같은 인자로 재시도하면 또 실패한다. 인자를 고쳐 다시 호출해야 한다 |
 | `FAILED` | 그 외 실패 (실행 자체가 실패) |
 
-`code` 는 위 8개뿐이다. 앞의 6개는 정책 게이트가 막은 것으로 `tool_call.outcome = BLOCKED` 이고, `INVALID_REQUEST` 와 `FAILED` 는 둘 다 `outcome = FAILED` 로 기록된다 — 기록의 어휘는 세 값(`EXECUTED` · `BLOCKED` · `FAILED`)뿐이고, `INVALID_REQUEST` 는 LLM 이 읽는 결과 코드에만 나타난다.
+`code` 는 위 9개뿐이다. 앞의 7개는 정책 게이트가 막은 것으로 `tool_call.outcome = BLOCKED` 이고, `INVALID_REQUEST` 와 `FAILED` 는 둘 다 `outcome = FAILED` 로 기록된다 — 기록의 어휘는 세 값(`EXECUTED` · `BLOCKED` · `FAILED`)뿐이고, `INVALID_REQUEST` 는 LLM 이 읽는 결과 코드에만 나타난다.
 
 `INVALID_REQUEST` 가 나는 자리는 다음과 같다.
 
@@ -1673,9 +1674,13 @@ If-None-Match: "8c22b1de44a0…"
 | 실패 | `code` | `message` |
 |---|---|---|
 | 없는 ref | `REF_NOT_FOUND` | 대상을 찾을 수 없습니다. context.get으로 목록을 다시 확인하세요 |
-| 관리자 권한 창 (`window.focus` 만) | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
+| 관리자 권한 창 | `ELEVATED_WINDOW` | 관리자 권한으로 실행된 창은 제어할 수 없습니다 |
+| 창을 앞으로 못 가져옴 (`window.focus` 만) | `FOREGROUND_BLOCKED` | 창을 앞으로 가져오지 못했습니다. 작업 표시줄에서 깜빡이는 창을 눌러 주세요 |
+| 상태가 바뀌지 않음 (`minimize` · `maximize` · `restore`) | `FAILED` | 창 상태를 바꾸지 못했습니다. 잠시 후 다시 시도해주세요 |
 
-`window.minimize` · `window.maximize` · `window.restore` 는 `ELEVATED_WINDOW` 로 실패하지 않는다.
+성공 응답은 창이 **실제로** 그렇게 됐다는 뜻이다. Win32 반환값이 아니라 결과(포그라운드 창 · 창 상태)를 확인하고 돌려준다.
+
+`FOREGROUND_BLOCKED` 는 권한 문제가 아니라 Windows 의 포그라운드 잠금이다. 이때 BE 는 그 창의 작업 표시줄 단추를 깜빡이게 해 두므로, AI 는 사용자에게 **깜빡이는 단추를 누르라고** 안내한다. 관리자 권한 창(`ELEVATED_WINDOW`)과 달리 사용자가 직접 누르면 해결된다.
 
 ### 3.7 `window.resize` — 크기 · 위치 프리셋 · S
 
@@ -1718,7 +1723,7 @@ AI 는 호출 전에 사용자 동의를 받는다. BE 는 동의가 끝난 요�
 { "content": [{ "type": "text", "text": "{\"focused\":{…}}" }], "isError": false, "structuredContent": { "focused": { "ref": "win:3", "title": "다운로드 - 파일 탐색기", "app": "explorer", "state": "NORMAL" } } }
 ```
 
-창이 하나도 없으면 `REF_NOT_FOUND` + `"전환할 창이 없습니다"`. 전환 대상이 관리자 권한 창이면 포커스 단계에서 `ELEVATED_WINDOW` 다 (문장은 §3.6 과 같다).
+창이 하나도 없으면 `REF_NOT_FOUND` + `"전환할 창이 없습니다"`. 포커스 단계의 실패(`ELEVATED_WINDOW` · `FOREGROUND_BLOCKED`)는 `window.focus` 와 같다 (문장은 §3.6 과 같다).
 
 ### 3.10 `explorer.items` — 탐색기 항목
 
