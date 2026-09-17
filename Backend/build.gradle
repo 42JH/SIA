@@ -64,4 +64,6 @@ tasks.named('test') {
     systemProperty 'sia.live.uia', System.getProperty('sia.live.uia') ?: 'false'
     // 실제 마이크·카메라가 꽂혀 있어야 도는 장치 열거 스모크 테스트 스위치
     systemProperty 'sia.live.devices', System.getProperty('sia.live.devices') ?: 'false'
+    // 합성 입력을 실제로 쏘는 스모크 테스트 스위치 (저수준 훅으로 가로채 삼키므로 화면에 자국은 안 남는다)
+    systemProperty 'sia.live.input', System.getProperty('sia.live.input') ?: 'false'
 }

@@ -46,8 +46,10 @@ class AssistantApplicationTests {
     @Test
     @DisplayName("기동이 도구 목록과 기본 제공 제스처를 DB 에 넣는다 — 마이그레이션 시드 없이")
     void bootSeedsToolsAndBuiltinGestures() {
-        // ToolCatalogSync(@Order 0) — ToolCatalog 30개가 tool 테이블에 올라간다
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tool", Integer.class)).isEqualTo(30);
+        // ToolCatalogSync(@Order 0) — ToolCatalog 31개가 tool 테이블에 올라간다
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tool", Integer.class)).isEqualTo(31);
+        // 카탈로그에만 있고 @McpTool 이 없는 도구는 available = 0 으로 조용히 내려앉아 LLM 이 못 부른다
+        assertThat(jdbc.queryForList("SELECT name FROM tool WHERE available = 0", String.class)).isEmpty();
         // DefaultGestureBootstrap(@Order 5) — 기본 제공 제스처 9종. 행동은 사용자가 지정하므로 스텝은 0건이다
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture", Integer.class)).isEqualTo(9);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM gesture_step", Integer.class)).isZero();

@@ -23,6 +23,8 @@ public class SendInputService {
     /** 'M''C' + 1 — 이 프로세스가 합성한 입력의 표식 */
     private static final long EXTRA_MARKER = 0x4D430001L;
     private static final int VK_SHIFT = 0x10;
+    private static final int VK_LEFT = 0x25;
+    private static final int VK_RIGHT = 0x27;
 
     /** dir: up|down(|left|right). clicks 는 1~10 클램프. */
     public void scroll(String dir, int clicks) {
@@ -66,6 +68,28 @@ public class SendInputService {
             default -> throw new ApiException(ErrorCode.INVALID_REQUEST, "지원하지 않는 미디어 키입니다: " + key);
         };
         pressAndRelease(new int[]{vk});
+    }
+
+    /**
+     * dir: left|right 방향키를 repeat 번 눌렀다 뗀다 (1~10 클램프). 미디어 탐색(앞으로/뒤로)의 유일한 경로다 —
+     * 시스템 미디어 키에는 탐색에 해당하는 가상 키가 없다.
+     * ★ 방향키는 확장 키다. KEYEVENTF_EXTENDEDKEY 가 없으면 스캔 코드가 넘버패드 쪽으로 잡혀
+     * 스캔 코드로 키를 읽는 앱(브라우저의 event.code 등)이 방향키로 보지 않는다.
+     */
+    public void arrowKey(String dir, int repeat) {
+        int vk = switch (dir == null ? "" : dir.trim().toLowerCase(Locale.ROOT)) {
+            case "left" -> VK_LEFT;
+            case "right" -> VK_RIGHT;
+            default -> throw new ApiException(ErrorCode.INVALID_REQUEST,
+                    "지원하지 않는 방향키입니다: " + dir + " (left|right)");
+        };
+        int n = Math.max(1, Math.min(10, repeat));
+        WinUser.INPUT[] inputs = (WinUser.INPUT[]) new WinUser.INPUT().toArray(n * 2);
+        for (int i = 0; i < n; i++) {
+            fillKey(inputs[i * 2], vk, false, true);
+            fillKey(inputs[i * 2 + 1], vk, true, true);
+        }
+        send(inputs);
     }
 
     /** 예: Shift+N. down(mods) → down(vk) → up(vk) → up(mods 역순) */
@@ -117,11 +141,17 @@ public class SendInputService {
     }
 
     private void fillKey(WinUser.INPUT in, int vk, boolean up) {
+        fillKey(in, vk, up, false);
+    }
+
+    private void fillKey(WinUser.INPUT in, int vk, boolean up, boolean extended) {
+        int flags = (up ? WinUser.KEYBDINPUT.KEYEVENTF_KEYUP : 0)
+                | (extended ? WinUser.KEYBDINPUT.KEYEVENTF_EXTENDEDKEY : 0);
         in.type = new WinDef.DWORD(WinUser.INPUT.INPUT_KEYBOARD);
         in.input.setType("ki");
         in.input.ki.wVk = new WinDef.WORD(vk);
         in.input.ki.wScan = new WinDef.WORD(0);
-        in.input.ki.dwFlags = new WinDef.DWORD(up ? WinUser.KEYBDINPUT.KEYEVENTF_KEYUP : 0);
+        in.input.ki.dwFlags = new WinDef.DWORD(flags);
         in.input.ki.time = new WinDef.DWORD(0);
         in.input.ki.dwExtraInfo = new BaseTSD.ULONG_PTR(EXTRA_MARKER);
     }
