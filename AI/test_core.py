@@ -1178,6 +1178,7 @@ def test_save_crop_paths():
     """
     import json
     import threading
+    import time
     from unittest.mock import Mock
 
     from brain import Brain, DOM_TEXT_MAX, bbox_to_box, build_prompt, dom_context_part
@@ -1210,6 +1211,8 @@ def test_save_crop_paths():
     class Img:
         size = screen
 
+    logs = []
+
     def run(result):
         b = Brain.__new__(Brain)
         b.overlay, b._pending, b._apps = Mock(), None, None
@@ -1221,7 +1224,13 @@ def test_save_crop_paths():
         b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
         b._say = lambda msg, *a, **k: b.said.append(msg)
         b._session_until = lambda: 0.0
-        b._execute(result, None, t_utter=1.0, full_img=Img(), tier=2)
+        import brain as _b
+        saved = _b.log_utterance
+        _b.log_utterance = lambda **f: logs.append(f)
+        try:
+            b._execute(result, None, t_utter=time.monotonic() - 6.0, full_img=Img(), tier=2)
+        finally:
+            _b.log_utterance = saved
         return b
 
     base = {"audio_is_speech": True, "is_command": True, "wake_heard": True,
@@ -1229,6 +1238,13 @@ def test_save_crop_paths():
     b = run({**base, "save_text": "와이파이 비번 hunter2", "bbox": None})   # 20자, 박스 없음
     assert b.calls and b.calls[0][0] == "files.save", b.calls      # 버리지 않고 글로 저장한다
     assert "저장_1 (1).txt" in b.said[0], b.said                    # BE 가 실제로 쓴 경로를 말한다
+
+    # LLM 이 say 를 채워도 경로가 가려지면 안 된다 — 저장물은 사용자가 짐작 못 하는 폴더로 간다.
+    # (9/17 라이브: 바탕화면의 검증용 오버레이만 보고 "저장이 안 됐다"고 판단한 사고)
+    b = run({**base, "say": "선택하신 영역을 저장했습니다.",
+             "save_text": None, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region"
+    assert b.said[0].startswith("선택하신 영역을 저장했습니다.") and "저장_1 (1).txt" in b.said[0], b.said
 
     b = run({**base, "save_text": "짧은 설명", "bbox": [200, 200, 800, 800]})
     assert b.calls[0][0] == "screen.capture_region", b.calls      # 박스가 있으면 이미지가 이긴다
@@ -1238,6 +1254,60 @@ def test_save_crop_paths():
 
     b = run({**base, "save_text": None, "bbox": None})
     assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
+
+    # ── 계측: 저장 1건당 줄 하나. 이게 없으면 "원한 부분을 저장했나"를 사후에 못 잰다.
+    kinds = [f["save_kind"] for f in logs if f.get("gate") == "save"]
+    assert kinds == ["text", "region", "region", "text", "none"], kinds
+    region = next(f for f in logs if f.get("save_kind") == "region")
+    assert region["bbox"] == [200, 200, 800, 800] and region["box"] == list(big)
+    assert region["screen"] == list(screen)
+    assert 5.0 < region["utter_to_save_s"] < 8.0, region   # 시점 불일치 창 — 발화마다 잰다
+    text = next(f for f in logs if f.get("save_kind") == "text")
+    assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
+
+
+def test_media_seek():
+    """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
+
+    media.* 중 유일하게 배경 재생을 제어하지 못한다(방향키는 포커스 쥔 창이 받는다).
+    그래서 발화 시점 창을 winRef 로 지목하고, 못 찾으면 인자를 빼 BE 기본 동작에 맡긴다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    def run(key, ref, ok=True):
+        b = Brain.__new__(Brain)
+        b.overlay, b.calls, b.said = Mock(), [], []
+        b._last_be_payload, b._last_be_error = None, None
+        b._win_ref = lambda hwnd: ref
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+
+        def try_be(tool, args, say):
+            b.calls.append((tool, args))
+            return ok
+        b._try_be = try_be
+        return b, b._media(key, "이동했습니다", hwnd=1234)
+
+    b, done = run("forward", "win:3")
+    assert done and b.calls == [("media.seek", {"dir": "forward", "winRef": "win:3"})], b.calls
+
+    # back 을 그대로 보내면 BE 가 거절한다 — backward 로 바꿔야 한다.
+    b, done = run("back", "win:3")
+    assert done and b.calls[0][1]["dir"] == "backward", b.calls
+
+    # 대상 창을 못 찾으면 인자를 뺀다(BE 기본: 지금 앞에 있는 창). 빈 winRef 를 보내지 않는다.
+    b, done = run("forward", None)
+    assert done and b.calls == [("media.seek", {"dir": "forward"})], b.calls
+
+    # BE 가 못 하면 사실대로 말하고 로컬 단축키로 대신하지 않는다.
+    b, done = run("forward", "win:3", ok=False)
+    assert not done and b.said, (b.calls, b.said)
+    assert not any(t != "media.seek" for t, _ in b.calls), b.calls
+
+    # 표에 있는 키는 그대로 표대로 나간다 (seek 분기가 가로채지 않는다).
+    b, done = run("playpause", "win:3")
+    assert done and b.calls == [("media.play_pause", None)], b.calls
 
 
 def test_mic_preview():
@@ -1443,7 +1513,8 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 30/30 통과")
+    print("OK - 31/31 통과")

@@ -33,7 +33,9 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5
 WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
-SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
+SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전용.
+# 저장물 자체는 BE 가 Pictures\SIA · Documents\SIA 에 쓴다. 예전엔 바탕화면 "비서_저장" 이었는데
+# 이름이 저장물처럼 보여, 오버레이를 실제 결과물로 오해하는 일이 두 번 있었다(9/17 라이브).
 # BE scroll.step 의 휠 노치 수(1~10). 로컬 PageDown 한 번(≈한 화면)에 맞춘 값 —
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
@@ -89,10 +91,9 @@ SPEAKER_ACCUM_MIN_SPEECH_S = 0.3  # NOTE(튜닝): 말소리가 이보다 짧은 
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
         "explorer": "explorer", "paint": "mspaint"}
 
-# media_key → BE MCP 도구(+인자). BE 연결 시 이 표에 있는 키만 이관한다.
-# forward/back(10초 앞·뒤)만 로컬로 남는 이유: 윈도우 전역 미디어 키에 탐색이 없어
-# (VK_MEDIA_* 는 재생/다음/이전/음소거뿐) BE 도 쏠 수단이 없다 — 유튜브 단축키 l/j 뿐이다.
-# BE 에 media.seek 이 생기면 이 두 개도 이관한다 (S15P21D106-295).
+# media_key → BE MCP 도구(+인자). 인자가 고정인 것만 이 표에 둔다.
+# forward/back 은 media.seek 으로 나가지만 dir 이름이 우리 키와 다르고(back → backward)
+# 대상 창(winRef)을 실어야 해서 _media 안에서 따로 만든다 — volset 과 같은 이유다.
 MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggle", None),
              "next": ("media.next", None), "prev": ("media.prev", None),
              "volup": ("volume.step", {"dir": "up"}), "voldown": ("volume.step", {"dir": "down"})}
@@ -127,7 +128,9 @@ ACTION_RULES = """액션 규칙:
   그대로). 파일명을 도저히 알 수 없으면 query=null. 삭제는 휴지통행이며 재확인한다.
 - 창 제어(최대화/최소화/닫기) 및 스크롤(내려/올려) → window + window_op.
   창 닫기는 위험한 동작이라 비서가 실행 전 재확인한다.
-- 영상·음악 제어(재생/일시정지, 음소거, 10초 앞·뒤, 다음/이전, 볼륨) → media + media_key. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
+- 영상·음악 제어(재생/일시정지, 음소거, 앞으로/뒤로 이동, 다음/이전, 볼륨) → media + media_key.
+  "10초 앞으로"처럼 초를 말해도 media_key=forward/back 이다. 이동 폭은 플레이어가 정하므로
+  say 에 몇 초라고 단정하지 마라 — "앞으로 이동했습니다"처럼 답하라. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
 - "그만", "이제 됐어", "꺼져" 등 비서 종료 → end_session.
 - 명령이지만 지원 범위 밖이면 none, say에 이유를 담아라."""
 
@@ -290,6 +293,33 @@ def log_utterance(**fields):
             f.write(json.dumps(fields, ensure_ascii=False) + "\n")
     except Exception:
         pass  # 로깅 실패가 비서를 멈추면 안 됨
+
+
+def where(message, path):
+    """안내 문구 뒤에 저장 경로를 붙인다.
+
+    BE 가 정하는 위치(Pictures/SIA · Documents/SIA)는 사용자가 짐작할 수 없고, 바탕화면엔
+    EVAL_CAPTURE 검증용 오버레이만 남아 오해를 부른다 — 실측으로 한 번 겪었다. 그래서 경로를
+    LLM 의 say 와 '또는'으로 묶지 않고 항상 덧붙인다."""
+    return f"{message} -> {path}" if path else message
+
+
+def log_save(t_utter, kind, result, box=None, screen=None, ok=None, payload=None):
+    """저장 1건의 결과. 발화 줄(gate=router|llm)과 ts 로 잇는다.
+
+    저장은 드문 사건이라 줄을 하나 더 쓰는 비용이 싸고, log_utterance 가 _execute 보다
+    먼저 도는 구조라 같은 줄에는 못 넣는다. 이게 없으면 "원한 부분을 저장했나"는
+    EVAL_CAPTURE 를 켜 둔 날이 아니면 사후에 판정할 방법이 없다(9/17 실측)."""
+    text = (result.get("save_text") or "").strip()
+    p = payload if isinstance(payload, dict) else {}
+    log_utterance(gate="save", save_kind=kind,
+                  bbox=result.get("bbox"), box=list(box) if box else None,
+                  screen=list(screen) if screen else None,
+                  save_len=len(text), save_head=text[:40] or None,
+                  be_ok=ok, path=p.get("path"), width=p.get("width"), height=p.get("height"),
+                  # 발화 시작 → BE 캡처 호출. BE 는 '호출 시점' 화면을 새로 찍으므로 이 값이
+                  # 곧 "LLM 이 본 화면과 저장된 화면의 시차"다.
+                  utter_to_save_s=round(time.monotonic() - t_utter, 2))
 
 
 def capture_case(audio_i16, full_img, crop_img, session, pending_q, dom):
@@ -1137,7 +1167,13 @@ class Brain(threading.Thread):
                               is_command=result.get("is_command"),
                               action=result.get("action"),
                               transcript=result.get("transcript", "")[:120],
-                              had_dom=dom is not None, **audio_stats(audio))
+                              had_dom=dom is not None,
+                              # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
+                              # 세션 없음/브라우저 없음/타임아웃을 못 가른다.
+                              dom_via=(dom or {}).get("via"),
+                              dom_chars=len((dom or {}).get("text") or "") or None,
+                              dom_cut=(dom or {}).get("truncated"),
+                              **audio_stats(audio))
                 with self._audio_lock:
                     stale = generation != self._audio_generation
                 # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
@@ -1145,7 +1181,7 @@ class Brain(threading.Thread):
                     be = self._be()
                     t_exec = time.monotonic()
                     completed = self._execute(result, crop_img, t_utter, hwnd, full_img,
-                                              profile, sim, tier, generation)
+                                              profile, tier, generation)
                     finished = time.monotonic()
                     print(f"[지연] 대기 {t_proc - t_end:.2f} | 게이트 {(t_pre - t_proc) if t_pre else 0:.2f} | STT {self._last_stt_s} | DOM {dom_s}"
                           f" | LLM {self._last_llm_s}({self._last_llm_tries}) | 실행 {finished - t_exec:.2f} | 발화끝→완료 {finished - t_end:.2f}s")
@@ -1244,7 +1280,7 @@ class Brain(threading.Thread):
 
     # --- 액션 실행 ---
     def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None,
-                 profile=None, sim=None, tier=2, generation=None):
+                 profile=None, tier=2, generation=None):
         """실제 완료 시 (원래 발화 시작 시각, 통계 필드), 미실행·확인 대기는 None."""
         t_utter = time.monotonic() if t_utter is None else t_utter
         if not result.get("audio_is_speech", True):
@@ -1275,14 +1311,28 @@ class Brain(threading.Thread):
         with self._audio_lock:
             if generation is not None and generation != self._audio_generation:
                 return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
+        completed = (t_utter, {"sessionId": session_id, "action": action,
+                               "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
+        pending, done = self._pending, None
+        try:
+            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img, full_img)
+            return done
+        finally:
+            # voice 이벤트는 실행이 끝난 뒤에 보낸다 — 대시보드 "음성 인식 정확도"는 명령으로 인식된 발화
+            # (1단 라우터 적중·Gemini 명령 판정) 중 실제 실행까지 간 비율이라 성공 1.0 / 실패 0.0 을 실어야
+            # BE 의 AVG(accuracy) 가 그 비율이 된다. 실행 중 예외도 여기서 실패로 남는다.
+            # 화자 거부·인증 오류·Gemini 호출 실패는 명령으로 인식되기 전이라 세지 않는다.
+            # 확인 질문을 새로 띄운 발화는 아직 성패가 없다 — 뒤이은 승인·취소 발화에서 센다(None).
             if be and self.act:
+                asked = self._pending is not None and self._pending is not pending
                 enrolled = profile is not None and profile[0] is not None
                 be.queue_usage("voice", sessionId=session_id,
                                profileId=profile[2] if enrolled else None,
-                               accuracy=round(sim, 3) if enrolled and sim is not None else None,
+                               accuracy=None if asked else float(done is not None),
                                action=result.get("action"))
-        completed = (t_utter, {"sessionId": session_id, "action": action,
-                               "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
+
+    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img):
+        """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
             if be:
                 be.end()
@@ -1413,9 +1463,11 @@ class Brain(threading.Thread):
                 name = f"저장_{ts}.txt"
                 # 저장 위치는 BE 가 정한다(~/Documents/SIA). 이름이 겹치면 BE 가 " (1)" 을 붙이므로
                 # 우리가 지어 보낸 이름이 아니라 BE 가 실제로 쓴 경로를 그대로 말한다.
-                if self._be_ok("files.save", {"name": name, "content": text}):
+                ok = self._be_ok("files.save", {"name": name, "content": text})
+                log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
+                if ok:
                     saved = (self._last_be_payload or {}).get("path") or name
-                    self._say(f"글로 저장했습니다 → {saved}")
+                    self._say(where(say or "글로 저장했습니다", saved))
                     return completed
                 return self._be_down("글 저장")
             if box:
@@ -1436,15 +1488,21 @@ class Brain(threading.Thread):
                 # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
                 # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
                 off = virtual_screen_offset(full_img.size) or (0, 0)
-                if self._be_ok("screen.capture_region",
-                               {"x1": box[0] + off[0], "y1": box[1] + off[1],
-                                "x2": box[2] + off[0], "y2": box[3] + off[1]}):
-                    p = self._last_be_payload or {}
-                    self._say(say or f"화면을 저장했습니다 → {p.get('path') or '완료'}")
+                ok = self._be_ok("screen.capture_region",
+                                 {"x1": box[0] + off[0], "y1": box[1] + off[1],
+                                  "x2": box[2] + off[0], "y2": box[3] + off[1]})
+                p = self._last_be_payload or {}
+                log_save(t_utter, "region", result, box=box, screen=full_img.size,
+                         ok=ok, payload=p)
+                if ok:
+                    # say 와 'or' 로 묶지 않는다 — LLM 이 say 를 거의 항상 채워서 경로가 늘
+                    # 가려졌고, 저장물은 눈에 안 띄는 폴더로 간다 (9/17 라이브에서 오해 발생).
+                    self._say(where(say or "화면을 저장했습니다", p.get("path")))
                     return completed
                 return self._be_down("화면 저장")
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
                 print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
+                log_save(t_utter, "none", result, screen=full_img.size if full_img else None)
                 self._say("저장할 영역을 찾지 못했습니다")
             return None
         elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
@@ -1462,15 +1520,21 @@ class Brain(threading.Thread):
                 return True
             self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
             return False
-        # BE 연결 시 미디어/볼륨은 MCP 도구로 이관(유튜브 여부는 BE 가 포그라운드로 판별).
-        # forward/back(유튜브 10초 이동)은 카탈로그에 없어 아래 로컬 경로로 남는다.
+        if key in ("forward", "back"):
+            # media.* 중 유일하게 배경 재생을 제어하지 못한다 — 나머지 넷은 시스템 미디어 키가
+            # 재생 세션으로 가지만 방향키는 포커스를 쥔 창이 받는다. 그래서 발화 시점 창을
+            # winRef 로 지목한다. 못 찾으면(동명 창 다수 + 비포그라운드) 인자를 빼고 BE 기본
+            # 동작인 '지금 앞에 있는 창'으로 떨어진다 — 동작은 하되 발화 시점 보장이 깨진다.
+            args = {"dir": "forward" if key == "forward" else "backward"}
+            ref = self._win_ref(hwnd) if hwnd else None
+            if ref:
+                args["winRef"] = ref
+            if self._try_be("media.seek", args, say):
+                return True
+            return bool(self._be_down("영상 이동"))
+        # 미디어/볼륨은 MCP 도구로 나간다 (유튜브 여부는 BE 가 포그라운드로 판별).
         tool = MEDIA_MCP.get(key)
         if tool and self._try_be(tool[0], tool[1], say):
             return True
-        # 판별 기준도 '발화 순간의 창' — 말한 뒤 알트탭해도 의도한 창이 제어된다
-        if key in ("forward", "back"):
-            # 10초 앞·뒤는 BE 카탈로그에 아직 없다(media.seek 추가 예정). 로컬 단축키로 대신하지 않는다.
-            self._say("10초 이동은 아직 지원하지 않습니다")
-            return False
         self._be_down("미디어 제어")
         return False
