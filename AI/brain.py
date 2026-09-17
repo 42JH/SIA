@@ -796,13 +796,6 @@ class Brain(threading.Thread):
             self._wake_notice("stale_template",
                               f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
             return False, "template_stale", None, None, None
-        profile_id = self.speaker.profile_id if self.speaker is not None else None
-        if not template.usable_by(profile_id):
-            # BE 의 호출어 blob 은 전역 한 개라 프로필별로 나뉘지 않는다 — 템플릿에 적어 둔 등록 당시
-            # 보이스 프로필과 지금 활성 프로필이 다르면 다른 사람의 등록본이다.
-            self._wake_notice("other_profile",
-                              "이 호출어 등록본은 다른 보이스 프로필의 것입니다 — 지금 프로필로 다시 등록해 주세요.")
-            return False, "other_profile", None, None, None
         clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max, lead)
         if self.speaker is None:
             return True, "content_only", None, clip_t0, clip_t1  # --no-speaker로 화자 인증을 끈 상태

@@ -16,7 +16,10 @@ from be_link import AgentLink
 from brain import Brain, SpeakerAccum
 from speaker import SpeakerVerifier
 from voice import VoiceListener
+import voice_bridge
 from voice_bridge import VoiceProfileSync, VoiceSession
+
+voice_bridge.VOICE_SYNC_RETRY_S = 0.01   # 실패 재시도 대기를 줄인다 — 검사마다 1 s 씩 늘지 않게
 
 
 def profile_bytes(index=0, **fields):
@@ -167,6 +170,33 @@ def test_failure_preserves_profile_and_retries():
         sync.on_changed(reference(new_body, 2))
         settled(sync)
         assert sync.apply_pending(Mock()) and speaker.profile_id == 2
+
+
+def test_transient_download_failure_retries_once():
+    """BE 가 voice_changed 를 커밋 전에 보내 첫 GET 이 500 이면(실측 09-17) 잠시 뒤 한 번 다시 받는다.
+    두 번째도 실패하면 더 시도하지 않고, 기다리는 사이 새 참조가 오면 그쪽을 받는다."""
+    body = profile_bytes()
+    with session(body) as (link, sync, speaker, path):
+        link.get_voice_npz.side_effect = [OSError("HTTP Error 500"), body]
+        sync.on_changed(reference(body, 12))
+        settled(sync)
+        assert sync.apply_pending(Mock()) and speaker.profile_id == 12 and link.get_voice_npz.call_count == 2
+        # 같은 참조가 두 번 다 실패하면 거기서 멈춘다 — 재시도는 참조당 한 번
+        other = profile_bytes(1)
+        link.get_voice_npz.side_effect = OSError("HTTP Error 500")
+        sync.on_changed(reference(other, 13))
+        settled(sync)
+        assert not sync.apply_pending(Mock()) and speaker.profile_id == 12 and link.get_voice_npz.call_count == 4
+        # 재시도를 기다리는 사이 새 참조가 오면 옛 참조는 다시 받지 않는다
+        newer = profile_bytes(2)
+        link.get_voice_npz.side_effect = [OSError("HTTP Error 500"), newer]
+        with patch("voice_bridge.VOICE_SYNC_RETRY_S", 0.3):
+            sync.on_changed(reference(other, 13))
+            with sync._condition:
+                assert sync._condition.wait_for(lambda: link.get_voice_npz.call_count == 5, timeout=3)
+            sync.on_changed(reference(newer, 14))
+            settled(sync)
+        assert sync.apply_pending(Mock()) and speaker.profile_id == 14 and link.get_voice_npz.call_count == 6
 
 
 def test_apply_failure_preserves_file_and_id():
