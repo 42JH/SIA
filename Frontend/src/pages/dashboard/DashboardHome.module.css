@@ -11,6 +11,8 @@
 .content { position: relative; z-index: 1; width: min(1540px, calc(100% - 72px)); margin: 0 auto; padding: 42px 0 54px; }
 .view_home .content { padding-top: 24px; padding-bottom: 18px; }
 .view_voice .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
+.view_gaze .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
+.view_gaze::after { display: none; }
 .loading, .error { position: fixed; z-index: 40; top: 68px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--sia-line); border-radius: 3px; background: white; transform: translateX(-50%); }
 .error { color: var(--color-danger); }
 .intro { position: relative; min-width: 0; }
