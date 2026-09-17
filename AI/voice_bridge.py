@@ -51,6 +51,8 @@ REJECT_REASONS = {   # 품질 판정 사유 → FE 에 보여 줄 문구
 WAKE_DEFAULT_WORD = "시아야"   # 설정(settings.wakeWord)이 오기 전에 쓰는 기본 호출어 — brain.WAKE_WORD 와 같은 값
 WAKE_UPLOAD_RETRY_S = 5   # 업로드가 실패하면 이만큼 쉬었다가 다시 보낸다 — 그 사이 더 새 작업이 오면 그것부터
 WAKE_UPLOAD_TRIES = 3     # 같은 본문을 보낼 최대 횟수. 넘으면 서버는 이전 상태로 남는다 (로그로 알린다)
+VOICE_SYNC_RETRY_S = 1.0  # 활성 보이스 받기가 실패하면 이만큼 쉬었다가 같은 참조를 한 번만 다시 받는다 —
+                          # BE 가 voice_changed 를 DB 커밋 전에 보내 첫 GET 이 500 으로 끝난 실측(2026-09-17)
 
 
 def log_rx(type_, data):
@@ -133,6 +135,7 @@ class VoiceProfileSync:
         return body, self.speaker.read_profile(io.BytesIO(body), self.speaker.default_threshold)
 
     def _run(self):
+        retried = None   # 한 번 다시 받아 본 참조 — 같은 참조를 두 번 재시도하지 않는다
         while True:
             with self._condition:
                 self._condition.wait_for(lambda: self._closed or self._queued)
@@ -142,6 +145,7 @@ class VoiceProfileSync:
                 self._queued, self._busy = False, True
             try:
                 prepared = self._prepare(ref)
+                retried = None
                 with self._condition:
                     # ID만 바뀐 최신 요청에도 이미 검증한 동일 해시의 파일을 쓸 수 있다.
                     if not self._closed and self._desired is not None and self._desired[1] == ref[1]:
@@ -149,6 +153,14 @@ class VoiceProfileSync:
                         self._queued = False
             except Exception as exc:
                 print(f"[보이스 동기화] 실패 — 기존 프로필 유지: {exc}")
+                with self._condition:
+                    if not self._closed and self._desired == ref and retried != ref:
+                        # 같은 참조를 잠시 뒤 한 번만 다시 받는다. 기다리는 동안 새 참조가 오면 그쪽이 먼저다
+                        retried = ref
+                        print(f"[보이스 동기화] {VOICE_SYNC_RETRY_S:g} s 뒤 다시 받는다")
+                        self._condition.wait(VOICE_SYNC_RETRY_S)
+                        if not self._closed and self._desired == ref:
+                            self._queued = True
             finally:
                 with self._condition:
                     self._busy = False
@@ -527,9 +539,9 @@ class VoiceSession:
 
 
 class WakeTemplateStore:
-    """호출어 템플릿 보관소 — 로컬 파일과 BE blob(`wakeword`)의 등록·프로필 연결·동기화를 다룬다.
+    """호출어 템플릿 보관소 — 로컬 파일과 BE blob(`wakeword`)의 등록·동기화를 다룬다.
 
-    BE에는 호출어 NPZ 한 개를 저장한다. 템플릿의 profile_id로 등록자를 확인한다.
+    BE에는 호출어 NPZ 한 개를 저장한다. 등록자는 템플릿의 목소리 임베딩으로 확인하며 보이스 프로필 번호와 묶지 않는다.
     generation은 로컬 상태 변경을, 쓰기 순번은 업로드 순서를 구분한다.
     다운로드·업로드는 각각 워커에서 처리하며, 오래된 작업은 적용하지 않는다.
     """
@@ -556,7 +568,6 @@ class WakeTemplateStore:
                                      # 로컬 저장이 끝나거나 실패하면 지운다
         self._uploader = None
         self._closed = False
-        self._bind_pending = None    # 이번 실행의 등록이 만든, 아직 프로필에 안 묶인 바로 그 템플릿
         self.load()
 
     # ── 판정용 스냅샷 ──
@@ -614,9 +625,7 @@ class WakeTemplateStore:
             print(f"[호출어 템플릿] 읽지 못했습니다({self.load_error}) — 다시 등록해야 합니다")
             return
         self.current, self.load_error = template, None
-        print(f"[호출어 템플릿] 로컬 적용 — 호출어 \"{template.wake_text}\", "
-              f"기준 {template.base_n}개, 프로필 "
-              + (str(template.profile_id) if template.bound else "미연결"))
+        print(f"[호출어 템플릿] 로컬 적용 — 호출어 \"{template.wake_text}\", 기준 {template.base_n}개")
 
     def _prepare(self, template):
         """NPZ를 임시 파일에 저장 → (본문, 임시 경로). 파일 준비 중에는 잠금을 잡지 않는다."""
@@ -627,12 +636,11 @@ class WakeTemplateStore:
             f.write(body)
         return body, temp
 
-    def commit(self, template, why, bindable=None, generation=None, want=None):
+    def commit(self, template, why, generation=None, want=None):
         """검증까지 끝난 템플릿을 확정 → (본문, 새 generation, 서버 쓰기 순번) 또는 실패·만료면 None.
 
         generation과 want가 현재 값과 같은지 확인한 뒤 파일과 메모리를 함께 바꾼다.
         검사 중 삭제·재등록·새 다운로드 요청이 들어오면 이전 결과를 적용하지 않는다.
-        bindable=True는 이번 실행에서 새로 등록한 템플릿에만 사용한다. None이면 기존 연결 대기를 유지한다.
         """
         try:
             with self._lock:
@@ -664,15 +672,8 @@ class WakeTemplateStore:
                     # 방금 쓴 것이 서버가 알린 바로 그것이다. 다른 참조를 기다리는 중이면 그 요청은 남겨 둔다 —
                     # 지우면 확인과 저장 사이에 들어온 최신 요청이 알림 없이 사라진다
                     self._want, self._queued = None, False
-                if bindable is not None:
-                    self._bind_pending = template if (bindable and not template.bound) else None
-                elif self._bind_pending is not None:
-                    # 같은 등록본의 새 객체로 연결 대기를 옮긴다.
-                    self._bind_pending = None if template.bound else template
                 done = (body, self.generation, self._write_seq)
-            print(f"[호출어 템플릿] {why} — 호출어 \"{template.wake_text}\", 기준 {template.base_n}개"
-                  f", 프로필 "
-                  + (str(template.profile_id) if template.bound else "미연결"))
+            print(f"[호출어 템플릿] {why} — 호출어 \"{template.wake_text}\", 기준 {template.base_n}개")
             return done
         finally:
             with self._lock:
@@ -698,7 +699,6 @@ class WakeTemplateStore:
             self.generation += 1        # 진행 중인 다운로드·등록은 이 시점부터 전부 만료다
             self._write_seq += 1        # 큐에 있던 업로드도 만료다 — 지운 등록본을 다시 올리지 않는다
             self._want, self._queued, self._upload = None, False, None
-            self._bind_pending = None
             try:
                 self.path.unlink(missing_ok=True)
             except OSError as e:
@@ -706,26 +706,6 @@ class WakeTemplateStore:
         if had:
             print(f"[호출어 템플릿] {why} — 로컬 등록본을 지웠습니다. 다시 등록해야 세션이 열립니다")
         return had
-
-    # ── 프로필 연결 (첫 온보딩: 호출어 등록이 문장 낭독보다 먼저다) ──
-    def bind_profile(self, profile_id):
-        """이번 온보딩의 호출어 템플릿에 보이스 프로필 ID를 연결하고 서버에도 저장한다.
-
-        이전 실행이나 서버에서 가져온 미연결 템플릿은 새 등록자의 프로필에 연결하지 않는다.
-        """
-        if not isinstance(profile_id, int) or profile_id < 0:
-            return False
-        with self._lock:
-            template, generation = self._bind_pending, self.generation
-            if template is None or self.current is not template or template.bound:
-                return False
-        done = self.commit(template.bound_to(profile_id), f"보이스 프로필 {profile_id} 에 연결",
-                           generation=generation)
-        if done is None:
-            return False
-        body, _, seq = done
-        self._queue_upload(body, seq)
-        return True
 
     # ── BE 동기화 ──
     def on_blob(self, sha256):
@@ -801,8 +781,7 @@ class WakeTemplateStore:
             except Exception as e:
                 print(f"[호출어 템플릿] 내려받기 실패 — 기존 템플릿 유지: {e}")
                 continue
-            if self.commit(template, "서버 템플릿 적용", bindable=False,
-                           generation=generation, want=want) is None:
+            if self.commit(template, "서버 템플릿 적용", generation=generation, want=want) is None:
                 print("[호출어 템플릿] 내려받는 사이 상태가 바뀌어 폐기합니다")
                 with self._lock:
                     if generation != self.generation:
@@ -1057,9 +1036,8 @@ class WakeEnroll:
             self._reject("등록본을 저장하지 못했어요. 잠시 후 다시 불러주세요.", "템플릿 저장소 없음")
             return
         self._saving = True                 # 여기부터 들어오는 발화는 샘플이 아니라 저장 재시도다
-        profile_id = self.speaker.profile_id if self.speaker is not None else None
         template = WakeTemplate(self.wake_text, self._scores, np.asarray(self._embs, dtype=np.float32),
-                                len(self._embs), -1 if profile_id is None else profile_id)
+                                len(self._embs))
         # 쓰기 순번을 먼저 예약한다 — 큐에서 기다리던 이전 업로드가 이 등록본을 덮지 못하게.
         seq, generation = self.store.reserve_write()
         body = template.npz_bytes()
@@ -1079,13 +1057,11 @@ class WakeEnroll:
                 print("[호출어 수집] 더 새 작업이 생겨 이번 확정을 접습니다")
                 return
             self._saved = (epoch, body)     # 로컬 저장이 실패해도 서버에는 남아 있다
-        if epoch != self.epoch or not self.store.commit(template, "등록 확정", bindable=True,
-                                                        generation=generation):
+        if epoch != self.epoch or not self.store.commit(template, "등록 확정", generation=generation):
             self._reject("등록본을 이 PC 에 저장하지 못했어요. 잠시 후 다시 불러주세요.",
                          "로컬 저장 실패 — 서버에는 저장됨")
             return
         self.active = self._saving = False  # 확정 뒤 들어온 발화는 세지 않는다
         print(f"[호출어 수집] 확정 — 호출어 \"{self.wake_text}\", 기준 {template.base_n}개, "
-              f"시동어 점수 {[round(s, 2) for s in template.scores]}, 보이스 프로필 "
-              + (str(template.profile_id) if template.bound else "미연결 — 문장 낭독 뒤 연결"))
+              f"시동어 점수 {[round(s, 2) for s in template.scores]}")
         self._tx("wakeword_done", {})

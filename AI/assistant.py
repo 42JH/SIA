@@ -415,8 +415,6 @@ def main():
                         link.voice.on_cancel(data.get("tempId"))
                     elif event_type == "voice_registered" and link.voice:
                         link.voice.on_registered(data.get("id"), data.get("active"))
-                        # 호출어를 먼저 등록했으므로, 이번 온보딩의 템플릿을 방금 생성된 보이스 프로필에 연결한다.
-                        wake_store.bind_profile(data.get("id"))
                     elif event_type == "model_load":
                         model_name = data.get("name", "")
                         model_path = Path(data.get("path", ""))

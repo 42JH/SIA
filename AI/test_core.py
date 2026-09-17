@@ -899,7 +899,7 @@ def test_wake_enroll():
                 self.hold = None
             puts.append(("http://x/api/agent/blobs/wakeword", len(body), "application/octet-stream"))
             return seq == self.seq
-        def commit(self, template, why, bindable=None, generation=None):
+        def commit(self, template, why, generation=None):
             if self.broken:
                 return None
             self.committed.append(template)
@@ -955,7 +955,7 @@ def test_wake_enroll():
     assert len(store.committed) == 1                 # 업로드까지 끝난 뒤에야 확정된다
     template = store.committed[0]
     assert template.wake_text == "시아야" and template.base_n == WAKE_TOTAL
-    assert len(template.embs) == WAKE_TOTAL and template.profile_id == 3
+    assert len(template.embs) == WAKE_TOTAL
     assert len(template.scores) == WAKE_TOTAL         # 시동어 점수 기록 (판정에는 쓰지 않는다)
     we.on_utter(clip())                              # 끝난 뒤 발화는 안 센다
     assert len(link.sent) == WAKE_TOTAL + 4
