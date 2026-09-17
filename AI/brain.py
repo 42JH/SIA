@@ -89,10 +89,9 @@ SPEAKER_ACCUM_MIN_SPEECH_S = 0.3  # NOTE(튜닝): 말소리가 이보다 짧은 
 APPS = {"chrome": "chrome", "notepad": "notepad", "calc": "calc",
         "explorer": "explorer", "paint": "mspaint"}
 
-# media_key → BE MCP 도구(+인자). BE 연결 시 이 표에 있는 키만 이관한다.
-# forward/back(10초 앞·뒤)만 로컬로 남는 이유: 윈도우 전역 미디어 키에 탐색이 없어
-# (VK_MEDIA_* 는 재생/다음/이전/음소거뿐) BE 도 쏠 수단이 없다 — 유튜브 단축키 l/j 뿐이다.
-# BE 에 media.seek 이 생기면 이 두 개도 이관한다 (S15P21D106-295).
+# media_key → BE MCP 도구(+인자). 인자가 고정인 것만 이 표에 둔다.
+# forward/back 은 media.seek 으로 나가지만 dir 이름이 우리 키와 다르고(back → backward)
+# 대상 창(winRef)을 실어야 해서 _media 안에서 따로 만든다 — volset 과 같은 이유다.
 MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggle", None),
              "next": ("media.next", None), "prev": ("media.prev", None),
              "volup": ("volume.step", {"dir": "up"}), "voldown": ("volume.step", {"dir": "down"})}
@@ -127,7 +126,9 @@ ACTION_RULES = """액션 규칙:
   그대로). 파일명을 도저히 알 수 없으면 query=null. 삭제는 휴지통행이며 재확인한다.
 - 창 제어(최대화/최소화/닫기) 및 스크롤(내려/올려) → window + window_op.
   창 닫기는 위험한 동작이라 비서가 실행 전 재확인한다.
-- 영상·음악 제어(재생/일시정지, 음소거, 10초 앞·뒤, 다음/이전, 볼륨) → media + media_key. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
+- 영상·음악 제어(재생/일시정지, 음소거, 앞으로/뒤로 이동, 다음/이전, 볼륨) → media + media_key.
+  "10초 앞으로"처럼 초를 말해도 media_key=forward/back 이다. 이동 폭은 플레이어가 정하므로
+  say 에 몇 초라고 단정하지 마라 — "앞으로 이동했습니다"처럼 답하라. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
 - "그만", "이제 됐어", "꺼져" 등 비서 종료 → end_session.
 - 명령이지만 지원 범위 밖이면 none, say에 이유를 담아라."""
 
@@ -1462,15 +1463,21 @@ class Brain(threading.Thread):
                 return True
             self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
             return False
-        # BE 연결 시 미디어/볼륨은 MCP 도구로 이관(유튜브 여부는 BE 가 포그라운드로 판별).
-        # forward/back(유튜브 10초 이동)은 카탈로그에 없어 아래 로컬 경로로 남는다.
+        if key in ("forward", "back"):
+            # media.* 중 유일하게 배경 재생을 제어하지 못한다 — 나머지 넷은 시스템 미디어 키가
+            # 재생 세션으로 가지만 방향키는 포커스를 쥔 창이 받는다. 그래서 발화 시점 창을
+            # winRef 로 지목한다. 못 찾으면(동명 창 다수 + 비포그라운드) 인자를 빼고 BE 기본
+            # 동작인 '지금 앞에 있는 창'으로 떨어진다 — 동작은 하되 발화 시점 보장이 깨진다.
+            args = {"dir": "forward" if key == "forward" else "backward"}
+            ref = self._win_ref(hwnd) if hwnd else None
+            if ref:
+                args["winRef"] = ref
+            if self._try_be("media.seek", args, say):
+                return True
+            return bool(self._be_down("영상 이동"))
+        # 미디어/볼륨은 MCP 도구로 나간다 (유튜브 여부는 BE 가 포그라운드로 판별).
         tool = MEDIA_MCP.get(key)
         if tool and self._try_be(tool[0], tool[1], say):
             return True
-        # 판별 기준도 '발화 순간의 창' — 말한 뒤 알트탭해도 의도한 창이 제어된다
-        if key in ("forward", "back"):
-            # 10초 앞·뒤는 BE 카탈로그에 아직 없다(media.seek 추가 예정). 로컬 단축키로 대신하지 않는다.
-            self._say("10초 이동은 아직 지원하지 않습니다")
-            return False
         self._be_down("미디어 제어")
         return False
