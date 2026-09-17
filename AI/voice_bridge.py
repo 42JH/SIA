@@ -39,6 +39,10 @@ VOICE_MIN_SIM = 0.40   # NOTE(튜닝): 문장 하나가 앞 문장들과 이만�
                        # 5문장 일관성 0.78 — 0.40 은 여유 있다. 다른 사람·다른 마이크는 아직 안 쟀다
 REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(INCONSISTENT)와 소음(NOISY) 을 따로 센다. 1번 문장이 잘못 녹음되면 그게
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
+WAKE_ENROLL_IDLE_S = float(os.environ.get("WAKE_ENROLL_IDLE_S") or 180.0)
+# NOTE(튜닝): 마지막 샘플(또는 시작) 뒤 이만큼 조용하면 수집을 접는다. 온보딩을 중간에
+# 떠나면 취소 이벤트가 없어(BE·FE 어느 쪽도 안 보낸다) 모든 발화가 등록으로 먹히고
+# 음성 명령이 죽는다. 5개를 채우는 사람은 몇 초 간격으로 말하므로 3분이면 넉넉하다.
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
 WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
 REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
@@ -960,6 +964,7 @@ class WakeEnroll:
         self.wake_model = wake_model        # 고정 시동어 모델 — 실행 때와 같은 것으로 발음을 확인한다
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
+        self.last_at = 0.0                  # 마지막 진행(시작·샘플) 시각 — 방치 판정용
         self.wake_text = WAKE_DEFAULT_WORD  # 이번 등록이 대상으로 삼은 호출어 (시작할 때 설정에서 읽는다)
         self.epoch = 0                      # 등록 회차 — 늦게 끝난 이전 회차가 확정하지 못하게 한다
         self._samples = []
@@ -978,7 +983,8 @@ class WakeEnroll:
     def on_start(self):
         log_rx("wakeword_enroll_start", {})
         self.active, self._samples, self._embs, self._scores = True, [], [], []
-        self.started_at, self._fails = time.monotonic(), 0
+        self.started_at = self.last_at = time.monotonic()
+        self._fails = 0
         self._saving, self._saved = False, None
         self.epoch += 1                     # 앞 회차가 뒤늦게 끝나도 확정하지 못한다
         # 이번 등록이 대상으로 삼는 호출어는 지금 설정값이다 — 설정만 바꾸고 옛 템플릿을 재사용하는 길을 막는다.
@@ -988,8 +994,18 @@ class WakeEnroll:
             self._preload.start()
         print(f"[호출어 수집] 시작({self.epoch}회차) — \"{self.wake_text}\" {WAKE_TOTAL}번")
 
+    def expired(self, now=None):
+        """방치된 수집인가 — 마지막 진행 뒤 WAKE_ENROLL_IDLE_S 가 지났다.
+
+        호출어 취소 이벤트가 BE·FE 어느 쪽에도 없어서(보이스는 voice_reg_cancel 이 있다)
+        온보딩을 중간에 떠나면 active 가 영원히 남는다. 그동안 모든 발화가 등록 샘플로
+        먹혀 음성 명령이 통째로 죽으므로, 스스로 접는 안전망을 둔다."""
+        if not self.active:
+            return False
+        return (time.monotonic() if now is None else now) - self.last_at > WAKE_ENROLL_IDLE_S
+
     def cancel(self):
-        """수집 중인 샘플을 지우고 기존 등록본은 유지한다. BE의 호출어 취소 이벤트는 아직 연동되지 않았다."""
+        """수집 중인 샘플을 지우고 기존 등록본은 유지한다."""
         if not self.active:
             return False
         self.active, self._saving, self._saved = False, False, None
@@ -1002,6 +1018,7 @@ class WakeEnroll:
     def on_utter(self, audio_i16, t_utter=None):
         if not self.active:
             return                          # t_utter 는 안 쓴다 — 호출어 수집엔 무를 문장이 없다. 호출부를 하나로 두려고 받아만 둔다
+        self.last_at = time.monotonic()     # 진행이 있었다 — 방치 시계를 민다
         if self._saving:
             # 유효한 5개는 이미 모였고 저장만 실패한 상태다 — 여섯 번째 샘플로 받지 않고 저장을 다시 시도한다
             print("[호출어 수집] 저장 재시도 — 모은 샘플은 그대로 쓴다")
