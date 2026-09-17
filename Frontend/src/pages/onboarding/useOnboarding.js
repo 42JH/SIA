@@ -7,6 +7,8 @@ const voiceSteps = ['voice', 'voiceProcessing', 'voiceReview'];
 const gazeSteps = ['position', 'gazeGuide', 'measuring', 'result'];
 const voiceRejectionMessages = {
   TOO_SHORT: '너무 짧게 들렸어요. 문장을 끝까지 읽어주세요.',
+  TOO_LONG: '너무 길게 들렸어요. 화면의 문장 하나만 읽어주세요.',
+  NOISY: '주변이 시끄러워요. 조용한 곳에서 다시 읽어주세요.',
   INCONSISTENT: '앞 문장과 목소리가 다르게 들려요. 같은 분이 조용한 곳에서 다시 읽어주세요.',
 };
 
@@ -54,9 +56,17 @@ export function useOnboarding() {
       wakeword_progress: (wake) => {
         if (state().step !== 'wake') return;
         const n = Math.min(Math.max(Number(wake.n) || 0, 0), 5);
-        change({ wake: { n, total: 5 }, ...(n >= 5 ? { wakeDone: true, pending: false } : {}) });
+        change({ wake: { n, total: 5 }, wakeRejection: null, pending: false });
       },
-      wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, pending: false }); },
+      // TODO(BE): 지정된 Backend 작업본에는 wakeword_rejected 중계가 아직 없어 반영 전에는 이 이벤트가 도착하지 않음
+      wakeword_rejected: (rejection) => {
+        if (state().step !== 'wake') return;
+        const expected = Math.min(state().wake.n + 1, 5);
+        if (Number(rejection.n) !== expected) return;
+        const reason = typeof rejection.reason === 'string' ? rejection.reason.trim() : '';
+        change({ wakeRejection: { code: rejection.code ?? null, reason: reason || '제대로 녹음되지 않았습니다. 다시 불러주세요.' }, pending: false });
+      },
+      wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, wakeRejection: null, pending: false }); },
       voice_sentence: (voiceSentence) => {
         if (!voiceSteps.includes(state().step)) return;
         change({
@@ -85,8 +95,9 @@ export function useOnboarding() {
         const currentN = Number(state().voiceSentence?.n) || Math.min(state().voiceCompleted + 1, 5);
         const rejectedN = Number(rejection.n);
         if (rejectedN !== currentN) return;
-        const reason = voiceRejectionMessages[rejection.code]
-          ?? (typeof rejection.reason === 'string' ? rejection.reason.trim() : '');
+        const reason = (voiceRejectionMessages[rejection.code]
+          ?? (typeof rejection.reason === 'string' ? rejection.reason.trim() : ''))
+          || '제대로 녹음되지 않았습니다. 같은 문장을 다시 읽어주세요.';
         change({
           voiceResult: {
             ...rejection,

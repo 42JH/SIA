@@ -1,11 +1,13 @@
 import styles from './VoiceEnrollment.module.css';
+import MicLevelWaveform from './MicLevelWaveform';
 
-function RecordingView({ current, total, sentence, fullScreen }) {
+function RecordingView({ current, total, sentence, fullScreen, micLevels = [] }) {
   return <div className={`${styles.enrollment} ${fullScreen ? styles.fullScreen : ''}`}>
     <h2>AI에게 명령하듯 말해보세요</h2>
     <p className={styles.count}>{current} / {total} 문장</p>
     <blockquote className={styles.sentence}>“{sentence}”</blockquote>
-    <p className={styles.waiting} role="status">음성을 판독하고 있습니다.</p>
+    <MicLevelWaveform levels={micLevels} />
+    <p className={styles.waiting} role="status">문장을 다 읽으면 자동으로 다음 문장으로 넘어갑니다.</p>
   </div>;
 }
 

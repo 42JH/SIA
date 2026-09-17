@@ -3,7 +3,7 @@ import { sendFeMessage } from './feSocket';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 const responses = {
-  wakeword_enroll_start: ['wakeword_progress', 'wakeword_done'],
+  wakeword_enroll_start: ['wakeword_progress', 'wakeword_rejected', 'wakeword_done'],
   voice_reg_start: ['voice_sentence', 'voice_reg_denied'],
   // TODO(BE): 현재 FeWsRoutes에 voice_sentence_next 처리 분기 추가 필요
   voice_sentence_next: ['voice_sentence'],

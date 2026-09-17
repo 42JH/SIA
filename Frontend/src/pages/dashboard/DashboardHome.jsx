@@ -102,8 +102,8 @@ export default function DashboardHome() {
     <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
       {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} />}
-      {['gestures', 'voice', 'gaze'].includes(view) && <div className={styles.panelHeading}><button onClick={back}>‹</button><h1>{panelTitle}</h1></div>}
-      {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel />}{view === 'gaze' && <GazePanel />}{view === 'settings' && <SettingsPanel />}
+      {view === 'gestures' && <div className={styles.panelHeading}><button onClick={back}>‹</button><h1>{panelTitle}</h1></div>}
+      {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel onBack={back} />}{view === 'gaze' && <GazePanel onBack={back} />}{view === 'settings' && <SettingsPanel />}
     </section>
   </main>;
 }
