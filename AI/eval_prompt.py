@@ -33,10 +33,44 @@ CASES = HERE / "eval" / "cases"
 HISTORY = HERE / "eval" / "history.jsonl"
 
 
+BOX_IOU_MIN = 0.5   # 영역 일치 하한. 물체 검출의 통상 기준이고, 9/3 기준선과 이만큼도
+                    # 안 겹치면 "다른 데를 저장했다"로 본다.
+
+
+def box_iou(a, b):
+    """두 픽셀 사각형의 IoU. 안 겹치면 0.0."""
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if not inter:
+        return 0.0
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua else 0.0
+
+
 def match(expected, result):
     """expected의 각 항목이 result와 맞는지 — (통과 여부, 어긋난 필드 설명들)."""
     bad = []
     for k, want in expected.items():
+        if k == "screen":
+            continue          # box_px 를 픽셀로 풀기 위한 부속값 — 그 자체는 채점 대상이 아니다
+        if k == "box_px":
+            # 사용자 기준은 "저장할 대상을 특정했나" 다. 같은 기사 문단이라도 픽셀로 자르든
+            # 글로 담든 둘 다 유효한 답이라(프롬프트가 그렇게 시킨다) 갈래 자체는 틀림이 아니다.
+            # 실측(9/17): 9/3 에 이미지로 저장된 8건 중 2건을 지금 모델은 텍스트로 고르는데,
+            # 담긴 내용은 응시한 그 문단이었다 — 박스만 보면 이걸 오답으로 센다.
+            import brain
+
+            got = brain.bbox_to_box(tuple(expected["screen"]), result.get("bbox"))
+            if got is not None:
+                iou = box_iou(got, want)
+                if iou < BOX_IOU_MIN:
+                    bad.append(f"box: IoU {iou:.2f} < {BOX_IOU_MIN} (기준 {want}, 이번 {list(got)})")
+            elif (result.get("save_text") or "").strip():
+                pass   # 줄글 갈래 — 대상은 특정했다
+            else:
+                bad.append("대상 미특정: bbox·save_text 둘 다 비었다 → 아무것도 저장되지 않는다")
+            continue
         if k.endswith("~"):
             got = str(result.get(k[:-1]) or "")
             if str(want) not in got:
@@ -57,10 +91,22 @@ def selftest():
     assert not ok
     ok, _ = match({"app": None}, {})  # 필드 부재는 null과 동일 취급
     assert ok
+    assert box_iou((0, 0, 10, 10), (0, 0, 10, 10)) == 1.0
+    assert box_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    assert abs(box_iou((0, 0, 10, 10), (0, 0, 5, 10)) - 0.5) < 1e-9
+    exp = {"box_px": [0, 0, 1000, 1000], "screen": [2000, 2000]}
+    ok, bad = match(exp, {"bbox": [0, 0, 500, 500]})      # 정규화 0~1000 → 화면 절반
+    assert ok, bad
+    ok, bad = match(exp, {"bbox": [500, 500, 999, 999]})  # 반대쪽 사분면
+    assert not ok and "IoU" in bad[0], bad
+    ok, bad = match(exp, {"bbox": None})                  # 둘 다 없으면 아무것도 저장 안 된다
+    assert not ok and "대상 미특정" in bad[0], bad
+    ok, _ = match(exp, {"bbox": None, "save_text": "응시한 문단 전문"})   # 줄글 갈래도 정답
+    assert ok
     print("selftest ok")
 
 
-def run(only=None):
+def run(only=None, action=None):
     from PIL import Image
     from google.genai import types
 
@@ -78,6 +124,10 @@ def run(only=None):
             if d.is_dir() and not d.name.startswith("synth_")] if CASES.exists() else []
     if only:
         dirs = [d for d in dirs if d.name == only]
+    if action:
+        dirs = [d for d in dirs
+                if (d / "expected.json").exists()
+                and json.loads((d / "expected.json").read_text(encoding="utf-8")).get("action") == action]
     unlabeled = [d.name for d in dirs if not (d / "expected.json").exists()]
     dirs = [d for d in dirs if (d / "expected.json").exists()]
     if not dirs:
@@ -98,7 +148,8 @@ def run(only=None):
                     mime_type="image/jpeg"))
         if meta.get("dom"):
             parts.append(brain.dom_context_part(meta["dom"]))
-        parts.append(brain.build_prompt(meta.get("session", False), meta.get("pending_q")))
+        parts.append(brain.build_prompt(meta.get("session", False), meta.get("pending_q"),
+                                        (d / "crop.jpg").exists()))
         t0 = time.monotonic()
         result, err = {}, None
         try:
@@ -243,4 +294,5 @@ if __name__ == "__main__":
         run_adopt()
     else:
         only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
-        run(only)
+        action = sys.argv[sys.argv.index("--action") + 1] if "--action" in sys.argv else None
+        run(only, action)
