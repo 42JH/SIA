@@ -174,8 +174,6 @@ flowchart LR
 | **SQLite** | 설정, 메타데이터, 로컬 경로 정보 관리 |
 | **FileSystem** | 모델, 캘리브레이션, 사용자 프로필, 제스처 데이터 관리 |
 
-> Tauri 기반 Desktop 통합은 현재 개발·통합 테스트 단계입니다.
-
 ---
 
 ## 🛡️ Safety by Design
@@ -214,8 +212,6 @@ SIA의 프로그램 UI/UX는 **Figma 디자인 문서**를 기준으로 관리�
 
 ### [→ SIA Figma Design 바로가기](https://www.figma.com/design/hLBjLhWQml0yTQxfRyf9U6/%ED%8A%B9%ED%99%94-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8?node-id=0-1&p=f&t=kic3KLFKuSlmAIfa-0)
 
-README에는 프로젝트의 핵심 구조만 남기고, 구체적인 화면 설계와 UI 흐름은 Figma를 기준으로 확인할 수 있도록 분리했습니다.
-
 ---
 
 ## 📚 Project Documents
@@ -232,16 +228,14 @@ README는 프로젝트를 처음 보는 사람이 빠르게 이해하기 위한 
 | **API Specification** | Repository Docs | FE/BE 등 인터페이스 명세 |
 | **Protocol** | Repository Docs | 모듈 간 통신 규약 |
 
-> 세부 설계와 개발 규칙을 README에 모두 넣기보다, README에서는 프로젝트의 핵심만 보여주고 상세 내용은 원문 문서로 분리합니다.
-
 ---
 
 ## 👥 Team Underdog
 
 | 이름 | 담당 | 주요 역할 |
 | --- | --- | --- |
-| **김현호 ⭐** | Team Leader · INFRA · Integration · QA | 시스템 아키텍처/통신 흐름, FE·BE·AI 통합, 실행·배포 구조, E2E QA |
-| **김도이** | AI · FE | 동작·시선 인식 파이프라인, AI/FE 연동 |
+| **김현호 ⭐** | Team Leader · INFRA · Integration | 시스템 아키텍처/통신 흐름, FE·BE·AI 통합, 실행·배포 구조 |
+| **김도이** | AI | 동작·시선 인식 파이프라인 |
 | **김수경** | FE | Dashboard, Custom Gesture, Log 등 UI/UX |
 | **백화진** | BE | 로컬 데이터 구조, Application Core, Windows Backend 연동 |
 | **안건석** | AI | Voice Pipeline, Wake Word 모델 학습·검증 |
@@ -256,13 +250,12 @@ README는 프로젝트를 처음 보는 사람이 빠르게 이해하기 위한 
 ```text
 master
   └── development
-        ├── dev/fe
-        ├── dev/be
-        └── dev/ai
-              └── feature/S15P21D106-{issue}-{slug}
+        └── integration
+              ├── dev/fe
+              ├── dev/be
+              └── dev/ai
+                    └── feature/S15P21D106-{issue}-{slug}
 ```
-
-README에는 핵심 흐름만 표시하며, Commit Convention과 MR 규칙 등 세부 협업 규칙은 팀 개발 문서에서 관리합니다.
 
 ---
 
@@ -274,8 +267,6 @@ SIA는 최종 사용자가 별도의 개발 환경을 구성하지 않아도 사
 ### 1. Download
 
 프로젝트의 **GitLab Releases** 페이지에서 최신 버전을 확인하고 `.exe` 파일을 다운로드합니다.
-
-[→ GitLab Releases](https://lab.ssafy.com/s15-ai-image-sub1/S15P21D106/-/releases)
 
 ### 2. Run
 
@@ -317,8 +308,6 @@ Intent 판단 및 Safety Validation
     ↓
 Windows Action
 ```
-
-> 배포 버전과 실행 방법은 GitLab Release Notes를 기준으로 관리합니다.
 
 ---
 
