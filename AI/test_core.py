@@ -1178,6 +1178,7 @@ def test_save_crop_paths():
     """
     import json
     import threading
+    import time
     from unittest.mock import Mock
 
     from brain import Brain, DOM_TEXT_MAX, bbox_to_box, build_prompt, dom_context_part
@@ -1210,6 +1211,8 @@ def test_save_crop_paths():
     class Img:
         size = screen
 
+    logs = []
+
     def run(result):
         b = Brain.__new__(Brain)
         b.overlay, b._pending, b._apps = Mock(), None, None
@@ -1221,7 +1224,13 @@ def test_save_crop_paths():
         b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
         b._say = lambda msg, *a, **k: b.said.append(msg)
         b._session_until = lambda: 0.0
-        b._execute(result, None, t_utter=1.0, full_img=Img(), tier=2)
+        import brain as _b
+        saved = _b.log_utterance
+        _b.log_utterance = lambda **f: logs.append(f)
+        try:
+            b._execute(result, None, t_utter=time.monotonic() - 6.0, full_img=Img(), tier=2)
+        finally:
+            _b.log_utterance = saved
         return b
 
     base = {"audio_is_speech": True, "is_command": True, "wake_heard": True,
@@ -1238,6 +1247,16 @@ def test_save_crop_paths():
 
     b = run({**base, "save_text": None, "bbox": None})
     assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
+
+    # ── 계측: 저장 1건당 줄 하나. 이게 없으면 "원한 부분을 저장했나"를 사후에 못 잰다.
+    kinds = [f["save_kind"] for f in logs if f.get("gate") == "save"]
+    assert kinds == ["text", "region", "text", "none"], kinds
+    region = next(f for f in logs if f.get("save_kind") == "region")
+    assert region["bbox"] == [200, 200, 800, 800] and region["box"] == list(big)
+    assert region["screen"] == list(screen)
+    assert 5.0 < region["utter_to_save_s"] < 8.0, region   # 시점 불일치 창 — 발화마다 잰다
+    text = next(f for f in logs if f.get("save_kind") == "text")
+    assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
 
 
 def test_mic_preview():

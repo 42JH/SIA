@@ -292,6 +292,24 @@ def log_utterance(**fields):
         pass  # 로깅 실패가 비서를 멈추면 안 됨
 
 
+def log_save(t_utter, kind, result, box=None, screen=None, ok=None, payload=None):
+    """저장 1건의 결과. 발화 줄(gate=router|llm)과 ts 로 잇는다.
+
+    저장은 드문 사건이라 줄을 하나 더 쓰는 비용이 싸고, log_utterance 가 _execute 보다
+    먼저 도는 구조라 같은 줄에는 못 넣는다. 이게 없으면 "원한 부분을 저장했나"는
+    EVAL_CAPTURE 를 켜 둔 날이 아니면 사후에 판정할 방법이 없다(9/17 실측)."""
+    text = (result.get("save_text") or "").strip()
+    p = payload if isinstance(payload, dict) else {}
+    log_utterance(gate="save", save_kind=kind,
+                  bbox=result.get("bbox"), box=list(box) if box else None,
+                  screen=list(screen) if screen else None,
+                  save_len=len(text), save_head=text[:40] or None,
+                  be_ok=ok, path=p.get("path"), width=p.get("width"), height=p.get("height"),
+                  # 발화 시작 → BE 캡처 호출. BE 는 '호출 시점' 화면을 새로 찍으므로 이 값이
+                  # 곧 "LLM 이 본 화면과 저장된 화면의 시차"다.
+                  utter_to_save_s=round(time.monotonic() - t_utter, 2))
+
+
 def capture_case(audio_i16, full_img, crop_img, session, pending_q, dom):
     """프롬프트 회귀용 골든 케이스 수집 — EVAL_CAPTURE=1이면 발화 1건당 폴더 하나.
 
@@ -1137,7 +1155,13 @@ class Brain(threading.Thread):
                               is_command=result.get("is_command"),
                               action=result.get("action"),
                               transcript=result.get("transcript", "")[:120],
-                              had_dom=dom is not None, **audio_stats(audio))
+                              had_dom=dom is not None,
+                              # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
+                              # 세션 없음/브라우저 없음/타임아웃을 못 가른다.
+                              dom_via=(dom or {}).get("via"),
+                              dom_chars=len((dom or {}).get("text") or "") or None,
+                              dom_cut=(dom or {}).get("truncated"),
+                              **audio_stats(audio))
                 with self._audio_lock:
                     stale = generation != self._audio_generation
                 # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
@@ -1413,7 +1437,9 @@ class Brain(threading.Thread):
                 name = f"저장_{ts}.txt"
                 # 저장 위치는 BE 가 정한다(~/Documents/SIA). 이름이 겹치면 BE 가 " (1)" 을 붙이므로
                 # 우리가 지어 보낸 이름이 아니라 BE 가 실제로 쓴 경로를 그대로 말한다.
-                if self._be_ok("files.save", {"name": name, "content": text}):
+                ok = self._be_ok("files.save", {"name": name, "content": text})
+                log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
+                if ok:
                     saved = (self._last_be_payload or {}).get("path") or name
                     self._say(f"글로 저장했습니다 → {saved}")
                     return completed
@@ -1436,15 +1462,19 @@ class Brain(threading.Thread):
                 # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
                 # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
                 off = virtual_screen_offset(full_img.size) or (0, 0)
-                if self._be_ok("screen.capture_region",
-                               {"x1": box[0] + off[0], "y1": box[1] + off[1],
-                                "x2": box[2] + off[0], "y2": box[3] + off[1]}):
-                    p = self._last_be_payload or {}
+                ok = self._be_ok("screen.capture_region",
+                                 {"x1": box[0] + off[0], "y1": box[1] + off[1],
+                                  "x2": box[2] + off[0], "y2": box[3] + off[1]})
+                p = self._last_be_payload or {}
+                log_save(t_utter, "region", result, box=box, screen=full_img.size,
+                         ok=ok, payload=p)
+                if ok:
                     self._say(say or f"화면을 저장했습니다 → {p.get('path') or '완료'}")
                     return completed
                 return self._be_down("화면 저장")
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
                 print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
+                log_save(t_utter, "none", result, screen=full_img.size if full_img else None)
                 self._say("저장할 영역을 찾지 못했습니다")
             return None
         elif action == "none":  # 호출어는 들렸지만 명령을 못 알아들음 — FE 가 인식된 말을 같이 보여준다
