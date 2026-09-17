@@ -562,6 +562,10 @@ def main():
                     hits_no_utter = 0
                     # 등록·온보딩 수집 중이면 그쪽으로. 둘 다 켜져 있으면 나중에 시작한 쪽 — 화자 등록을 끝내지 않고
                     # 이름 불러보기로 되돌아가면 BE 가 등록을 접지 않아, 순서를 고정하면 "시아야" 가 낭독 문장으로 먹힌다
+                    if link and link.wake and link.wake.expired(now):
+                        # 온보딩을 중간에 떠난 경우. 접지 않으면 이 아래 분기가 모든 발화를
+                        # 등록 샘플로 먹어 음성 명령이 통째로 죽는다 (취소 이벤트가 없다).
+                        link.wake.cancel()
                     open_ = [s for s in (link.voice, link.wake) if s and s.active] if link else []
                     enroll = max(open_, key=lambda s: s.started_at, default=None)
                     if enroll:
