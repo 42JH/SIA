@@ -14,6 +14,7 @@
   ("notice", message)   — 마이크 실패 안내, BE에는 notice {message}로 전달
 """
 import ctypes
+import os
 import sys
 import threading
 import time
@@ -23,6 +24,9 @@ from functools import cache
 import numpy as np
 
 SR = 16000
+# VAD 시작 임계의 절대 하한(int16 rms). 마이크마다 입력 레벨이 5배까지 차이 나고
+# (실측: AirPods Max 핸즈프리 vs 내장 배열) 윈도우 볼륨을 올려도 안 닿는 장치가 있다.
+MIC_FLOOR = float(os.environ.get("MIC_FLOOR") or 350.0)
 BLOCK = 480  # 30ms
 MIC_STALL_S = 3.0         # NOTE(튜닝): 입력이 이 시간 동안 없으면 장치 중단으로 보고 복구한다.
 MIC_RETRY_S = 1.0         # NOTE(튜닝): 기본 장치도 실패했을 때 첫 재시도 간격. 이후 두 배씩 늘린다.
@@ -38,7 +42,7 @@ class VadSegmenter:
     """
 
     def __init__(self, sr=SR, block=BLOCK, start_blocks=3, end_silence_s=0.55,
-                 preroll_s=2.0, max_s=12.0, min_speech_s=0.35, floor=350.0,
+                 preroll_s=2.0, max_s=12.0, min_speech_s=0.35, floor=None,
                  noise_win_s=40.0, noise_pct=80.0, ratio=1.5, ratio_lo=1.0, tail_s=0.3):
         # start 3블록(90ms)+프리롤 2.0초 — 호출어 첫 음절이 잘리면 명령 전체가 기각되므로 시작은 후하게 잡는다.
         # (2 → 3 블록: 유튜브 오탐 −30% 에 검출 −0~1 — 가장 싼 레버)
@@ -66,8 +70,8 @@ class VadSegmenter:
         self.preroll_n = int(preroll_s / self.block_dur)
         self.max_blocks = int(max_s / self.block_dur)
         self.min_speech_blocks = int(min_speech_s / self.block_dur)
-        self.floor = floor
-        self.noise = floor
+        self.floor = MIC_FLOOR if floor is None else floor
+        self.noise = self.floor
         self.last_rms = 0.0  # 마지막 블록 rms — 시동어 점수 줄에 같이 찍어 "조각이 왜 안 열렸나" 를 가른다
         self.recording = False
         self._preroll = []
@@ -380,6 +384,7 @@ class VoiceListener(threading.Thread):
                                             blocksize=BLOCK, device=device, extra_settings=extra)) as stream:
                     stream.start()
                     self.device, self.error = device, None
+                    print(f"[마이크] {info['name']} (시작 임계 {MIC_FLOOR:.0f})")
                     last_data = time.monotonic()
                     recovered = False
                     while self.running and not self._changed.is_set():

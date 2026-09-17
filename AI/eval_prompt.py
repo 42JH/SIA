@@ -62,7 +62,6 @@ def selftest():
 
 def run(only=None):
     from PIL import Image
-    from google import genai
     from google.genai import types
 
     import brain
@@ -71,7 +70,7 @@ def run(only=None):
     if not keys:
         sys.exit("GEMINI_API_KEY 없음 — 환경변수 또는 gemini_api_key.txt")
     ki = 0
-    client = genai.Client(api_key=keys[ki])
+    client = brain.llm_client(keys[ki])  # 설정·재시도는 brain 과 같은 것을 쓴다
 
     # synth_(TTS) 케이스는 1단 평가 전용 — TTS 기계음은 화자 게이트·기계음
     # 기각 판정과 얽혀서 LLM 회귀에서는 제외한다 (--tier1에서만 채점).
@@ -100,26 +99,13 @@ def run(only=None):
         if meta.get("dom"):
             parts.append(brain.dom_context_part(meta["dom"]))
         parts.append(brain.build_prompt(meta.get("session", False), meta.get("pending_q")))
-        cfg = dict(response_mime_type="application/json", temperature=0.1)
-        if "lite" not in brain.MODEL:
-            cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         t0 = time.monotonic()
         result, err = {}, None
-        for attempt in range(max(1, len(keys))):
-            try:
-                resp = client.models.generate_content(
-                    model=brain.MODEL, contents=parts, config=types.GenerateContentConfig(**cfg))
-                text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-                result = json.loads(text)
-                break
-            except Exception as e:
-                if brain.is_quota_error(e) and len(keys) > 1 and attempt < len(keys) - 1:
-                    ki = (ki + 1) % len(keys)
-                    client = genai.Client(api_key=keys[ki])
-                    print(f"쿼터 소진 → 키 {ki + 1}/{len(keys)}로 전환")
-                    continue
-                err = e
-                break
+        try:
+            resp, client, ki, _ = brain.llm_generate(client, parts, keys, ki)
+            result = brain.llm_json(resp)
+        except Exception as e:
+            err = e
         ok, bad = (False, [f"호출 실패: {err}"]) if err else match(expected, result)
         if not ok:
             fails.append(d.name)

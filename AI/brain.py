@@ -517,6 +517,78 @@ def is_quota_error(e):
     return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
 
 
+def is_transient_error(e):
+    """키를 바꿔도 소용없는 일시 장애 — 같은 키로 한 번 더 시도할 값어치가 있다."""
+    s = str(e).lower()
+    return ("503" in s or "unavailable" in s or "overloaded" in s
+            or "timeout" in s or "timed out" in s or "deadline" in s)
+
+
+LLM_TIMEOUT_MS = int(os.environ.get("LLM_TIMEOUT_MS") or 15000)
+
+
+def llm_client(api_key):
+    """LLM 클라이언트 한 개. 타임아웃을 반드시 건다 — SDK 기본은 무한 대기라
+    응답 없는 요청 하나가 단일 Brain 워커를 영구 정지시킨다."""
+    from google import genai
+    from google.genai import types
+
+    return genai.Client(api_key=api_key,
+                        http_options=types.HttpOptions(timeout=LLM_TIMEOUT_MS))
+
+
+def llm_config():
+    """generate_content 설정 — brain(실서비스)과 eval_prompt(회귀)가 같은 것을 쓴다.
+    한쪽만 바꾸면 '평가에서 잰 값'과 '실제로 도는 값'이 달라진다."""
+    from google.genai import types
+
+    cfg = dict(response_mime_type="application/json", temperature=0.1)
+    if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
+        # thinking_level="MINIMAL" 도 재 봤지만 같은 케이스 3건에서 지연 차이가 없었고
+        # (8.26/5.87/6.06s vs 8.61/5.13/6.09s, 양쪽 다 thoughts=0) 폐기 예정이라는 경고는
+        # 생성용이 아니라 튜닝 설정(ReinforcementTuning)에 붙은 것이라 바꿀 이유가 없다.
+        cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    return cfg
+
+
+def llm_generate(client, parts, keys, key_i):
+    """도구 호출 한 번 + 재시도. (응답, 새 key_i, 시도 횟수) 를 돌려준다.
+
+    재시도 사유는 둘 — 쿼터 소진(429)은 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번 더.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 사라진다."""
+    from google.genai import types
+
+    cfg = llm_config()
+    retried_transient = False
+    tries = 0
+    for _ in range(max(1, len(keys)) + 1):
+        tries += 1
+        try:
+            return client.models.generate_content(
+                model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
+            ), client, key_i, tries
+        except Exception as e:
+            if is_quota_error(e) and len(keys) > 1:
+                key_i = (key_i + 1) % len(keys)
+                client = llm_client(keys[key_i])
+                print(f"쿼터 소진 → 키 {key_i + 1}/{len(keys)}로 전환")
+                continue
+            if is_transient_error(e) and not retried_transient:
+                retried_transient = True
+                print(f"일시 장애 → 한 번 더: {str(e)[:80]}")
+                continue
+            raise
+    raise RuntimeError("LLM 재시도 한도 초과")
+
+
+def llm_json(resp):
+    """응답 텍스트 → dict. 코드펜스를 붙여 주는 경우가 있어 벗겨 낸다."""
+    text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
+    return json.loads(text)
+
+
+
+
 def wav_bytes(audio_i16, sr=16000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -577,6 +649,8 @@ class Brain(threading.Thread):
     _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
     _router_fails = 0
     _last_be_payload = None  # 마지막 _be_ok 성공 payload
+    _last_be_error = None    # 마지막 _be_ok 실패 시 BE 가 준 {code, message}
+    _apps = None             # BE 앱 레지스트리 캐시 (app.list, 세션 불요)
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
@@ -616,9 +690,7 @@ class Brain(threading.Thread):
             print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
                   + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         if self._keys:
-            from google import genai
-
-            self._client = genai.Client(api_key=self._keys[0])
+            self._client = llm_client(self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
         else:
@@ -646,11 +718,13 @@ class Brain(threading.Thread):
         if not be:
             return False
         ok, payload = be.call(tool, args or {})
+        self._last_be_error = None
         if ok is True:
             self._last_be_payload = payload
             return True
         if ok is False and isinstance(payload, dict):
-            print(f"[BE {tool} → 로컬 폴백] {payload.get('code')}: {payload.get('message')}")
+            self._last_be_error = payload   # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
+            print(f"[BE {tool} 거절] {payload.get('code')}: {payload.get('message')}")
         return False
 
     def _win_ref(self, hwnd):
@@ -683,9 +757,35 @@ class Brain(threading.Thread):
         return None
 
     def _be_down(self, what):
-        """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다."""
-        self._say(f"{what} — 백엔드에 연결되지 않아 실행하지 못했습니다")
+        """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다.
+        BE 가 이유를 말해 줬으면 그 이유를, 아예 못 닿았으면 연결 문제를 알린다 —
+        둘을 뭉뚱그리면 사용자도 우리도 원인을 못 찾는다(실측: 앱 미등록을 '연결 안 됨'으로 안내)."""
+        err = getattr(self, "_last_be_error", None)
+        reason = (err or {}).get("message") or "백엔드에 연결되지 않아 실행하지 못했습니다"
+        self._say(f"{what} — {reason}")
         return None
+
+    def _app_ref(self, key, label):
+        """앱 키(chrome·calc…) → BE 앱 ref. 없으면 None.
+
+        BE 레지스트리는 시작 메뉴에서 만들어져 ref 슬러그가 기계마다 다르다 — 이 PC 에선
+        크롬이 app:google-chrome 이고 탐색기·그림판은 아예 없었다(실측). 그래서 app:{key} 를
+        그대로 보내지 않고 목록에서 찾는다. app.list 는 세션이 필요 없는 읽기 도구다.
+        """
+        if self._apps is None:
+            self._apps = self._be_ok("app.list") and (self._last_be_payload or {}).get("apps") or []
+        want = f"app:{key}"
+        for a in self._apps:                      # ① ref 완전 일치
+            if a.get("ref") == want:
+                return want
+        for a in self._apps:                      # ② 슬러그에 키가 포함 (chrome → google-chrome)
+            if key in (a.get("ref") or "").removeprefix("app:").split("-"):
+                return a["ref"]
+        for a in self._apps:                      # ③ 표시 이름이 우리가 말한 그 이름
+            if label and label == (a.get("name") or ""):
+                return a["ref"]
+        return None
+
 
     def _explorer_items(self):
         """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
@@ -847,10 +947,13 @@ class Brain(threading.Thread):
                 audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
                 # 제스처 등록이 시작되는 순간에는 submit() 이전에 들어와 있던 발화가
                 # 큐에 남아 있을 수 있다. 소비 단계에서도 한 번 더 버려야 등록 중
-                # 세션/명령이 뒤늦게 실행되지 않는다.
+                # 세션/명령이 뒤늦게 실행되지 않는다. 버릴 발화는 먼저 버린다.
                 if self.paused:
                     print("[발화 무시] 일시정지 중 큐에 남은 발화")
                     continue
+                # 이 시점엔 아직 본문이 없다 — DomBridge 은퇴 후 dom 은 2단에서 BE 로 가져온다(아래).
+                # EVAL_CAPTURE 골든셋 수집이 여기서 dom 을 읽으므로 반드시 먼저 정의한다.
+                dom = None
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
@@ -969,7 +1072,7 @@ class Brain(threading.Thread):
                 # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
                 # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
                 result, stt_draft, tier = None, None, 2
-                dom, dom_s, t_pre = None, None, None  # dom 은 2단(LLM) 경로에서만 채운다
+                dom_s, t_pre = None, None  # dom 은 2단(LLM) 경로에서만 채운다(위에서 None 으로 시작)
                 self._last_stt_s = self._last_stt_lp = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연 — 확인 대기 경로(라우터 생략)도 리셋
                 if not (self._pending and t_utter < self._pending[2]):
                     t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
@@ -1087,29 +1190,11 @@ class Brain(threading.Thread):
         if stt_draft:  # 1단 STT 초안 — 판정 기준은 오디오, 초안은 힌트 (오인식 가능)
             parts.append(f"로컬 STT 초안(오인식 가능, 참고용 힌트): {stt_draft}")
         parts.append(prompt)
-        cfg = dict(response_mime_type="application/json", temperature=0.1)
-        if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
-            cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         t0 = time.monotonic()
-        for attempt in range(max(1, len(self._keys))):
-            try:
-                resp = self._client.models.generate_content(
-                    model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
-                )
-                break
-            except Exception as e:
-                # 쿼터 소진이고 남은 키가 있으면 다음 키로 재시도
-                if is_quota_error(e) and len(self._keys) > 1 and attempt < len(self._keys) - 1:
-                    self._key_i = (self._key_i + 1) % len(self._keys)
-                    from google import genai
-
-                    self._client = genai.Client(api_key=self._keys[self._key_i])
-                    print(f"쿼터 소진 → 키 {self._key_i + 1}/{len(self._keys)}로 전환")
-                    continue
-                raise
-        text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-        result = json.loads(text)
-        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), attempt + 1  # 키 회전 횟수 포함
+        resp, self._client, self._key_i, tries = llm_generate(
+            self._client, parts, self._keys, self._key_i)
+        result = llm_json(resp)
+        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), tries  # 키 회전·재시도 횟수 포함
         print(f"[{time.monotonic() - t0:.1f}s] {result.get('transcript', '')!r} → "
               f"{result.get('action')} (명령={result.get('is_command')})")
         return result
@@ -1213,8 +1298,13 @@ class Brain(threading.Thread):
                 self._say(f"지원하지 않는 앱: {result.get('app')}")
                 return
             # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
-            elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
-                return self._be_down(f"{app} 실행")
+            else:
+                ref = self._app_ref(key, app)
+                if not ref:
+                    self._say(f"{app} — 백엔드에 등록된 앱이 아닙니다")
+                    return None
+                if not self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행"):
+                    return self._be_down(f"{app} 실행")
             return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
