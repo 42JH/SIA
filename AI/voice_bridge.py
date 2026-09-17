@@ -8,6 +8,7 @@ import collections
 import hashlib
 import io
 import json
+import math
 import os
 import tempfile
 import threading
@@ -68,6 +69,60 @@ def clear_voice_cache(speaker, profile_path):
         print(f"[보이스 동기화] 서버에 사용 중인 목소리가 없어 로컬 프로필을 지운다 — {path}")
     path.unlink(missing_ok=True)
     speaker.apply_profile(None, speaker.default_threshold)
+
+
+MIC_PREVIEW_HZ = 20        # BE 권장 10~30 Hz (§5.5). 블록당 1개면 33 Hz 인데 파형이 얻는 건 없고 메시지만 는다.
+MIC_PREVIEW_FLOOR_DB = -60.0   # 이 아래는 무음(0.0). 레벨 미터의 통상적인 바닥.
+
+
+def mic_level(rms):
+    """int16 rms → 0.0~1.0. 선형으로 32768 로 나누면 보통 말소리가 0.03 언저리라 막대가 안 보인다 —
+    레벨 미터는 dBFS 로 그린다. 바닥 -60 dBFS (말소리 rms 1000 ≈ 0.49, VAD 시작 임계 350 ≈ 0.34)."""
+    if rms <= 0:
+        return 0.0
+    db = 20.0 * math.log10(min(float(rms), 32768.0) / 32768.0)
+    return max(0.0, min(1.0, (db - MIC_PREVIEW_FLOOR_DB) / -MIC_PREVIEW_FLOOR_DB))
+
+
+class MicPreview:
+    """상시 감지 루프가 이미 재 둔 입력 레벨을 BE(mic_preview_*)로 흘린다 (프로토콜 §5.5).
+
+    등록 화면에서 "내 목소리가 들어가고 있나"를 말하는 동안 보여 주는 파형이다. 등록 흐름은
+    순번만 알려줄 뿐 말하는 중엔 아무 신호가 없어서, 판독 결과가 뜰 때까지 마이크가 살았는지 모른다.
+
+    마이크를 새로 열지 않는다 — VAD 가 블록마다 계산해 둔 rms 를 읽어 보내기만 하므로 미리보기
+    중에도 호출어 감지는 그대로 돈다. 카메라 판(gesture_be.GesturePreview)과 달리 인코딩이 없어
+    워커 스레드도 큐도 없고, 준비 단계가 없어 STARTING 없이 바로 READY 다.
+    등록이 시작돼도 끊지 않는다 — 파형을 보여주려는 때가 바로 낭독 중이다 (카메라와 반대).
+    """
+
+    def __init__(self, link):
+        self.link = link
+        self.active = False
+        self._seq = 0
+        self._last_sent = 0.0
+
+    def start(self):
+        self.active = True
+        self._seq = 0
+        self._last_sent = 0.0
+        self.link.send_event("mic_preview_state", {"phase": "READY"})
+
+    def stop(self):
+        if not self.active:
+            return
+        self.active = False
+        self.link.send_event("mic_preview_state", {"phase": "STOPPED"})
+
+    def tick(self, rms, now):
+        """메인 루프에서 매 회 호출. 보낼 때가 아니면 즉시 돌아간다."""
+        if not self.active or now - self._last_sent < 1.0 / MIC_PREVIEW_HZ:
+            return
+        self._last_sent = now
+        self._seq += 1
+        # 한 메시지가 진폭 하나다 — 배열로 묶으면 묶은 만큼 파형이 늦게 움직인다 (§5.5).
+        self.link.send_event("mic_preview_level",
+                             {"seq": self._seq, "level": mic_level(rms), "tsMs": int(now * 1000)})
 
 
 class VoiceProfileSync:

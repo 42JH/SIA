@@ -316,6 +316,9 @@ def main():
     remote_cache = GestureTemplateCache(HERE / ".gesture_cache", HERE / "be_custom_gestures.npz")
     registration = GestureRegistration(link, remote_cache, active_custom) if link else None
     gesture_preview = GesturePreview(link) if link else None
+    from voice_bridge import MicPreview
+
+    mic_preview = MicPreview(link) if link else None
     remote_refs = {}
     if custom.n:
         print(f"커스텀 제스처 로드: {custom.class_names()} (등록: python gesture_studio.py)")
@@ -488,6 +491,10 @@ def main():
                         gesture_preview.start()
                     elif event_type == "cam_preview_stop" and gesture_preview:
                         gesture_preview.stop()
+                    elif event_type == "mic_preview_start" and mic_preview:
+                        mic_preview.start()
+                    elif event_type == "mic_preview_stop" and mic_preview:
+                        mic_preview.stop()
                     elif event_type == "reg_mode_start" and registration:
                         # BE가 reg_start 전에 cam_preview_stop을 먼저 보내는 게 계약이라
                         # 여기서 조율할 필요는 없지만, 순서가 어긋나도 안전하게 방어.
@@ -508,6 +515,10 @@ def main():
                 link.voice.apply_uploads()
             if link and link.voice_sync and link.voice_sync.apply_pending(voice.reset_audio):
                 pending_capture = None
+            if mic_preview:
+                # VAD 가 블록마다 재 둔 rms 를 그대로 흘린다 — 등록 중에도 계속 보낸다(§5.5).
+                # 카메라 미리보기처럼 프레임 처리 분기에 묶으면 등록·촬영 중에 파형이 멎는다.
+                mic_preview.tick(voice.seg.last_rms, now)
 
             # --- 음성 이벤트 처리 ---
             from brain import active_window_title, foreground_hwnd
