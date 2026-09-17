@@ -1,39 +1,29 @@
-.enrollment { position: relative; display: grid; min-height: 430px; grid-template-columns: 58% 42%; grid-template-rows: auto auto auto 1fr auto; align-items: start; color: #111d49; }
-.title { grid-column: 1; width: max-content; margin: 0; font-size: 32px; letter-spacing: -.045em; }
-.title::after { display: block; width: 88px; height: 5px; margin-top: 18px; border-radius: 4px; background: linear-gradient(90deg, #66c9df, #526fe0); content: ""; }
-.description { grid-column: 1 / -1; margin: 22px 0 0; color: #7188b7; font-size: 17px; }
-.count { grid-column: 1; margin: 30px 0 0; color: #7188b7; font-size: 18px; }
-.sentence { display: grid; min-height: 96px; grid-column: 1; place-items: center; margin: 22px 0 0; padding: 16px 22px; border: 2px solid #c2d1ea; background: #fbfdff; color: #111d49; font-size: 19px; text-align: center; }
-.waiting { grid-column: 1; margin: 26px 0 0; color: #7188b7; font-size: 15px; }
-.voiceTarget { position: relative; display: grid; width: 245px; height: 245px; grid-column: 2; grid-row: 1 / 5; place-items: center; align-self: center; justify-self: center; border: 2px solid #b8cae9; border-radius: 50%; }
-.voiceTarget::before, .voiceTarget::after { position: absolute; border: 2px solid #b8cae9; border-radius: 50%; content: ""; }
-.voiceTarget::before { inset: 29px; border-top-color: transparent; border-bottom-color: transparent; }
-.voiceTarget::after { inset: 59px; }
-.voiceTarget span { width: 22px; height: 22px; border-radius: 50%; background: #111d49; }
-.voiceTarget i { position: absolute; width: 82px; height: 2px; background: #111d49; }
-.voiceTarget i::after { position: absolute; top: -40px; left: 40px; width: 2px; height: 82px; background: #111d49; content: ""; }
-.voiceTarget strong { position: absolute; top: calc(100% + 20px); left: 50%; color: #7188b7; font-size: 16px; white-space: nowrap; transform: translateX(-50%); }
-.quality { display: flex; min-height: 62px; grid-column: 1 / -1; align-items: center; margin-top: 24px; padding: 0 24px; border: 2px solid #c2d1ea; color: #7188b7; }
-.quality strong { color: #111d49; }
-.reviewAudio { display: grid; width: 100%; min-height: 150px; grid-column: 1 / -1; grid-template-columns: 150px 1fr 70px; align-items: center; margin-top: 26px; padding: 0 24px; border: 2px solid #c2d1ea; background: #fbfdff; color: #111d49; }
-.reviewAudio time { color: #7188b7; font-size: 18px; }
-.reviewMicButton { position: relative; display: block !important; width: 112px !important; min-width: 112px !important; height: 112px; min-height: 112px !important; padding: 0 !important; border: 2px solid #b8cae9 !important; border-radius: 50%; background: #fbfdff !important; clip-path: none !important; }
-.reviewMic { position: absolute; inset: 0; }
-.reviewMic span { position: absolute; top: 23px; left: 50%; width: 25px; height: 52px; box-sizing: border-box; border: 4px solid #111d49; border-radius: 16px; transform: translateX(-50%); }
-.reviewMic i { position: absolute; top: 54px; left: 50%; width: 48px; height: 39px; box-sizing: border-box; border: 4px solid #111d49; border-top: 0; border-radius: 0 0 30px 30px; transform: translateX(-50%); }
-.reviewMic i::after { position: absolute; top: 37px; left: 50%; width: 4px; height: 17px; background: #111d49; content: ""; transform: translateX(-50%); }
-.reviewWave { display: flex; height: 86px; align-items: center; gap: 8px; }
-.reviewWave i { width: 8px; height: 42%; border-radius: 7px; background: #8fa9df; }
-.reviewWave i:nth-child(3n) { height: 68%; }
-.reviewWave i:nth-child(5n) { height: 86%; background: #253d7a; }
-.actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 14px; margin-top: 24px; }
-.actions button { min-width: 180px; }
-.actions .primary { background: linear-gradient(135deg, #243b76, #0f1b48); color: white; }
-.spinner { width: 94px; height: 94px; grid-column: 1 / -1; align-self: end; justify-self: center; border: 5px solid #dce5f3; border-top-color: #526fe0; border-radius: 50%; animation: spin .9s linear infinite; }
-.spinner + .title { grid-column: 1 / -1; justify-self: center; margin-top: 28px; }
-.spinner ~ p { grid-column: 1 / -1; justify-self: center; color: #7188b7; }
-.error { grid-column: 1 / -1; color: #aa293b; }
+.enrollment { position: relative; display: grid; min-height: 360px; align-content: start; color: var(--onboarding-ink); }
+.title { width: max-content; margin: 0; font-size: 30px; letter-spacing: -.045em; }
+.title::after { display: block; width: 78px; height: 5px; margin-top: 16px; border-radius: 4px; background: linear-gradient(90deg, var(--onboarding-cyan), var(--onboarding-blue)); content: ""; }
+.description { margin: 22px 0 0; color: var(--onboarding-muted); font-size: 17px; }
+.count { margin: 28px 0 0; color: var(--onboarding-muted); font-size: 18px; }
+.sentence { display: grid; min-height: 88px; place-items: center; margin: 20px 0 0; padding: 16px 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; background: var(--onboarding-panel); color: var(--onboarding-ink); font-size: 19px; text-align: center; }
+.waiting { margin: 18px 0 0; color: var(--onboarding-muted); font-size: 15px; }
+.liveWave { width: 100%; margin-top: 22px; }
+.quality { display: flex; min-height: 58px; align-items: center; margin-top: 22px; padding: 0 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; color: var(--onboarding-muted); }
+.quality strong { color: var(--onboarding-ink); }
+.reviewAudio { display: grid; width: 100%; min-height: 112px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; margin-top: 24px; padding: 16px 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; background: var(--onboarding-panel); color: var(--onboarding-ink); }
+.reviewAudio time { flex-shrink: 0; color: var(--onboarding-muted); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.reviewPlayButton { position: relative; display: grid !important; width: 72px !important; min-width: 72px !important; height: 72px; min-height: 72px !important; place-items: center; padding: 0 !important; border: 1.5px solid var(--onboarding-line) !important; border-radius: 50% !important; background: #fff !important; }
+.playIcon { width: 28px; height: 28px; margin-left: 4px; fill: var(--onboarding-navy); }
+.pauseIcon { display: block; width: 18px; height: 24px; border-right: 6px solid var(--onboarding-navy); border-left: 6px solid var(--onboarding-navy); }
+.reviewWave { display: flex; min-width: 0; height: 52px; align-items: center; gap: 3px; overflow: hidden; }
+.reviewWave i { min-width: 3px; flex: 1 1 3px; border-radius: 3px; background: linear-gradient(#66c9df, #1a3a78); transition: height 70ms linear; }
+.reviewWavePlayed { background: linear-gradient(#3aa8c4, #0f274f) !important; }
+.actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.actions button { min-width: 160px; min-height: 48px; border-radius: 8px; }
+.actions .primary { background: var(--onboarding-navy); color: white; }
+.spinner { width: 88px; height: 88px; justify-self: center; border: 5px solid #dce5f3; border-top-color: var(--onboarding-blue); border-radius: 50%; animation: spin .9s linear infinite; }
+.spinner + .title { justify-self: center; margin-top: 28px; }
+.spinner ~ p { justify-self: center; color: var(--onboarding-muted); }
+.error { color: #aa293b; }
 .fullScreen { position: static; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 900px) { .enrollment { grid-template-columns: 1fr; } .voiceTarget { display: none; } .title, .count, .sentence, .waiting { grid-column: 1; } .reviewAudio { grid-template-columns: 130px 1fr 64px; } }
-@media (max-width: 620px) { .enrollment { min-height: 600px; padding: 0; } .reviewAudio { grid-template-columns: 1fr 60px; padding: 0 16px; } .reviewMic { display: none; } .reviewWave { gap: 4px; } .reviewWave i { width: 4px; } .actions { flex-wrap: wrap; } .actions button { width: 100%; min-width: 0; } }
+@media (max-width: 900px) { .title, .count, .sentence, .waiting { grid-column: 1; } .reviewAudio { grid-template-columns: auto minmax(0, 1fr) auto; } }
+@media (max-width: 620px) { .enrollment { min-height: 520px; } .reviewAudio { grid-template-columns: auto minmax(0, 1fr); padding: 14px 16px; } .reviewAudio time { grid-column: 2; justify-self: end; } .reviewPlayButton { width: 64px !important; min-width: 64px !important; height: 64px; min-height: 64px !important; } .actions { flex-wrap: wrap; } .actions button { width: 100%; min-width: 0; } }

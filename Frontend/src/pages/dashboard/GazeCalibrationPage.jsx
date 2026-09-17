@@ -20,8 +20,8 @@ export default function GazeCalibrationPage() {
   const change = flow.change;
   const reset = flow.reset;
   const autoStarted = useRef(false);
-  const previewStarted = useRef(false);
   const previewSeq = useRef(-1);
+  const previewImg = useRef(null);
   const stopOpenRef = useRef(false);
   const heldResultRef = useRef(null);
   const [settingsConfig, setSettingsConfig] = useState(null);
@@ -89,58 +89,60 @@ export default function GazeCalibrationPage() {
   }, [change, flow.precheck, flow.step]);
 
   useEffect(() => {
+    if (flow.step !== 'position' || !connected) return undefined;
+    let cancelled = false;
+    let retryTimer;
+    const requestStart = () => {
+      if (cancelled) return;
+      try {
+        startGesturePreview();
+      } catch (error) {
+        setCameraPreviewReady(false);
+        setCameraPreviewError(error.message);
+        retryTimer = setTimeout(requestStart, 1200);
+      }
+    };
     const unsubscribe = subscribeGestures({
       cam_preview_state: (data) => {
-        const readyState = data.phase === 'READY';
-        if (readyState) {
-          previewStarted.current = true;
+        if (cancelled) return;
+        if (data.phase === 'READY') {
           setCameraPreviewReady(true);
           setCameraPreviewError('');
-        } else if (data.phase === 'ERROR' || data.phase === 'STOPPED') {
-          previewStarted.current = false;
+        } else if (data.phase === 'ERROR') {
           setCameraPreviewReady(false);
-          if (data.phase === 'ERROR') setCameraPreviewError(data.message || 'AI 카메라 화면을 불러올 수 없습니다.');
+          setCameraPreviewError(data.message || 'AI 카메라 화면을 불러올 수 없습니다.');
+          previewSeq.current = -1;
+          clearTimeout(retryTimer);
+          retryTimer = setTimeout(requestStart, 700);
         }
       },
       cam_preview_frame: (data) => {
-        if (!data.jpegB64) return;
+        if (cancelled || !data.jpegB64) return;
         const seq = Number(data.seq);
         if (!Number.isInteger(seq) || seq < 0 || seq <= previewSeq.current) return;
         previewSeq.current = seq;
-        previewStarted.current = true;
+        const src = `data:image/jpeg;base64,${data.jpegB64}`;
+        if (previewImg.current) previewImg.current.src = src;
         setCameraPreviewReady(true);
         setCameraPreviewError('');
-        setCameraPreviewFrame(`data:image/jpeg;base64,${data.jpegB64}`);
+        setCameraPreviewFrame((current) => current || src);
       },
       error: (data) => {
-        if (!['cam_preview_start', 'cam_preview_stop'].includes(data.of)) return;
-        previewStarted.current = false;
+        if (cancelled || data.of !== 'cam_preview_start') return;
         setCameraPreviewReady(false);
         setCameraPreviewError(data.message || 'AI 카메라 화면을 불러올 수 없습니다.');
+        previewSeq.current = -1;
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(requestStart, 1200);
       },
     });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (flow.step !== 'position' || !connected || previewStarted.current) return undefined;
-    try {
-      previewStarted.current = true;
-      previewSeq.current = -1;
-      setCameraPreviewFrame(null);
-      setCameraPreviewReady(false);
-      setCameraPreviewError('');
-      startGesturePreview();
-    } catch (error) {
-      previewStarted.current = false;
-      setCameraPreviewError(error.message);
-    }
+    requestStart();
     return () => {
-      if (!previewStarted.current) return;
+      cancelled = true;
+      clearTimeout(retryTimer);
+      unsubscribe();
       try { stopGesturePreview(); } catch { /* 연결 종료 시 별도 처리 없음 */ }
-      previewStarted.current = false;
       previewSeq.current = -1;
-      setCameraPreviewReady(false);
     };
   }, [connected, flow.step]);
 
@@ -230,7 +232,7 @@ export default function GazeCalibrationPage() {
   if (flow.step === 'start') {
     content = <CalibrationShell title="시선 보정" subtitle="시선 보정을 준비하고 있습니다."><div className={styles.preparing}><span className={styles.spinner} /><h2>카메라와 AI 연결을 확인하고 있습니다</h2><p>{selectedCameraId ? '잠시만 기다려주세요.' : '사용 가능한 카메라를 확인해주세요.'}</p><button onClick={openStopConfirm}>취소</button></div></CalibrationShell>;
   } else if (flow.step === 'position') {
-    content = <CalibrationShell title="위치 확인"><section className={`${styles.techFrame} ${styles.positionFrame}`}>{cameraPreviewFrame ? <img className={styles.cameraPreview} src={cameraPreviewFrame} alt="AI 카메라 미리보기" /> : <span className={styles.cameraWaiting}>{cameraPreviewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}<div className={styles.cameraShade} /><FrameMarks /><div className={styles.cornerMarks}><i /><i /><i /><i /></div><div className={styles.personGuide}><span /><i /></div><strong>머리와 어깨가 가이드 안에 들어오도록 맞춰주세요.</strong>{cameraPreviewError && <p className={styles.cameraError}>{cameraPreviewError}</p>}</section><progress className={styles.positionProgress} max="3" value={validPosition ? 3 : flow.precheck?.face ? 2 : 1} /><div className={styles.positionFooter}><p>얼굴 {flow.precheck ? (flow.precheck.face ? '✓' : '확인 필요') : '확인 중'} · 거리 {flow.precheck?.distance === 'ok' ? '✓' : '확인 필요'} · 조명 {flow.precheck?.lighting === 'ok' ? '✓' : '확인 필요'}</p><div><button onClick={openStopConfirm}>취소</button><button onClick={nextGuide} disabled={!ready || !validPosition}>다음</button></div></div>{flow.delayed && <p className={styles.inlineError}>위치 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.</p>}</CalibrationShell>;
+    content = <CalibrationShell title="위치 확인"><section className={`${styles.techFrame} ${styles.positionFrame}`}>{<><img ref={previewImg} className={styles.cameraPreview} alt="AI 카메라 미리보기" hidden={!cameraPreviewFrame} />{!cameraPreviewFrame && <span className={styles.cameraWaiting}>{cameraPreviewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}</>}<div className={styles.cameraShade} /><FrameMarks /><div className={styles.cornerMarks}><i /><i /><i /><i /></div><div className={styles.personGuide}><span /><i /></div><strong>머리와 어깨가 가이드 안에 들어오도록 맞춰주세요.</strong>{cameraPreviewError && <p className={styles.cameraError}>{cameraPreviewError}</p>}</section><progress className={styles.positionProgress} max="3" value={validPosition ? 3 : flow.precheck?.face ? 2 : 1} /><div className={styles.positionFooter}><p>얼굴 {flow.precheck ? (flow.precheck.face ? '✓' : '확인 필요') : '확인 중'} · 거리 {flow.precheck?.distance === 'ok' ? '✓' : '확인 필요'} · 조명 {flow.precheck?.lighting === 'ok' ? '✓' : '확인 필요'}</p><div><button onClick={openStopConfirm}>취소</button><button onClick={nextGuide} disabled={!ready || !validPosition}>다음</button></div></div>{flow.delayed && <p className={styles.inlineError}>위치 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.</p>}</CalibrationShell>;
   } else if (flow.step === 'guide') {
     content = <CalibrationShell title="시선 보정"><section className={styles.guideFrame}><EyeIcon /><h2>시선 측정을 다시 할게요</h2><p>화면이 밝아 보이도록 디스플레이를 조정하면 됩니다.<br />약 1분 정도 걸립니다.</p><div className={styles.tipBox}><strong>• 화면과 50~80cm 거리를 유지해주세요.</strong><strong>• 빛을 향해 고개를 크게 움직이지 마세요.</strong><strong>• 안경을 벗으면 평소 사용하는 상태로 진행해주세요.</strong></div><div className={styles.guideActions}><button onClick={openStopConfirm}>취소</button><button className={styles.primary} onClick={beginMeasurement} disabled={!ready}>시작하기</button></div></section></CalibrationShell>;
   } else if (flow.step === 'measuring') {
@@ -264,13 +266,15 @@ function ConfirmModal({ title, description, secondary, primary, onSecondary, onP
 
 function ResultPlot({ result }) {
   const points = result.points ?? [];
-  return <div className={styles.plot}><svg viewBox="-260 -130 520 260" aria-label="목표점 기준 시선 오차 분포"><circle className={styles.guideCircle} cx="0" cy="0" r="52" />{points.map((point) => {
+  const maxError = Math.max(40, ...points.flatMap((point) => [Math.abs(Number(point.dx) || 0), Math.abs(Number(point.dy) || 0)]));
+  const scale = 36 / maxError;
+  return <div className={styles.plot}><svg viewBox="-170 -130 340 260" preserveAspectRatio="xMidYMid meet" aria-label="목표점 기준 시선 오차 분포"><circle className={styles.guideCircle} cx="0" cy="0" r="58" />{points.map((point) => {
     const column = (point.n - 1) % 3 - 1;
     const row = Math.floor((point.n - 1) / 3) - 1;
-    const targetX = column * 28;
-    const targetY = row * 22;
-    const measuredX = targetX + Math.max(-85, Math.min(85, point.dx * .45));
-    const measuredY = targetY + Math.max(-65, Math.min(65, point.dy * .45));
-    return <g key={point.n}><circle className={styles.targetPoint} cx={targetX} cy={targetY} r="5" /><line x1={targetX} y1={targetY} x2={measuredX} y2={measuredY} /><circle className={styles.measuredPoint} cx={measuredX} cy={measuredY} r="4" /></g>;
-  })}<circle className={styles.plotCenter} cx="0" cy="0" r="7" /></svg></div>;
+    const targetX = column * 46;
+    const targetY = row * 34;
+    const measuredX = targetX + Number(point.dx) * scale;
+    const measuredY = targetY + Number(point.dy) * scale;
+    return <g key={point.n}><circle className={styles.targetPoint} cx={targetX} cy={targetY} r="7" /><line x1={targetX} y1={targetY} x2={measuredX} y2={measuredY} /><circle className={styles.measuredPoint} cx={measuredX} cy={measuredY} r="5" /></g>;
+  })}<circle className={styles.plotCenter} cx="0" cy="0" r="8" /></svg></div>;
 }

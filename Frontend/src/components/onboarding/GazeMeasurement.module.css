@@ -1,26 +1,34 @@
-.measure { position: fixed; z-index: var(--setup-layer); inset: 0; width: 100vw; height: 100vh; box-sizing: border-box; overflow: hidden; border: 2px solid #5c80ed; background: radial-gradient(circle at 50% 48%, #fff 0, #f7fbff 40%, #edf4ff 100%); color: #111d49; }
-.measure::before, .measure::after { position: absolute; width: 32px; height: 32px; border-color: #5c80ed; border-style: solid; content: ""; }
-.measure::before { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
-.measure::after { right: 10px; bottom: 10px; border-width: 0 2px 2px 0; }
-.guide { position: absolute; z-index: 4; top: 24px; left: 50%; margin: 0; font-size: clamp(17px, 1.4vw, 23px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
-.grid { position: absolute; inset: 0; display: grid; padding: clamp(58px, 7vh, 82px) clamp(50px, 5vw, 96px) clamp(42px, 5vh, 64px); box-sizing: border-box; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
-.cell { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8da4d5; font-size: 15px; font-weight: 700; }
-.platform { position: relative; width: 220px; height: 50px; border: 3px solid #5d77e8; border-radius: 50%; background: linear-gradient(#111a48, #03091f); box-shadow: 0 15px 0 #8f9bb9; }
-.platform::after { position: absolute; right: 14px; bottom: 9px; left: 14px; height: 19px; border-bottom: 3px solid #647cf1; border-radius: 0 0 50% 50%; content: ""; }
-.cell small { margin-top: 14px; }
-.caught .check { position: absolute; z-index: 2; top: -72px; left: 78px; display: grid; width: 70px; height: 70px; place-items: center; border: 2px solid #a8bfe9; border-radius: 50%; background: #21336d; color: #70dbc5; font-size: 55px; line-height: 1; }
-.active { box-shadow: 0 0 30px #66d7ff, 0 15px 0 #8f9bb9; }
-.active img, .hit img { position: absolute; z-index: 2; top: 50%; left: 50%; width: 172px; transform: translate(-51.2%, -47.8%); }
-.active::before { position: absolute; z-index: 1; inset: -67px 38px -18px; border: 3px dashed #70d7ff; border-radius: 50%; content: ""; }
-.nose { position: absolute; z-index: 4; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; transform: translate(-50%, -50%); }
-.timer { position: absolute; z-index: 3; top: -105px; left: 50%; color: #66d7ff; font-size: 17px; font-weight: 800; transform: translateX(-50%); }
-.hit { box-shadow: 0 0 34px #f4ce53, 0 15px 0 #8f9bb9; }
-.hitLabel { position: absolute; z-index: 3; top: -104px; left: 50%; color: #efc84d; font-size: 25px; font-weight: 900; transform: translateX(-50%); }
+.measure { position: fixed; z-index: var(--setup-layer); inset: 0; width: 100vw; height: 100vh; box-sizing: border-box; overflow: hidden; background: linear-gradient(rgb(93 140 225 / 9%) 1px, transparent 1px), linear-gradient(90deg, rgb(93 140 225 / 9%) 1px, transparent 1px), #f3f8ff; background-size: 40px 40px; color: var(--onboarding-ink); --mole-size: clamp(168px, 16vw, 236px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
+.measure::before { position: absolute; z-index: 5; inset: 0; border: 2px solid var(--onboarding-navy); clip-path: polygon(0 0, 24px 0, 0 24px, 0 0, 100% 0, calc(100% - 24px) 0, 100% 24px, 100% 0, 100% 100%, calc(100% - 24px) 100%, 100% calc(100% - 24px), 100% 100%, 0 100%, 24px 100%, 0 calc(100% - 24px)); pointer-events: none; content: ""; }
+.guide { position: absolute; z-index: 4; top: 18px; left: 50%; margin: 0; font-size: clamp(17px, 1.4vw, 23px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
+.grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+.cell { position: relative; }
+.cell::before, .cell::after { position: absolute; background: rgb(89 133 211 / 10%); content: ""; }
+.cell::before { top: 0; bottom: 0; left: 0; width: 1px; }
+.cell::after { top: 0; right: 0; left: 0; height: 1px; }
+.hole { position: absolute; top: calc(50% + (var(--mole-size) * 0.32)); left: 50%; width: calc(var(--mole-size) * 0.78); height: calc(var(--mole-size) * 0.2); border: 3px solid #5d77e8; border-radius: 50%; background: linear-gradient(#111a48, #03091f); box-shadow: 0 14px 0 #8f9bb9; transform: translate(-50%, -50%); }
+.cell small { position: absolute; top: calc(50% + (var(--mole-size) * 0.46)); left: 50%; color: #8da4d5; font-size: 15px; font-weight: 700; transform: translateX(-50%); }
+.check { position: absolute; z-index: 2; top: 50%; left: 50%; display: grid; width: 70px; height: 70px; place-items: center; border: 2px solid #a8bfe9; border-radius: 50%; background: #21336d; color: #70dbc5; font-size: 55px; line-height: 1; transform: translate(-50%, -50%); }
+.targetGroup { position: absolute; z-index: 4; inset: 0; pointer-events: none; }
+.targetGroup img { position: absolute; z-index: 3; top: 50%; left: 50%; width: var(--mole-size); height: auto; transform: translate(calc(var(--nose-x) * -100%), calc(var(--nose-y) * -100%)); }
+.targetGroup .hitMole { transform: translate(calc(var(--nose-x) * -100%), calc(var(--hit-nose-y) * -100%)); }
+.noseAnchor { position: absolute; z-index: 4; top: 50%; left: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); }
+.scope { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
+.scope::before { position: absolute; top: 50%; left: 50%; width: min(42%, 176px); height: min(42%, 176px); border: 3px dashed #2bc9f3; border-radius: 50%; box-shadow: 0 0 0 3px rgb(43 201 243 / 35%); transform: translate(-50%, -50%); content: ""; }
+.scope::after { position: absolute; top: 50%; left: 4%; width: 92%; height: 2px; background: linear-gradient(90deg, #2bc9f3 0 46%, transparent 46% 54%, #2bc9f3 54%); transform: translateY(-50%); content: ""; }
+.scope i { position: absolute; top: 6%; left: 50%; width: 2px; height: 88%; background: linear-gradient(#2bc9f3 0 46%, transparent 46% 54%, #2bc9f3 54%); transform: translateX(-50%); }
+.scope b { position: absolute; z-index: 4; top: calc(50% - min(21%, 88px) - 22px); left: 50%; color: #2bc9f3; font-size: 17px; font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
+.hitGroup .scope::before { border-color: #efc84d; box-shadow: 0 0 0 3px rgb(239 200 77 / 40%); }
+.hitGroup .scope::after { background: linear-gradient(90deg, #efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }
+.hitGroup .scope i { background: linear-gradient(#efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }
+.hitGroup .scope b { color: #efc84d; }
+@media (prefers-reduced-motion: no-preference) { .hitGroup { animation: hit .42s ease-out; } }
+@keyframes hit { from { opacity: .65; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
 .measureError { position: absolute; z-index: 5; right: 18px; bottom: 18px; margin: 0; padding: 7px 12px; background: rgb(255 255 255 / 92%); color: #a22839; }
 .startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
-.startModal { display: grid; width: min(520px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; padding: 42px; border: 2px solid #183064; background: #fff; color: #111d49; text-align: center; clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
-.startModal > span { font-size: 64px; }
+.startModal { position: relative; display: grid; width: min(560px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; overflow: hidden; padding: 48px 40px 36px 52px; background: #fff; color: var(--onboarding-ink); text-align: center; clip-path: polygon(16px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 22px 100%, 0 calc(100% - 22px), 0 16px); box-shadow: 0 0 0 2px var(--onboarding-navy); }
+.modalBevel { position: absolute; top: 0; left: 0; width: 10px; height: 100%; background: var(--onboarding-navy); clip-path: polygon(0 16px, 100% 0, 100% 100%, 0 calc(100% - 22px)); }
 .startModal h2 { margin: 12px 0; font-size: 28px; }
-.startModal p { margin: 0 0 26px; color: #7188b7; }
-.startModal button { min-width: 180px; min-height: 52px; border: 0; background: #18275a; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
-@media (max-width: 900px) { .grid { inset: 8vh 2vw; } .platform { width: 150px; } .active img { width: 130px; } .caught .check { left: 42px; } }
+.startModal p { margin: 0 0 26px; color: var(--onboarding-muted); }
+.startModal button { min-width: 160px; min-height: 48px; border: 0; border-radius: 8px; background: var(--onboarding-navy); color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+@media (max-width: 900px) { .guide { top: 12px; max-width: 80%; font-size: 15px; white-space: normal; } }

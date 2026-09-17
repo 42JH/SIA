@@ -55,8 +55,6 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
       return undefined;
     }
     if (previous === point.n) return undefined;
-
-    // TODO(BE): calib_point_done을 FE까지 중계하면 다음 지점 도착 추론 대신 해당 이벤트로 명중 처리 필요
     setActivePoint(null);
     setHitPoint(previous);
     clearTimeout(transitionTimer.current);
@@ -65,7 +63,7 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
       displayedPoint.current = point.n;
       setHitPoint(null);
       setActivePoint(point.n);
-    }, 420); // 추정값 - 원본 이미지에서 명확히 확인 불가
+    }, 420);
     return () => clearTimeout(transitionTimer.current);
   }, [introDone, onFailure, point]);
 
@@ -98,8 +96,8 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
         <span className={styles.hole} aria-hidden="true" />
         {state === 'caught' && <><span className={styles.caughtMark}>✓</span><small>잡음</small></>}
         {state === 'ready' && <small>대기</small>}
-        {state === 'active' && <div className={styles.targetGroup}><span className={styles.lock}><b>1초</b></span><img src={moleImage} alt="두더지" /><span ref={target} className={styles.noseAnchor} aria-hidden="true" /></div>}
-        {state === 'hit' && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><span className={styles.lock}><b>HIT!</b></span><img src={moleHitImage} alt="잡힌 두더지" /></div>}
+        {state === 'active' && <div className={styles.targetGroup}><span className={styles.lock}><i /><b>1초</b></span><img src={moleImage} alt="두더지" /><span ref={target} className={styles.noseAnchor} aria-hidden="true" /></div>}
+        {state === 'hit' && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><span className={styles.lock}><i /><b>HIT!</b></span><img src={moleHitImage} alt="잡힌 두더지" /></div>}
       </div>;
     })}</div>
     {!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><span>◎</span><h2>두더지 잡기를 시작할까요?</h2><p>시작 버튼을 누른 뒤 나타나는 두더지의 코를 바라보세요.</p><div><button onClick={onCancel}>취소</button><button className={styles.startPrimary} onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></div></section></div>}

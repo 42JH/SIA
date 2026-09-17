@@ -45,22 +45,23 @@
 button:disabled { cursor: default; opacity: .45; }
 .listTitle .primary { min-width: 154px; }
 .profileList { display: grid; gap: 12px; max-height: 402px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
-.profileCard { display: grid; min-height: 88px; box-sizing: border-box; grid-template-columns: 68px minmax(150px, 1fr) auto; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--gaze-soft); border-radius: 5px; background: white; }
-.profileCard:has(> input) { grid-template-columns: 28px 68px minmax(150px, 1fr); }
+.profileCard { display: grid; min-width: 0; min-height: 88px; box-sizing: border-box; grid-template-columns: 62px minmax(0, 1fr) max-content; align-items: start; gap: 10px; padding: 10px 12px; border: 1px solid var(--gaze-soft); border-radius: 5px; background: white; }
+.profileCard:has(> input) { grid-template-columns: 28px 62px minmax(0, 1fr); }
 .profileCard > input { width: 24px; height: 24px; margin: 0; accent-color: var(--gaze-navy); }
-.compactRadar { width: 62px; height: 62px; fill: none; stroke: var(--gaze-navy); stroke-width: 6; }
+.compactRadar { width: 62px; height: 62px; align-self: center; fill: none; stroke: var(--gaze-navy); stroke-width: 6; }
 .compactRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
 .compactRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
 .compactRadar .radarCenter { fill: var(--gaze-navy); }
 .profileInfo { display: grid; min-width: 0; gap: 6px; }
 .nameRow { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .activeFooter .nameRow { display: flex; align-items: center; }
-.profileInfo strong { overflow: hidden; font-size: 19px; text-overflow: ellipsis; white-space: nowrap; }
-.profileInfo small { color: var(--gaze-blue); font-size: 14px; white-space: nowrap; }
+.profileInfo strong { overflow: hidden; font-size: clamp(13px, 1.2vw, 19px); text-overflow: ellipsis; white-space: nowrap; }
+.profileInfo small { min-width: 0; color: var(--gaze-blue); font-size: clamp(11px, 0.95vw, 14px); line-height: 1.35; overflow-wrap: anywhere; }
 .editButton, .activeEditButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); cursor: pointer; }
 .activeEditButton { color: white; }
 .editButton svg, .activeEditButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.pillButton { min-width: 132px; min-height: 48px; padding: 0 15px; font-size: 15px; }
+.pillButton { grid-row: 1; grid-column: 3; align-self: start; min-width: 0; min-height: 42px; margin-top: 6px; padding: 0 12px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
+.profileCard:has(> input) .pillButton { grid-column: 4; }
 .emptyList { margin: 80px 0; color: var(--gaze-copy); text-align: center; }
 .deleteNotice { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--gaze-copy); }
 .deleteNotice span { display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--gaze-navy); border-radius: 50%; color: var(--gaze-navy); font-weight: 800; }
@@ -103,4 +104,4 @@ button:disabled { cursor: default; opacity: .45; }
   .bottomBar { min-height: 62px; }
 }
 @media (max-width: 1000px) { .gazeHero { grid-template-columns: 1fr 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
-@media (max-width: 680px) { .gazeHero { grid-template-columns: 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .profileCard { grid-template-columns: 58px 1fr; } .profileCard .pillButton { grid-column: 2; justify-self: start; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }
+@media (max-width: 680px) { .gazeHero { grid-template-columns: 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }
