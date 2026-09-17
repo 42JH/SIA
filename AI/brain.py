@@ -33,7 +33,9 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5
 WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
                           # 이 모델은 이 발음 하나만 알기 때문에, 설정 호출어가 이것과 같을 때만 개시 조건에 넣는다.
 WAKE_WORD = os.environ.get("WAKE_WORD", WAKE_MODEL_WORD)  # BE settings.wakeWord 를 받기 전까지 쓰는 기본 호출어
-SAVE_DIR = Path.home() / "Desktop" / "비서_저장"
+SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전용.
+# 저장물 자체는 BE 가 Pictures\SIA · Documents\SIA 에 쓴다. 예전엔 바탕화면 "비서_저장" 이었는데
+# 이름이 저장물처럼 보여, 오버레이를 실제 결과물로 오해하는 일이 두 번 있었다(9/17 라이브).
 # BE scroll.step 의 휠 노치 수(1~10). 로컬 PageDown 한 번(≈한 화면)에 맞춘 값 —
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
