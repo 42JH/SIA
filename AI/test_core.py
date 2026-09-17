@@ -1239,6 +1239,13 @@ def test_save_crop_paths():
     assert b.calls and b.calls[0][0] == "files.save", b.calls      # 버리지 않고 글로 저장한다
     assert "저장_1 (1).txt" in b.said[0], b.said                    # BE 가 실제로 쓴 경로를 말한다
 
+    # LLM 이 say 를 채워도 경로가 가려지면 안 된다 — 저장물은 사용자가 짐작 못 하는 폴더로 간다.
+    # (9/17 라이브: 바탕화면의 검증용 오버레이만 보고 "저장이 안 됐다"고 판단한 사고)
+    b = run({**base, "say": "선택하신 영역을 저장했습니다.",
+             "save_text": None, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region"
+    assert b.said[0].startswith("선택하신 영역을 저장했습니다.") and "저장_1 (1).txt" in b.said[0], b.said
+
     b = run({**base, "save_text": "짧은 설명", "bbox": [200, 200, 800, 800]})
     assert b.calls[0][0] == "screen.capture_region", b.calls      # 박스가 있으면 이미지가 이긴다
 
@@ -1250,7 +1257,7 @@ def test_save_crop_paths():
 
     # ── 계측: 저장 1건당 줄 하나. 이게 없으면 "원한 부분을 저장했나"를 사후에 못 잰다.
     kinds = [f["save_kind"] for f in logs if f.get("gate") == "save"]
-    assert kinds == ["text", "region", "text", "none"], kinds
+    assert kinds == ["text", "region", "region", "text", "none"], kinds
     region = next(f for f in logs if f.get("save_kind") == "region")
     assert region["bbox"] == [200, 200, 800, 800] and region["box"] == list(big)
     assert region["screen"] == list(screen)

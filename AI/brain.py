@@ -292,6 +292,15 @@ def log_utterance(**fields):
         pass  # 로깅 실패가 비서를 멈추면 안 됨
 
 
+def where(message, path):
+    """안내 문구 뒤에 저장 경로를 붙인다.
+
+    BE 가 정하는 위치(Pictures/SIA · Documents/SIA)는 사용자가 짐작할 수 없고, 바탕화면엔
+    EVAL_CAPTURE 검증용 오버레이만 남아 오해를 부른다 — 실측으로 한 번 겪었다. 그래서 경로를
+    LLM 의 say 와 '또는'으로 묶지 않고 항상 덧붙인다."""
+    return f"{message} -> {path}" if path else message
+
+
 def log_save(t_utter, kind, result, box=None, screen=None, ok=None, payload=None):
     """저장 1건의 결과. 발화 줄(gate=router|llm)과 ts 로 잇는다.
 
@@ -1441,7 +1450,7 @@ class Brain(threading.Thread):
                 log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
                 if ok:
                     saved = (self._last_be_payload or {}).get("path") or name
-                    self._say(f"글로 저장했습니다 → {saved}")
+                    self._say(where(say or "글로 저장했습니다", saved))
                     return completed
                 return self._be_down("글 저장")
             if box:
@@ -1469,7 +1478,9 @@ class Brain(threading.Thread):
                 log_save(t_utter, "region", result, box=box, screen=full_img.size,
                          ok=ok, payload=p)
                 if ok:
-                    self._say(say or f"화면을 저장했습니다 → {p.get('path') or '완료'}")
+                    # say 와 'or' 로 묶지 않는다 — LLM 이 say 를 거의 항상 채워서 경로가 늘
+                    # 가려졌고, 저장물은 눈에 안 띄는 폴더로 간다 (9/17 라이브에서 오해 발생).
+                    self._say(where(say or "화면을 저장했습니다", p.get("path")))
                     return completed
                 return self._be_down("화면 저장")
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
