@@ -467,6 +467,25 @@ def test_speech_s():
     assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
 
 
+def test_speaker_input_lead():
+    """3 s 크롭을 못 하는 발화는 말소리 앞 여유를 SPEAKER_LEAD_S 로 줄이고 뒤 꼬리는 둔다.
+    앞 여유가 이미 짧거나 배경이 계속 커서 말 시작을 못 가리면 원본 그대로."""
+    from brain import SPEAKER_LEAD_S, speaker_input
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(16000) * 2000).astype(np.int16)   # 말소리 1 s (rms ≈ 2000 > 350)
+    audio = np.concatenate([np.zeros(int(1.9 * 16000), np.int16), loud, np.zeros(int(0.54 * 16000), np.int16)])
+    out, t0, t1 = speaker_input(audio, None)
+    assert abs(len(out) / 16000 - (SPEAKER_LEAD_S + 1.54)) < 0.05   # 앞 1.9 → 0.5 s, 말 1 s + 꼬리 0.54 s 는 그대로
+    assert abs(t0 - (1.9 - SPEAKER_LEAD_S)) < 0.05 and t1 == round(len(audio) / 16000, 2)
+    assert np.array_equal(out, audio[-len(out):])
+    short = audio[int(1.6 * 16000):]                                # 앞 여유 0.3 s — 자를 것 없음
+    assert speaker_input(short, None)[0] is short
+    noisy = (rng.standard_normal(3 * 16000) * 2000).astype(np.int16)  # 배경이 처음부터 큼 — 말 시작을 못 가림
+    out, t0, _ = speaker_input(noisy, None)
+    assert out is noisy and t0 is None
+    assert speaker_input(np.zeros(16000, np.int16), None)[1] is None  # 말소리 없음
+
+
 def test_speaker_accum():
     """짧은 호출어 조각 이어붙이기(185) — 화자 모델 없이 합성 오디오로 버퍼 규칙만 확인.
     조각 길이를 서로 다르게 줘서, 이어붙인 결과 길이만 봐도 어떤 조각이 들어갔는지 알 수 있게 했다."""
@@ -1150,6 +1169,132 @@ def test_app_ref_resolution():
     assert b2._app_ref("calc", "계산기") is None
 
 
+def test_save_crop_paths():
+    """저장이 "원하는 부분"을 담는지 — 9/16 BE 이관 후 실사용 0회라 테스트가 유일한 방어선.
+
+    9/3 실측(로그 17건 ↔ 파일 33개 1:1, 오버레이 14장)으로 bbox 선택 품질은 확인됐지만,
+    그 뒤 이관하면서 (a) 짧은 줄글이 통째로 버려지고 (b) 작은 대상에 여백이 과하게 붙고
+    (c) DOM 이 JSON 중간에서 끊기고 (d) 시선이 없는데 있다고 프롬프트가 선언하는 퇴화가 생겼다.
+    """
+    import json
+    import threading
+    from unittest.mock import Mock
+
+    from brain import Brain, DOM_TEXT_MAX, bbox_to_box, build_prompt, dom_context_part
+
+    # ── 여백: 화면 기준이 아니라 '상자의 15% 를 넘지 않게'. 큰 상자는 예전 그대로여야 한다.
+    screen = (2880, 1800)
+    big = bbox_to_box(screen, [200, 200, 800, 800])
+    assert big == (518, 324, 2361, 1476), big      # 9/3 에 잘 나오던 크기 — 바뀌면 안 된다
+    small = bbox_to_box(screen, [500, 500, 515, 515])
+    assert small[2] - small[0] < 60, small         # 폭 43px 대상에 좌우 57px 씩 붙어 2.7배가 됐었다
+    assert bbox_to_box(screen, [800, 800, 200, 200]) is None   # 뒤집힘
+    assert bbox_to_box(screen, [10, 10, 990, 990]) is None     # 화면 90% 초과
+    assert bbox_to_box(screen, None) is None
+
+    # ── DOM: 직렬화 '전에' 잘라야 JSON 이 안 깨지고 truncated 가 모델에 도달한다.
+    dom = {"url": "u", "title": "t", "via": "extension", "text": "가" * 20000, "truncated": False}
+    part = dom_context_part(dom)
+    body = json.loads(part.split(":\n", 1)[1].split("\n\n")[0])   # 깨졌으면 여기서 죽는다
+    assert body["truncated"] is True and len(body["text"]) == DOM_TEXT_MAX
+    assert "잘려 있다" in part                                   # 잘린 사실을 모델에 알린다
+    assert "보고 있는 창이 아닐 수" in part                        # BE 는 백그라운드 브라우저도 읽어 준다
+    assert "접근성" not in part
+    assert "접근성" in dom_context_part({**dom, "via": "accessibility", "text": "짧음"})
+
+    # ── 시선이 없으면 크롭 파트도 없다 — 있다고 선언하면 LLM 이 없는 근거를 전제한다.
+    assert "(3) 발화 시작 순간" in build_prompt(True, None)
+    assert "응시 영역 정보는 이번엔 없다" in build_prompt(True, None, has_crop=False)
+
+    # ── 짧은 줄글: 예전엔 40자 미만이면 픽셀 경로로 갔고 bbox 가 null 이라 통째로 버려졌다.
+    class Img:
+        size = screen
+
+    def run(result):
+        b = Brain.__new__(Brain)
+        b.overlay, b._pending, b._apps = Mock(), None, None
+        b.act, b._be = True, (lambda: None)
+        b._audio_lock, b._audio_generation, b.session_until = threading.Lock(), 0, 0.0
+        b._last_be_payload = {"path": r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"}
+        b._last_be_error = None
+        b.calls, b.said = [], []
+        b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+        b._session_until = lambda: 0.0
+        b._execute(result, None, t_utter=1.0, full_img=Img(), tier=2)
+        return b
+
+    base = {"audio_is_speech": True, "is_command": True, "wake_heard": True,
+            "action": "save_crop", "say": ""}
+    b = run({**base, "save_text": "와이파이 비번 hunter2", "bbox": None})   # 20자, 박스 없음
+    assert b.calls and b.calls[0][0] == "files.save", b.calls      # 버리지 않고 글로 저장한다
+    assert "저장_1 (1).txt" in b.said[0], b.said                    # BE 가 실제로 쓴 경로를 말한다
+
+    b = run({**base, "save_text": "짧은 설명", "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region", b.calls      # 박스가 있으면 이미지가 이긴다
+
+    b = run({**base, "save_text": "가" * 50, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "files.save", b.calls                 # 긴 줄글은 늘 텍스트 (기존 설계)
+
+    b = run({**base, "save_text": None, "bbox": None})
+    assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
+
+
+def test_mic_preview():
+    """마이크 레벨 미리보기 — FE 파형의 유일한 공급원이다 (프로토콜 §5.5).
+
+    이 경로가 비어 있으면 FE 는 에러도 없이 평평한 선만 그린다(9/17 실측: AI 에 mic_preview 0건,
+    BE 중계·FE 소비는 이미 있었음). 그래서 배선이 끊기면 조용히 죽는 것부터 잡는다.
+    """
+    import json
+    import threading
+    from unittest.mock import Mock
+
+    from be_link import AgentLink
+    from voice_bridge import MIC_PREVIEW_HZ, MicPreview, mic_level
+
+    # ① 레벨 정규화 — 선형으로 나누면 말소리가 0.03 이라 막대가 안 보인다. dBFS 로 편다.
+    assert mic_level(0) == 0.0 and mic_level(-5) == 0.0     # 무음·음수 방어
+    assert mic_level(32768) == 1.0 and mic_level(10 ** 6) == 1.0   # 포화는 자른다(버리지 않는다)
+    assert 0.45 < mic_level(1000) < 0.55                    # 보통 말소리가 막대 절반쯤
+    assert mic_level(350) < mic_level(1000) < mic_level(4000)
+
+    # ② 수명 — 준비 단계가 없어 STARTING 없이 바로 READY, 끝은 STOPPED.
+    link = Mock()
+    mp = MicPreview(link)
+    mp.tick(5000, 100.0)
+    assert not link.send_event.called                       # 켜기 전엔 아무것도 안 보낸다
+
+    mp.start()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "READY"})
+
+    period = 1.0 / MIC_PREVIEW_HZ
+    mp.tick(1000, 100.0)
+    mp.tick(1000, 100.0 + period / 2)                       # 주기 안의 두 번째는 버린다
+    mp.tick(1000, 100.0 + period * 1.5)
+    levels = [c[0][1] for c in link.send_event.call_args_list if c[0][0] == "mic_preview_level"]
+    assert [x["seq"] for x in levels] == [1, 2], levels     # 한 메시지에 진폭 하나, seq 는 1부터
+    assert all(0.0 <= x["level"] <= 1.0 for x in levels)
+
+    mp.stop()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "STOPPED"})
+    n = link.send_event.call_count
+    mp.stop()                                               # 두 번 꺼도 STOPPED 는 한 번만
+    mp.tick(9000, 200.0)                                    # 꺼진 뒤 레벨은 안 보낸다
+    assert link.send_event.call_count == n
+
+    # ③ 이 두 이벤트가 메인 루프까지 오는가 — 중계 목록에서 빠지면 위 코드가 통째로 죽는다.
+    ln = AgentLink.__new__(AgentLink)
+    ln._events, ln._event_lock = [], threading.Lock()
+    ln._session_condition, ln.be_session_id, ln.session_until_mono = threading.Condition(), None, 0.0
+    ln.gesture_ready = False
+    for attr in ("voice_sync", "calib", "wake", "wake_store"):
+        setattr(ln, attr, None)
+    ln._on_event(json.dumps({"type": "mic_preview_start", "data": {}}))
+    ln._on_event(json.dumps({"type": "mic_preview_stop", "data": {}}))
+    assert ln.take_events() == [("mic_preview_start", {}), ("mic_preview_stop", {})]
+
+
 def test_llm_retry():
     """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
     503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
@@ -1288,6 +1433,7 @@ if __name__ == "__main__":
     test_mouse_subpixel_accumulator()
     test_wake_first_frame()
     test_speech_s()
+    test_speaker_input_lead()
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
@@ -1297,5 +1443,7 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_mic_preview()
+    test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 28/28 통과")
+    print("OK - 30/30 통과")
