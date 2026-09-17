@@ -4,17 +4,23 @@
 .measure::after { right: 10px; bottom: 10px; border-width: 0 2px 2px 0; }
 .guide { position: absolute; z-index: 4; top: 24px; left: 50%; margin: 0; font-size: clamp(17px, 1.4vw, 23px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
 .grid { position: absolute; inset: 0; display: grid; padding: clamp(58px, 7vh, 82px) clamp(50px, 5vw, 96px) clamp(42px, 5vh, 64px); box-sizing: border-box; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
-.cell { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8da4d5; font-size: 15px; font-weight: 700; }
+.cell { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8da4d5; font-size: 15px; font-weight: 700; }
 .platform { position: relative; width: 220px; height: 50px; border: 3px solid #5d77e8; border-radius: 50%; background: linear-gradient(#111a48, #03091f); box-shadow: 0 15px 0 #8f9bb9; }
 .platform::after { position: absolute; right: 14px; bottom: 9px; left: 14px; height: 19px; border-bottom: 3px solid #647cf1; border-radius: 0 0 50% 50%; content: ""; }
 .cell small { margin-top: 14px; }
 .caught .check { position: absolute; z-index: 2; top: -72px; left: 78px; display: grid; width: 70px; height: 70px; place-items: center; border: 2px solid #a8bfe9; border-radius: 50%; background: #21336d; color: #70dbc5; font-size: 55px; line-height: 1; }
 .active { box-shadow: 0 0 30px #66d7ff, 0 15px 0 #8f9bb9; }
-.active img, .hit img { position: absolute; z-index: 2; bottom: 12px; left: 50%; width: 172px; transform: translateX(-50%); }
+.active img, .hit img { position: absolute; z-index: 2; top: 50%; left: 50%; width: 172px; transform: translate(-51.2%, -47.8%); }
 .active::before { position: absolute; z-index: 1; inset: -67px 38px -18px; border: 3px dashed #70d7ff; border-radius: 50%; content: ""; }
-.nose { position: absolute; z-index: 4; top: -42px; left: 50%; width: 28px; height: 28px; overflow: hidden; color: transparent; transform: translateX(-50%); }
+.nose { position: absolute; z-index: 4; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; transform: translate(-50%, -50%); }
 .timer { position: absolute; z-index: 3; top: -105px; left: 50%; color: #66d7ff; font-size: 17px; font-weight: 800; transform: translateX(-50%); }
 .hit { box-shadow: 0 0 34px #f4ce53, 0 15px 0 #8f9bb9; }
 .hitLabel { position: absolute; z-index: 3; top: -104px; left: 50%; color: #efc84d; font-size: 25px; font-weight: 900; transform: translateX(-50%); }
 .measureError { position: absolute; z-index: 5; right: 18px; bottom: 18px; margin: 0; padding: 7px 12px; background: rgb(255 255 255 / 92%); color: #a22839; }
+.startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
+.startModal { display: grid; width: min(520px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; padding: 42px; border: 2px solid #183064; background: #fff; color: #111d49; text-align: center; clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
+.startModal > span { font-size: 64px; }
+.startModal h2 { margin: 12px 0; font-size: 28px; }
+.startModal p { margin: 0 0 26px; color: #7188b7; }
+.startModal button { min-width: 180px; min-height: 52px; border: 0; background: #18275a; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
 @media (max-width: 900px) { .grid { inset: 8vh 2vw; } .platform { width: 150px; } .active img { width: 130px; } .caught .check { left: 42px; } }

@@ -32,9 +32,9 @@ button:disabled { cursor: default; opacity: .45; }
 .cornerMarks i:nth-child(2) { top: 38px; right: 56px; border-width: 5px 5px 0 0; }
 .cornerMarks i:nth-child(3) { bottom: 38px; left: 56px; border-width: 0 0 5px 5px; }
 .cornerMarks i:nth-child(4) { right: 56px; bottom: 38px; border-width: 0 5px 5px 0; }
-.personGuide { position: absolute; top: 50%; left: 50%; width: 260px; height: 410px; transform: translate(-50%, -50%); }
-.personGuide span { position: absolute; top: 0; left: 50%; width: 128px; height: 128px; border: 3px dashed #a7c4ff; border-radius: 50%; transform: translateX(-50%); }
-.personGuide i { position: absolute; right: 0; bottom: 0; left: 0; height: 292px; border: 3px dashed #a7c4ff; border-radius: 48% 48% 28% 28%; }
+.personGuide { position: absolute; top: 50%; left: 50%; width: clamp(190px, 18vw, 300px); height: clamp(250px, 48vh, 390px); transform: translate(-50%, -50%); }
+.personGuide span { position: absolute; top: 0; left: 50%; width: 48%; aspect-ratio: 1; border: 3px dashed #a7c4ff; border-radius: 50%; transform: translateX(-50%); }
+.personGuide i { position: absolute; right: 0; bottom: 0; left: 0; height: 64%; border: 3px dashed #a7c4ff; border-bottom: 0; border-radius: 50% 50% 0 0; }
 .personGuide::before, .personGuide::after { position: absolute; background: #75a0e5; content: ""; }
 .personGuide::before { top: 0; bottom: 0; left: 50%; width: 1px; }
 .personGuide::after { top: 55%; right: -650px; left: -650px; height: 1px; }

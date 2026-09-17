@@ -11,7 +11,7 @@
 .cell > small { position: absolute; top: calc(50% + clamp(74px, 10.4vh, 116px)); color: #638bd3; font-size: clamp(14px, 1.25vw, 19px); font-weight: 800; }
 .caughtMark { position: absolute; z-index: 3; top: calc(50% - clamp(28px, 4.2vh, 46px)); left: 50%; display: grid; width: clamp(62px, 5.1vw, 80px); height: clamp(62px, 5.1vw, 80px); place-items: center; border: 2px solid #81a7e6; border-radius: 50%; background: #0a346c; color: #27e0d4; font-size: clamp(38px, 3.5vw, 56px); line-height: 1; transform: translate(-50%, -50%); }
 .targetGroup { position: absolute; z-index: 4; inset: 0; pointer-events: none; }
-.targetGroup img { position: absolute; top: 50%; left: 50%; width: clamp(150px, 15.1vw, 240px); height: auto; transform: translate(-50%, -53.6%); }
+.targetGroup img { position: absolute; top: 50%; left: 50%; width: clamp(150px, 15.1vw, 240px); height: auto; transform: translate(-51.2%, -47.8%); }
 .noseAnchor { position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; transform: translate(-50%, -50%); }
 .lock { position: absolute; z-index: 2; top: 50%; left: 50%; width: clamp(150px, 15vw, 238px); height: clamp(150px, 15vw, 238px); border: 3px solid #2bc9f3; border-radius: 50%; transform: translate(-50%, -50%); }
 .lock::before { position: absolute; inset: 13%; border: 3px dashed #2bc9f3; border-radius: 50%; content: ""; }
@@ -23,6 +23,14 @@
 .hitGroup .lock b { color: #ffc629; }
 .hitGroup .lock { box-shadow: 0 -22px 0 -20px #ffc629, 0 22px 0 -20px #ffc629, 22px 0 0 -20px #ffc629, -22px 0 0 -20px #ffc629; }
 .connectionError { position: absolute; z-index: 10; bottom: 22px; left: 50%; margin: 0; padding: 10px 16px; border: 1px solid #a32838; background: white; color: #a32838; transform: translateX(-50%); }
+.startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
+.startModal { display: grid; width: min(540px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; padding: 44px; border: 2px solid #183064; background: #fff; text-align: center; clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
+.startModal > span { font-size: 64px; }
+.startModal h2 { margin: 12px 0; font-size: 29px; }
+.startModal p { margin: 0 0 28px; color: #6383b6; }
+.startModal > div { display: flex; gap: 12px; }
+.startModal button { min-width: 150px; min-height: 50px; border: 1px solid #183064; background: #fff; color: #183064; font: inherit; font-weight: 800; cursor: pointer; }
+.startModal .startPrimary { background: #18275a; color: #fff; }
 
 @media (max-width: 800px) { .guide { top: 16px; max-width: calc(100% - 180px); font-size: 15px; white-space: normal; } .stopButton { right: 14px; bottom: 14px; } .hole { width: 110px; } }
 @media (prefers-reduced-motion: no-preference) { .active .lock { animation: scan 1.2s ease-in-out infinite alternate; } .hitGroup { animation: hit .42s ease-out; } }

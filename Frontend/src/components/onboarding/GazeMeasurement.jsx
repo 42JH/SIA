@@ -17,11 +17,6 @@ export default function GazeMeasurement({ point, ready }) {
   const fail = (error) => useOnboardingStore.getState().interrupt(error);
 
   useEffect(() => {
-    const timer = setTimeout(() => setIntroDone(true), 1500); // 추정값 - 원본 이미지에서 명확히 확인 불가
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
     if (!introDone || !point?.n) return undefined;
     if (!Number.isInteger(point.n) || point.n < 1 || point.n > 9) {
       fail('시선 측정 지점 번호가 올바르지 않습니다. 연결 상태를 확인해주세요.');
@@ -84,7 +79,7 @@ export default function GazeMeasurement({ point, ready }) {
     const active = activePoint === number;
     const isCaught = caught.has(number);
     const hit = recentlyHit === number;
-    return <div className={styles.cell} key={number}><div className={`${styles.platform} ${active ? styles.active : ''} ${isCaught ? styles.caught : ''} ${hit ? styles.hit : ''}`}>{active && <><span ref={target} className={styles.nose}>●</span><span className={styles.timer}>1초</span><img src={moleImage} alt="시선으로 잡을 두더지" /></>}{isCaught && !hit && <span className={styles.check}>✓</span>}{hit && <><span className={styles.hitLabel}>HIT!</span><img src={moleHitImage} alt="잡은 두더지" /></>}</div><small>{isCaught && !hit ? '잡음' : active || hit ? '' : '대기'}</small></div>;
-  })}</div>{!ready && <p className={styles.measureError} role="alert">연결 또는 화면 상태를 확인해주세요.</p>}</div>;
+    return <div className={styles.cell} key={number}>{active && <span ref={target} className={styles.nose} aria-hidden="true" />}<div className={`${styles.platform} ${active ? styles.active : ''} ${isCaught ? styles.caught : ''} ${hit ? styles.hit : ''}`}>{active && <><span className={styles.timer}>1초</span><img src={moleImage} alt="시선으로 잡을 두더지" /></>}{isCaught && !hit && <span className={styles.check}>✓</span>}{hit && <><span className={styles.hitLabel}>HIT!</span><img src={moleHitImage} alt="잡은 두더지" /></>}</div><small>{isCaught && !hit ? '잡음' : active || hit ? '' : '대기'}</small></div>;
+  })}</div>{!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><span>◎</span><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}{!ready && <p className={styles.measureError} role="alert">연결 또는 화면 상태를 확인해주세요.</p>}</div>;
   return createPortal(screen, document.body);
 }

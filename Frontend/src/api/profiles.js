@@ -10,6 +10,7 @@ async function request(config) {
 }
 
 export const fetchProfiles = (kind) => request({ method: 'get', url: kind === 'mic' ? '/api/voices' : '/api/calibs' });
+export const fetchProfile = (kind, id) => request({ method: 'get', url: `/api/${kind === 'mic' ? 'voices' : 'calibs'}/${id}` });
 export const remapDevice = (kind, deviceLabel) => request({ method: 'post', url: '/api/devices/remap', data: { kind, deviceLabel } });
 export const activateProfile = (kind, id) => request({ method: 'post', url: `/api/${kind === 'mic' ? 'voices' : 'calibs'}/${id}/activate` });
 export const deleteProfile = (kind, id) => request({ method: 'delete', url: `/api/${kind === 'mic' ? 'voices' : 'calibs'}/${id}` });
