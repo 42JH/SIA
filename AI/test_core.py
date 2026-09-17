@@ -1169,6 +1169,77 @@ def test_app_ref_resolution():
     assert b2._app_ref("calc", "계산기") is None
 
 
+def test_save_crop_paths():
+    """저장이 "원하는 부분"을 담는지 — 9/16 BE 이관 후 실사용 0회라 테스트가 유일한 방어선.
+
+    9/3 실측(로그 17건 ↔ 파일 33개 1:1, 오버레이 14장)으로 bbox 선택 품질은 확인됐지만,
+    그 뒤 이관하면서 (a) 짧은 줄글이 통째로 버려지고 (b) 작은 대상에 여백이 과하게 붙고
+    (c) DOM 이 JSON 중간에서 끊기고 (d) 시선이 없는데 있다고 프롬프트가 선언하는 퇴화가 생겼다.
+    """
+    import json
+    import threading
+    from unittest.mock import Mock
+
+    from brain import Brain, DOM_TEXT_MAX, bbox_to_box, build_prompt, dom_context_part
+
+    # ── 여백: 화면 기준이 아니라 '상자의 15% 를 넘지 않게'. 큰 상자는 예전 그대로여야 한다.
+    screen = (2880, 1800)
+    big = bbox_to_box(screen, [200, 200, 800, 800])
+    assert big == (518, 324, 2361, 1476), big      # 9/3 에 잘 나오던 크기 — 바뀌면 안 된다
+    small = bbox_to_box(screen, [500, 500, 515, 515])
+    assert small[2] - small[0] < 60, small         # 폭 43px 대상에 좌우 57px 씩 붙어 2.7배가 됐었다
+    assert bbox_to_box(screen, [800, 800, 200, 200]) is None   # 뒤집힘
+    assert bbox_to_box(screen, [10, 10, 990, 990]) is None     # 화면 90% 초과
+    assert bbox_to_box(screen, None) is None
+
+    # ── DOM: 직렬화 '전에' 잘라야 JSON 이 안 깨지고 truncated 가 모델에 도달한다.
+    dom = {"url": "u", "title": "t", "via": "extension", "text": "가" * 20000, "truncated": False}
+    part = dom_context_part(dom)
+    body = json.loads(part.split(":\n", 1)[1].split("\n\n")[0])   # 깨졌으면 여기서 죽는다
+    assert body["truncated"] is True and len(body["text"]) == DOM_TEXT_MAX
+    assert "잘려 있다" in part                                   # 잘린 사실을 모델에 알린다
+    assert "보고 있는 창이 아닐 수" in part                        # BE 는 백그라운드 브라우저도 읽어 준다
+    assert "접근성" not in part
+    assert "접근성" in dom_context_part({**dom, "via": "accessibility", "text": "짧음"})
+
+    # ── 시선이 없으면 크롭 파트도 없다 — 있다고 선언하면 LLM 이 없는 근거를 전제한다.
+    assert "(3) 발화 시작 순간" in build_prompt(True, None)
+    assert "응시 영역 정보는 이번엔 없다" in build_prompt(True, None, has_crop=False)
+
+    # ── 짧은 줄글: 예전엔 40자 미만이면 픽셀 경로로 갔고 bbox 가 null 이라 통째로 버려졌다.
+    class Img:
+        size = screen
+
+    def run(result):
+        b = Brain.__new__(Brain)
+        b.overlay, b._pending, b._apps = Mock(), None, None
+        b.act, b._be = True, (lambda: None)
+        b._audio_lock, b._audio_generation, b.session_until = threading.Lock(), 0, 0.0
+        b._last_be_payload = {"path": r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"}
+        b._last_be_error = None
+        b.calls, b.said = [], []
+        b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+        b._session_until = lambda: 0.0
+        b._execute(result, None, t_utter=1.0, full_img=Img(), tier=2)
+        return b
+
+    base = {"audio_is_speech": True, "is_command": True, "wake_heard": True,
+            "action": "save_crop", "say": ""}
+    b = run({**base, "save_text": "와이파이 비번 hunter2", "bbox": None})   # 20자, 박스 없음
+    assert b.calls and b.calls[0][0] == "files.save", b.calls      # 버리지 않고 글로 저장한다
+    assert "저장_1 (1).txt" in b.said[0], b.said                    # BE 가 실제로 쓴 경로를 말한다
+
+    b = run({**base, "save_text": "짧은 설명", "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region", b.calls      # 박스가 있으면 이미지가 이긴다
+
+    b = run({**base, "save_text": "가" * 50, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "files.save", b.calls                 # 긴 줄글은 늘 텍스트 (기존 설계)
+
+    b = run({**base, "save_text": None, "bbox": None})
+    assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
+
+
 def test_mic_preview():
     """마이크 레벨 미리보기 — FE 파형의 유일한 공급원이다 (프로토콜 §5.5).
 
@@ -1373,5 +1444,6 @@ if __name__ == "__main__":
     test_mcp_delegation()
     test_llm_retry()
     test_mic_preview()
+    test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 29/29 통과")
+    print("OK - 30/30 통과")
