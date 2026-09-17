@@ -845,6 +845,12 @@ class Brain(threading.Thread):
                 if not self.queue:
                     continue
                 audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
+                # 제스처 등록이 시작되는 순간에는 submit() 이전에 들어와 있던 발화가
+                # 큐에 남아 있을 수 있다. 소비 단계에서도 한 번 더 버려야 등록 중
+                # 세션/명령이 뒤늦게 실행되지 않는다.
+                if self.paused:
+                    print("[발화 무시] 일시정지 중 큐에 남은 발화")
+                    continue
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
