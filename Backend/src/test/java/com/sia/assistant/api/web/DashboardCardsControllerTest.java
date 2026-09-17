@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sia.assistant.common.Times;
 import java.nio.file.Path;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -109,6 +113,24 @@ class DashboardCardsControllerTest {
         assertThat(summary.get("simpleCount")).isEqualTo(0L);
     }
 
+    @Test
+    @DisplayName("하루치 데이터면 기간을 바꿔도 summary 가 같다 — 네 축 모두 오늘을 통째로 덮는다")
+    void summaryIsIdenticalAcrossPeriodsForOneDayOfData() {
+        // 표본 수가 크게 다른 두 계열 — 가중 평균이 아니면 기간마다 값이 갈린다
+        for (int i = 0; i < 100; i++) {
+            event("command", null, 800, "SIMPLE", thisHour());
+        }
+        event("command", null, 4000, "COMPLEX", thisHour());
+        event("command", null, 4000, "COMPLEX", thisHour());
+
+        Map<String, Object> day = summaryOf(controller.latency("day"));
+
+        assertThat(day.get("overallMs")).isEqualTo(863L);   // (800*100 + 4000*2) / 102
+        for (String period : List.of("week", "month", "year")) {
+            assertThat(summaryOf(controller.latency(period))).as(period).isEqualTo(day);
+        }
+    }
+
     // ------------------------------------------------------------------ 사용량
     @Test
     @DisplayName("사용량은 제스처 + 보이스 합산이고, 평균 분모는 버킷 수가 아니다")
@@ -126,8 +148,8 @@ class DashboardCardsControllerTest {
     @Test
     @DisplayName("최다 버킷이 동률이면 먼저 오는 버킷을 고른다")
     void peakPrefersEarlierBucketOnTie() {
-        Instant earlier = daysAgo(3);
-        Instant later = daysAgo(2);
+        Instant earlier = thisWeek(0);
+        Instant later = thisWeek(1);
         event("gesture", null, null, null, earlier);
         event("voice", null, null, null, later);
 
@@ -252,9 +274,21 @@ class DashboardCardsControllerTest {
         return Instant.now().minus(Duration.ofMinutes(m));
     }
 
-    /** 정오로 맞춰 로컬 자정 경계에 걸치지 않게 한다 — 버킷이 흔들리면 테스트가 아니라 시계를 재는 꼴이다. */
-    private static Instant daysAgo(int d) {
-        return Instant.now().minus(Duration.ofDays(d)).minus(Duration.ofHours(2));
+    /** 이번 시(로컬) 정각. 어느 시각에 돌려도 반드시 "오늘" 안이라 네 기간이 다 덮는다. */
+    private static Instant thisHour() {
+        return ZonedDateTime.now(ZoneId.systemDefault()).truncatedTo(ChronoUnit.HOURS).toInstant();
+    }
+
+    /**
+     * 이번 주 월요일부터 {@code dayOffset} 일째 정오(로컬).
+     * ★ "며칠 전"으로 잡으면 안 된다 — week 축이 달력 주라 실행 요일에 따라 이번 주 밖으로 나간다.
+     * 정오로 맞추는 건 자정 경계에 걸치지 않게 하기 위해서다.
+     */
+    private static Instant thisWeek(int dayOffset) {
+        return ZonedDateTime.now(ZoneId.systemDefault()).toLocalDate()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                .plusDays(dayOffset)
+                .atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant();
     }
 
     @SuppressWarnings("unchecked")
