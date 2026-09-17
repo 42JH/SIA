@@ -1,3 +1,9 @@
+# 텍스트 파일은 항상 LF로 저장·체크아웃한다 — 개발자마다 core.autocrlf 설정이
+# 달라서(Windows git이 autocrlf=true면 checkout 때 LF -> CRLF로 바꿔버림) pull/checkout
+# 할 때마다 내용은 그대로인데 줄바꿈만 통째로 바뀐 것처럼 보이는 diff가 반복 발생했다.
+# 이 규칙이 core.autocrlf 값과 무관하게 저장소 기준을 강제한다.
+* text=auto eol=lf
+
 # core.autocrlf=true 환경에서 이미지·영상이 줄끝 변환을 타지 않게 못 박는다.
 # git 의 이진 판정은 앞부분의 NUL 바이트를 보는 추정이라, 그 추정이 빗나가면 커밋된 파일이 깨진다.
 # 기본 제공 제스처 예시 그림(Backend/src/main/resources/seed/gestures/)이 이 경로로 들어온다.
