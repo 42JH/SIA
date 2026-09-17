@@ -888,16 +888,6 @@ class Brain(threading.Thread):
             # 진행 중인 추론은 이전 누적기를 쓴다 — 그 조각이 새 입력에 섞이지 않게 교체한다.
             self._accum = SpeakerAccum()
 
-    def _active_voice_sample_is_current(self, profile_ref, generation):
-        """대기 중 프로필·마이크가 바뀐 발화는 /active에 보내지 않는다."""
-        sync = self.link.voice_sync if self.link is not None else None
-        if sync is not None and not sync.is_active_profile(profile_ref):
-            return False
-        with self._audio_lock:
-            current = self.speaker.snapshot() if self.speaker is not None else None
-            return (generation == self._audio_generation and current is not None
-                    and current[0] is not None and current[2:] == profile_ref)
-
     def _wake_word(self):
         """지금 적용 중인 호출어 — BE 설정(settings.wakeWord)이 왔으면 그 값, 아니면 WAKE_WORD.
         고정 모델의 문구(WAKE_MODEL_WORD)와는 다른 값일 수 있다."""
@@ -1076,12 +1066,7 @@ class Brain(threading.Thread):
                     if ok:
                         self._speaker_error_notified = False
                         accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
-                        be = self._be()
-                        with self._audio_lock:
-                            fresh = generation == self._audio_generation
-                        if fresh and be and be.rt and sim is not None:
-                            be.queue_active_voice_sample(wav_bytes(audio), profile[2:], generation,
-                                                         self._active_voice_sample_is_current)
+                        # 통과한 발화를 보이스 재생 샘플로 올리지 않는다 — "내 목소리" 에서는 등록 때 읽은 마지막 문장이 들려야 한다
                     elif sim is None:
                         # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
                         # 그래서 거부(voice_rejected)로 기록하지 않고 이번 발화만 버린다. 예외 내용은

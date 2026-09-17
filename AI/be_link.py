@@ -129,10 +129,6 @@ class AgentLink:
         self._event_lock = threading.Lock()
         self._usage = []
         self._usage_lock = threading.Lock()
-        self._sample_condition = threading.Condition()
-        self._sample_queue = deque(maxlen=1)
-        self._sample_worker = None
-        self._sample_closed = False
         self.gesture_ready = False
         self.voice = None               # VoiceSession 또는 None (assistant가 주입) — 화자 등록(65)
         self.voice_sync = voice_sync    # WS 연결 전에 주입해 부팅 직후 활성 참조도 놓치지 않는다.
@@ -294,54 +290,6 @@ class AgentLink:
                                  headers={"Accept": "application/octet-stream"}) as response:
             return response.read()
 
-    def put_active_voice_sample(self, wav):
-        with self._agent_request("/api/agent/voices/active/sample", method="PUT", payload=wav,
-                                 headers={"Content-Type": "audio/wav"}) as response:
-            return response.status
-
-    def queue_active_voice_sample(self, wav, profile_ref, generation, is_current):
-        """화자 인증을 막지 않고 전용 워커로 보내되, 대기 샘플은 최신 한 건만 유지한다."""
-        with self._sample_condition:
-            if self._sample_closed:
-                return False
-            if self._sample_worker is None:
-                try:
-                    worker = threading.Thread(target=self._run_active_voice_samples, daemon=True)
-                    worker.start()
-                except Exception as exc:
-                    print(f"[활성 보이스 샘플] 워커 시작 실패 error={type(exc).__name__}: {exc} bytes={len(wav)}")
-                    return False
-                self._sample_worker = worker
-            self._sample_queue.append((wav, profile_ref, generation, is_current))
-            self._sample_condition.notify()
-        return True
-
-    def _run_active_voice_samples(self):
-        while True:
-            with self._sample_condition:
-                self._sample_condition.wait_for(lambda: self._sample_closed or self._sample_queue)
-                if self._sample_closed:
-                    return
-                wav, profile_ref, generation, is_current = self._sample_queue.popleft()
-            size = len(wav)
-            try:
-                if not is_current(profile_ref, generation):
-                    print(f"[활성 보이스 샘플] 이전 입력 폐기 profileId={profile_ref[0]} bytes={size}")
-                    continue
-                with self._sample_condition:
-                    if self._sample_closed:
-                        return
-                status = self.put_active_voice_sample(wav)
-                print(f"[활성 보이스 샘플] 전송 완료 status={status} bytes={size}")
-            except urllib.error.HTTPError as exc:
-                if exc.code == 404:
-                    print(f"[활성 보이스 샘플] 로컬 프로필과 서버 활성 보이스 상태 불일치 "
-                          f"profileId={profile_ref[0]} status=404 bytes={size}")
-                else:
-                    print(f"[활성 보이스 샘플] 전송 실패 status={exc.code} bytes={size}")
-            except Exception as exc:
-                print(f"[활성 보이스 샘플] 전송 실패 error={type(exc).__name__}: {exc} bytes={size}")
-
     def put_gesture_npz(self, temp_id, payload):
         with self._agent_request(f"/api/agent/gestures/{temp_id}/npz", method="PUT",
                                  payload=payload,
@@ -435,12 +383,6 @@ class AgentLink:
 
     def close(self):
         self._stop = True
-        with self._sample_condition:
-            dropped = len(self._sample_queue)
-            self._sample_closed = True
-            self._sample_queue.clear()
-            worker = self._sample_worker
-            self._sample_condition.notify_all()
         if self.voice_sync is not None:
             self.voice_sync.close()
         try:
@@ -448,10 +390,6 @@ class AgentLink:
                 self.ws.close()
         except Exception:
             pass
-        if worker is not None and worker is not threading.current_thread():
-            worker.join(timeout=1)
-        if dropped:
-            print(f"[활성 보이스 샘플] 종료로 대기 작업 폐기 count={dropped}")
 
 
 def main():
