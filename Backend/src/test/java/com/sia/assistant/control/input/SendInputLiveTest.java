@@ -38,8 +38,10 @@ class SendInputLiveTest {
     private static final long EXTRA_MARKER = 0x4D430001L;
     private static final int PM_REMOVE = 1;
     private static final long PUMP_MS = 1500;
+    /** SendInputService 가 연타 사이에 두는 간격 */
+    private static final int KEY_GAP_MS = 30;
 
-    private record Event(int message, int vkCode, int flags) {
+    private record Event(int message, int vkCode, int flags, int time) {
         boolean down() {
             return message == WM_KEYDOWN;
         }
@@ -85,6 +87,21 @@ class SendInputLiveTest {
         assertThat(events.stream().filter(Event::down).count()).isEqualTo(10);
     }
 
+    @Test
+    @DisplayName("연타는 30ms 이상 벌어져 나간다 — 한 번에 몰아 보내면 플레이어가 일부를 흘린다")
+    void repeatedTapsAreSpacedApart() {
+        List<Event> downs = capture(() -> new SendInputService().arrowKey("right", 4))
+                .stream().filter(Event::down).toList();
+
+        assertThat(downs).hasSize(4);
+        for (int i = 1; i < downs.size(); i++) {
+            int gap = downs.get(i).time() - downs.get(i - 1).time();
+            assertThat(gap)
+                    .withFailMessage("%d번째와 %d번째 입력 간격이 %dms 입니다 (30ms 이상이어야 함)", i, i + 1, gap)
+                    .isGreaterThanOrEqualTo(KEY_GAP_MS);
+        }
+    }
+
     /**
      * 훅을 걸고 injection 을 다른 스레드에서 돌린 뒤, 우리 표식이 찍힌 키 이벤트만 모아 돌려준다.
      * 저수준 훅은 설치한 스레드가 메시지를 펌프해야 불린다 — 펌프를 멈추면 Windows 가 훅을 무시한다.
@@ -107,7 +124,7 @@ class SendInputLiveTest {
                     return User32.INSTANCE.CallNextHookEx(null, nCode, wParam,
                             new WinDef.LPARAM(com.sun.jna.Pointer.nativeValue(info.getPointer())));
                 }
-                events.add(new Event(wParam.intValue(), info.vkCode, info.flags));
+                events.add(new Event(wParam.intValue(), info.vkCode, info.flags, info.time));
                 // 1 을 돌려주면 이 키는 어떤 창에도 도달하지 않는다 — 테스트가 화면에 자국을 남기지 않는다
                 return new WinDef.LRESULT(1);
             }

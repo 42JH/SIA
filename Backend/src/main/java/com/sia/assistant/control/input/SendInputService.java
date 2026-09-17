@@ -25,6 +25,8 @@ public class SendInputService {
     private static final int VK_SHIFT = 0x10;
     private static final int VK_LEFT = 0x25;
     private static final int VK_RIGHT = 0x27;
+    /** 연타 사이 간격 — 한 번에 몰아 보내면 플레이어가 흘린다 */
+    private static final long KEY_GAP_MS = 30;
 
     /** dir: up|down(|left|right). clicks 는 1~10 클램프. */
     public void scroll(String dir, int clicks) {
@@ -84,12 +86,17 @@ public class SendInputService {
                     "지원하지 않는 방향키입니다: " + dir + " (left|right)");
         };
         int n = Math.max(1, Math.min(10, repeat));
-        WinUser.INPUT[] inputs = (WinUser.INPUT[]) new WinUser.INPUT().toArray(n * 2);
         for (int i = 0; i < n; i++) {
-            fillKey(inputs[i * 2], vk, false, true);
-            fillKey(inputs[i * 2 + 1], vk, true, true);
+            // ★ 한 번에 몰아 보내지 않는다 — 같은 순간에 도착한 연타는 플레이어가 일부를 흘릴 수 있다.
+            //   사람이 연타하는 속도로 간격을 둔다 (10번이면 도구 호출이 0.3초쯤 걸린다).
+            if (i > 0) {
+                sleep(KEY_GAP_MS);
+            }
+            WinUser.INPUT[] inputs = (WinUser.INPUT[]) new WinUser.INPUT().toArray(2);
+            fillKey(inputs[0], vk, false, true);
+            fillKey(inputs[1], vk, true, true);
+            send(inputs);
         }
-        send(inputs);
     }
 
     /** 예: Shift+N. down(mods) → down(vk) → up(vk) → up(mods 역순) */
@@ -166,6 +173,14 @@ public class SendInputService {
         in.input.mi.dwFlags = new WinDef.DWORD(flags);
         in.input.mi.time = new WinDef.DWORD(0);
         in.input.mi.dwExtraInfo = new BaseTSD.ULONG_PTR(EXTRA_MARKER);
+    }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void send(WinUser.INPUT[] inputs) {
