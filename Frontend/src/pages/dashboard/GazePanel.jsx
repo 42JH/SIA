@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { activateProfile, deleteProfile, fetchProfiles, renameGazeProfile } from '../../api/profiles';
+import { activateProfile, deleteProfile, fetchProfile, fetchProfiles, renameGazeProfile } from '../../api/profiles';
 import styles from './GazePanel.module.css';
 
 const grades = { excellent: '우수', good: '양호', poor: '나쁨' };
 const formatDate = (value) => value ? value.slice(0, 10).replaceAll('-', '.') : '미제공';
+const px = (value) => Number.isFinite(value) ? `${Math.round(value)}px` : '미제공';
+function gazeStats(profile) {
+  let points = profile.points ?? [];
+  if (!points.length && profile.pointsJson) {
+    try { points = JSON.parse(profile.pointsJson); } catch { points = []; }
+  }
+  const values = points.map((point) => Math.hypot(Number(point.dx), Number(point.dy))).filter(Number.isFinite);
+  return {
+    min: profile.minErrorPx ?? (values.length ? Math.min(...values) : null),
+    avg: profile.avgErrorPx ?? (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null),
+    max: profile.maxErrorPx ?? (values.length ? Math.max(...values) : null),
+  };
+}
 
 export default function GazePanel({ onBack }) {
   const location = useLocation();
@@ -28,7 +41,14 @@ export default function GazePanel({ onBack }) {
   async function loadProfiles() {
     setLoading(true);
     setError('');
-    try { setProfiles((await fetchProfiles('camera')).items ?? []); }
+    try {
+      const items = (await fetchProfiles('camera')).items ?? [];
+      const profilesWithStats = await Promise.all(items.map(async (profile) => {
+        try { return { ...profile, ...(await fetchProfile('camera', profile.id)) }; }
+        catch { return profile; }
+      }));
+      setProfiles(profilesWithStats);
+    }
     catch (requestError) { setError(requestError.message); }
     finally { setLoading(false); }
   }
@@ -98,7 +118,7 @@ export default function GazePanel({ onBack }) {
         <h2>현재 사용 중인 보정</h2>
         {active ? <>
           <div className={styles.activeRadar}><GazeRadar /></div>
-          <div className={styles.activeFooter}><span><span className={styles.nameRow}><strong>{active.name}</strong><button className={styles.activeEditButton} onClick={() => setModal({ type: 'rename', profile: active, name: active.name })} aria-label={`${active.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button></span><small>등록일 {formatDate(active.createdAt)}</small></span><em><i />사용 중</em></div>
+          <div className={styles.activeFooter}><span><span className={styles.nameRow}><strong>{active.name}</strong><button className={styles.activeEditButton} onClick={() => setModal({ type: 'rename', profile: active, name: active.name })} aria-label={`${active.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button></span><small>등록일 {formatDate(active.createdAt)}</small><GazeStats profile={active} /></span><em><i />사용 중</em></div>
         </> : <div className={styles.emptyActive}><GazeRadar /><strong>현재 사용 중인 보정이 없습니다</strong></div>}
       </section>
       <section className={`${styles.frame} ${styles.storedPanel}`}>
@@ -119,25 +139,27 @@ export default function GazePanel({ onBack }) {
 }
 
 function GazeHero({ onBack }) {
-  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="대시보드로 돌아가기">‹</button><h1>시선</h1></div><Circuit /><GazeSeal /></header>;
+  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="대시보드로 돌아가기">‹</button><h1>시선</h1></div><Circuit /><GazeRadar hero /></header>;
 }
 
 function Circuit() {
   return <svg className={styles.circuit} viewBox="0 0 760 120" preserveAspectRatio="none" aria-hidden="true"><circle cx="14" cy="66" r="5" /><path d="M19 66h190l44 30h249l54-42h174" /><path className={styles.circuitLight} d="M350 35h170l42-19h150" /></svg>;
 }
 
-function GazeSeal() {
-  return <div className={styles.gazeSeal} aria-hidden="true"><i /><i /><span /></div>;
-}
-
 function FrameMarks() { return <i className={styles.frameLine} />; }
 
-function GazeRadar({ compact = false }) {
-  return <svg className={compact ? styles.compactRadar : styles.radar} viewBox="0 0 280 280" aria-hidden="true"><circle cx="140" cy="140" r="111" className={styles.radarOuter} /><circle cx="140" cy="140" r="84" /><circle cx="140" cy="140" r="54" /><path d="M140 15v250M15 140h250" /><path d="M140 33v24M140 223v24M33 140h24M223 140h24" /><circle cx="170" cy="111" r="12" className={styles.radarTarget} /><circle cx="140" cy="140" r="4" className={styles.radarCenter} /></svg>;
+function GazeRadar({ compact = false, hero = false }) {
+  const className = hero ? styles.heroRadar : compact ? styles.compactRadar : styles.radar;
+  return <svg className={className} viewBox="0 0 280 280" aria-hidden="true"><circle cx="140" cy="140" r="111" className={styles.radarOuter} /><circle cx="140" cy="140" r="84" /><circle cx="140" cy="140" r="54" /><path d="M140 15v250M15 140h250" /><path d="M140 33v24M140 223v24M33 140h24M223 140h24" /><circle cx="170" cy="111" r="12" className={styles.radarTarget} /><circle cx="140" cy="140" r="4" className={styles.radarCenter} /></svg>;
 }
 
 function GazeCard({ profile, deleteMode, checked, onToggle, onRename, onActivate, busy }) {
-  return <article className={styles.profileCard}>{deleteMode && <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`${profile.name} 선택`} />}<GazeRadar compact /><div className={styles.profileInfo}><span className={styles.nameRow}><strong>{profile.name}</strong>{!deleteMode && <button className={styles.editButton} onClick={onRename} aria-label={`${profile.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button>}</span><small>등록일 {formatDate(profile.createdAt)} · 상태: {grades[profile.grade] ?? '미제공'}</small></div>{!deleteMode && <button className={styles.pillButton} onClick={onActivate} disabled={busy}>사용으로 설정</button>}</article>;
+  return <article className={styles.profileCard}>{deleteMode && <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`${profile.name} 선택`} />}<GazeRadar compact /><div className={styles.profileInfo}><span className={styles.nameRow}><strong>{profile.name}</strong>{!deleteMode && <button className={styles.editButton} onClick={onRename} aria-label={`${profile.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button>}</span><small>등록일 {formatDate(profile.createdAt)} · 상태: {grades[profile.grade] ?? '미제공'}</small><GazeStats profile={profile} /></div>{!deleteMode && <button className={styles.pillButton} onClick={onActivate} disabled={busy}>사용으로 설정</button>}</article>;
+}
+
+function GazeStats({ profile }) {
+  const stats = gazeStats(profile);
+  return <small>좌표 오차 최소 {px(stats.min)} · 평균 {px(stats.avg)} · 최대 {px(stats.max)}</small>;
 }
 
 function GazeModal({ modal, setModal, active, busy, selectedCount, close, startEnrollment, activate, rename, removeSelected }) {
@@ -146,7 +168,7 @@ function GazeModal({ modal, setModal, active, busy, selectedCount, close, startE
   else if (modal.type === 'activate') content = <><h2>현재 보정을 교체하시겠습니까?</h2><p>{active ? `'${active.name}' → '${modal.profile.name}' (으)로 교체됩니다.` : `'${modal.profile.name}' 보정을 사용합니다.`}</p><div className={styles.modalActions}><button onClick={close}>취소</button><button className={styles.primary} onClick={() => activate(modal.profile)} disabled={busy}>교체</button></div></>;
   else if (modal.type === 'delete') content = <><GazeModalIcon type="warning" /><h2>선택한 보정 {selectedCount}개를 삭제하시겠습니까?</h2><p>삭제된 보정은 복구할 수 없습니다.</p><div className={styles.modalActions}><button onClick={close}>취소</button><button className={styles.primary} onClick={removeSelected} disabled={busy}>삭제</button></div></>;
   else if (modal.type === 'rename') content = <div className={styles.renameContent}><h2>시선 보정 이름 변경</h2><i className={styles.titleUnderline} /><label>보정 이름<input value={modal.name} onChange={(event) => setModal({ ...modal, name: event.target.value })} maxLength="50" autoFocus /></label><div className={styles.modalActions}><button onClick={close}>취소</button><button className={styles.primary} onClick={rename} disabled={busy || !modal.name.trim()}>저장</button></div></div>;
-  else if (modal.type === 'added') content = <><GazeModalIcon type="check" /><h2>새 보정이 추가되었습니다</h2><strong className={styles.addedName}>{modal.profile.name}</strong><p>평균 오차 {modal.profile.avgErrorPx == null ? '미제공' : `${Math.round(modal.profile.avgErrorPx)}px`} · 기준 {grades[modal.profile.grade] ?? '통과'}</p><p>이 보정을 지금 사용으로 설정할까요?</p><div className={styles.modalActions}><button onClick={close}>나중에</button>{!modal.profile.active && <button className={styles.primary} onClick={() => activate(modal.profile, 'added')} disabled={busy}>사용으로 설정</button>}</div></>;
+  else if (modal.type === 'added') { const stats = gazeStats(modal.profile); content = <><GazeModalIcon type="check" /><h2>새 보정이 추가되었습니다</h2><strong className={styles.addedName}>{modal.profile.name}</strong><p>최소 {px(stats.min)} · 평균 {px(stats.avg)} · 최대 {px(stats.max)} · 기준 {grades[modal.profile.grade] ?? '통과'}</p><p>이 보정을 지금 사용으로 설정할까요?</p><div className={styles.modalActions}><button onClick={close}>나중에</button>{!modal.profile.active && <button className={styles.primary} onClick={() => activate(modal.profile, 'added')} disabled={busy}>사용으로 설정</button>}</div></>; }
   else content = <><GazeModalIcon type="check" /><h2>{modal.title}</h2><p>{modal.message}</p><button className={styles.primary} onClick={close}>확인</button></>;
   return <div className={styles.backdrop} role="presentation"><section className={`${styles.modal} ${styles.frame}`} role="dialog" aria-modal="true"><FrameMarks />{content}</section></div>;
 }

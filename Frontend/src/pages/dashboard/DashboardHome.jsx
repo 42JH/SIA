@@ -8,6 +8,11 @@ import VoicePanel from './VoicePanel';
 import GazePanel from './GazePanel';
 import { useGestureStore } from '../../store/gestureStore';
 import siaLogo from '../../assets/sia-logo.png';
+import navSettings from '../../assets/nav-settings.png';
+import navDashboard from '../../assets/nav-dashboard.png';
+import navVoice from '../../assets/nav-voice.png';
+import navGaze from '../../assets/nav-gaze.png';
+import navGestures from '../../assets/nav-gestures.png';
 import styles from './DashboardHome.module.css';
 
 const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
@@ -67,7 +72,8 @@ function averageOf(buckets, key) {
 
 function calendarSummary(kind, buckets, fallback, period) {
   if (kind === 'usage') {
-    const available = buckets.filter((bucket) => Number.isFinite(bucket.count)); const total = available.reduce((sum, bucket) => sum + bucket.count, 0);
+    const normalized = buckets.map((bucket) => ({ ...bucket, count: Number.isFinite(bucket.count) ? bucket.count : (bucket.voice ?? 0) + (bucket.gesture ?? 0) }));
+    const available = normalized.filter((bucket) => Number.isFinite(bucket.count)); const total = available.reduce((sum, bucket) => sum + bucket.count, 0);
     const voiceTotal = buckets.reduce((sum, bucket) => sum + (Number.isFinite(bucket.voice) ? bucket.voice : 0), 0);
     const gestureTotal = buckets.reduce((sum, bucket) => sum + (Number.isFinite(bucket.gesture) ? bucket.gesture : 0), 0);
     const peakBucket = total > 0 ? available.reduce((peak, bucket) => !peak || bucket.count > peak.count ? bucket : peak, null) : null;
@@ -121,17 +127,14 @@ function Intro({ title, description, eyebrow = '' }) { return <div className={st
 function Label({ overline, title, description }) { return <div className={styles.cardLabel}><small>{overline}</small><strong>{title}</strong>{description && <p>{description}</p>}</div>; }
 function SiaLogo() { return <img src={siaLogo} alt="SIA" />; }
 function NavIcon({ kind }) {
-  if (kind === 'home') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><path d="M8 29 32 8l24 21v27H39V39H25v17H8Z" /><path d="M18 22V11h9" /></svg>;
-  if (kind === 'gestures') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><path d="M20 30V16a4 4 0 0 1 8 0v11-16a4 4 0 0 1 8 0v16-13a4 4 0 0 1 8 0v15-9a4 4 0 0 1 8 0v19c0 13-8 21-20 21S12 52 12 40v-8a4 4 0 0 1 8 0v5" /></svg>;
-  if (kind === 'voice') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><rect x="23" y="7" width="18" height="34" rx="9" /><path d="M15 34v2c0 10 7 17 17 17s17-7 17-17v-2M32 53v9M23 62h18" /></svg>;
-  if (kind === 'gaze') return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="20" /><path d="M32 1v18M32 45v18M1 32h18M45 32h18M32 20v24" /><circle className={styles.gazeDot} cx="43" cy="23" r="3.4" /></svg>;
-  return <svg className={styles.navIcon} viewBox="0 0 64 64" aria-hidden="true"><path d="m32 4 5 6 8-2 3 8 8 2-1 9 6 5-6 6 1 8-8 3-3 8-8-2-5 6-6-6-8 2-3-8-8-3 1-8-6-6 6-5-1-9 8-2 3-8 8 2Z" /><circle cx="32" cy="32" r="8" /></svg>;
+  const icons = { settings: navSettings, home: navDashboard, voice: navVoice, gaze: navGaze, gestures: navGestures };
+  return <img className={styles.navIcon} src={icons[kind]} alt="" aria-hidden="true" />;
 }
 
 function Overview({ data, open }) {
   if (!data) return null;
   const accuracy = [['음성 인식 정확도', data.accuracy?.voice], ['모션인식 정확도', data.accuracy?.motion]];
-  const buckets = calendarBuckets(data.usage?.buckets ?? [], 'week'); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
+  const buckets = calendarBuckets(data.usage?.buckets ?? [], 'week').map((item) => ({ ...item, count: Number.isFinite(item.count) ? item.count : (item.voice ?? 0) + (item.gesture ?? 0) })); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
   return <><Intro title="SIA 대시보드" description="AI가 더 편리한 일상을 만들어갑니다." />
     <div className={styles.overviewGrid}>
       <button className={`${styles.dashboardCard} ${styles.usageOverview}`} onClick={() => open('usage')}><Label overline="USAGE" title="제스처 / 보이스 사용량" description="이번 주 사용 현황 · 클릭 시 자세히 보기" /><div className={styles.overviewBars}>{buckets.map((item) => <span key={item.key}><i style={{ height: `${(item.count ?? 0) / maxUsage * 76 + 4}%` }} /><small>{item.label}</small></span>)}</div></button>
@@ -144,12 +147,14 @@ function Overview({ data, open }) {
 }
 
 function Detail({ kind, data, period, setPeriod, open }) {
-  if (!data) return null; const buckets = calendarBuckets(data.buckets ?? [], period); const summary = calendarSummary(kind, buckets, data.summary ?? {}, period);
+  if (!data) return null; const buckets = calendarBuckets(data.buckets ?? [], period).map((bucket) => kind === 'usage' ? { ...bucket, count: Number.isFinite(bucket.count) ? bucket.count : (bucket.voice ?? 0) + (bucket.gesture ?? 0) } : bucket); const summary = calendarSummary(kind, buckets, data.summary ?? {}, period);
+  // TODO(BE): 선택한 과거 월·일을 기준으로 조회할 anchor 파라미터가 명세에 추가되면 선택 bucket key를 API에 전달 필요
+  const drillDown = (bucket) => { if (!bucket) return; if (period === 'year') setPeriod('month'); else if (period === 'month') setPeriod('day'); };
   return <><div className={styles.detailHead}><button className={styles.detailBack} onClick={() => open('home')}>‹</button><Intro eyebrow="분석" title={details[kind][0]} description={details[kind][1]} /><Periods period={period} setPeriod={setPeriod} /></div>
     <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} />
-      {kind === 'accuracy' && <><Legend items={['음성 인식', '모션인식']} /><LineChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} /></>}
-      {kind === 'latency' && <><Legend items={['간단한 작업', '복잡한 작업']} /><BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} /></>}
-      {kind === 'usage' && <><Legend items={['보이스', '제스처', '전체 추세']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gesture' }]} lineKey="count" minimumMax={4} valueFormatter={(value) => Math.round(value)} /></>}
+      {kind === 'accuracy' && <><Legend items={['음성 인식', '모션인식']} /><LineChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
+      {kind === 'latency' && <><Legend items={['간단한 작업', '복잡한 작업']} /><BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
+      {kind === 'usage' && <><Legend items={['보이스', '제스처', '전체 사용량']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gesture' }, { key: 'count' }]} minimumMax={4} valueFormatter={(value) => Math.round(value)} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
       {kind === 'apps' && ((data.items ?? []).length ? <HorizontalBars items={data.items} /> : <Empty />)}
     </section><Summary kind={kind} summary={summary} /></>;
 }

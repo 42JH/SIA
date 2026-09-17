@@ -10,14 +10,10 @@
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--gaze-blue); }
 .circuit circle { stroke-width: 2.4; }
-.gazeSeal { position: relative; display: grid; width: 118px; height: 118px; place-items: center; justify-self: end; border: 2px solid var(--gaze-navy); border-radius: 50%; box-shadow: inset 0 0 0 9px white, inset 0 0 0 11px var(--gaze-navy), inset 0 0 0 23px white, inset 0 0 0 25px var(--gaze-navy); }
-.gazeSeal::before, .gazeSeal::after { position: absolute; background: var(--gaze-navy); content: ""; }
-.gazeSeal::before { width: 150px; height: 2px; }
-.gazeSeal::after { width: 2px; height: 150px; }
-.gazeSeal i { position: absolute; border-radius: 50%; }
-.gazeSeal i:first-child { inset: -10px; border: 2px dashed var(--gaze-navy); }
-.gazeSeal i:nth-child(2) { inset: 34px; border: 2px solid var(--gaze-navy); }
-.gazeSeal span { z-index: 1; width: 10px; height: 10px; border-radius: 50%; background: var(--gaze-navy); transform: translate(17px, -12px); }
+.heroRadar { width: 118px; height: 118px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
+.heroRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
+.heroRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
+.heroRadar .radarCenter { fill: var(--gaze-blue); stroke: none; }
 
 .calibrationGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: 55% 45%; gap: 20px; }
 .frame { position: relative; border: 2px solid var(--gaze-line); clip-path: polygon(18px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 22px), calc(100% - 22px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
@@ -53,7 +49,8 @@ button:disabled { cursor: default; opacity: .45; }
 .profileCard:has(> input) { grid-template-columns: 28px 68px minmax(150px, 1fr); }
 .profileCard > input { width: 24px; height: 24px; margin: 0; accent-color: var(--gaze-navy); }
 .compactRadar { width: 62px; height: 62px; fill: none; stroke: var(--gaze-navy); stroke-width: 6; }
-.compactRadar .radarOuter, .compactRadar .radarTarget { display: none; }
+.compactRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
+.compactRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
 .compactRadar .radarCenter { fill: var(--gaze-navy); }
 .profileInfo { display: grid; min-width: 0; gap: 6px; }
 .nameRow { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -98,14 +95,12 @@ button:disabled { cursor: default; opacity: .45; }
 @media (min-width: 1001px) and (max-height: 800px) {
   .gazePage { gap: 12px; }
   .gazeHero { height: 120px; grid-template-columns: minmax(380px, 38%) 1fr 104px; }
-  .gazeSeal { width: 92px; height: 92px; }
-  .gazeSeal::before { width: 116px; }
-  .gazeSeal::after { height: 116px; }
+  .heroRadar { width: 92px; height: 92px; }
   .calibrationGrid { min-height: calc(100vh - 330px); }
   .activePanel { padding-top: 26px; padding-bottom: 20px; }
   .activeRadar { min-height: 190px; }
   .radar { width: min(215px, 62%); height: min(215px, 62%); }
   .bottomBar { min-height: 62px; }
 }
-@media (max-width: 1000px) { .gazeHero { grid-template-columns: 1fr 1fr; } .gazeSeal { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
+@media (max-width: 1000px) { .gazeHero { grid-template-columns: 1fr 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
 @media (max-width: 680px) { .gazeHero { grid-template-columns: 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .profileCard { grid-template-columns: 58px 1fr; } .profileCard .pillButton { grid-column: 2; justify-self: start; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }
