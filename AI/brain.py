@@ -1181,7 +1181,7 @@ class Brain(threading.Thread):
                     be = self._be()
                     t_exec = time.monotonic()
                     completed = self._execute(result, crop_img, t_utter, hwnd, full_img,
-                                              profile, sim, tier, generation)
+                                              profile, tier, generation)
                     finished = time.monotonic()
                     print(f"[지연] 대기 {t_proc - t_end:.2f} | 게이트 {(t_pre - t_proc) if t_pre else 0:.2f} | STT {self._last_stt_s} | DOM {dom_s}"
                           f" | LLM {self._last_llm_s}({self._last_llm_tries}) | 실행 {finished - t_exec:.2f} | 발화끝→완료 {finished - t_end:.2f}s")
@@ -1280,7 +1280,7 @@ class Brain(threading.Thread):
 
     # --- 액션 실행 ---
     def _execute(self, result, crop_img, t_utter=None, hwnd=0, full_img=None,
-                 profile=None, sim=None, tier=2, generation=None):
+                 profile=None, tier=2, generation=None):
         """실제 완료 시 (원래 발화 시작 시각, 통계 필드), 미실행·확인 대기는 None."""
         t_utter = time.monotonic() if t_utter is None else t_utter
         if not result.get("audio_is_speech", True):
@@ -1311,14 +1311,28 @@ class Brain(threading.Thread):
         with self._audio_lock:
             if generation is not None and generation != self._audio_generation:
                 return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
+        completed = (t_utter, {"sessionId": session_id, "action": action,
+                               "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
+        pending, done = self._pending, None
+        try:
+            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img, full_img)
+            return done
+        finally:
+            # voice 이벤트는 실행이 끝난 뒤에 보낸다 — 대시보드 "음성 인식 정확도"는 명령으로 인식된 발화
+            # (1단 라우터 적중·Gemini 명령 판정) 중 실제 실행까지 간 비율이라 성공 1.0 / 실패 0.0 을 실어야
+            # BE 의 AVG(accuracy) 가 그 비율이 된다. 실행 중 예외도 여기서 실패로 남는다.
+            # 화자 거부·인증 오류·Gemini 호출 실패는 명령으로 인식되기 전이라 세지 않는다.
+            # 확인 질문을 새로 띄운 발화는 아직 성패가 없다 — 뒤이은 승인·취소 발화에서 센다(None).
             if be and self.act:
+                asked = self._pending is not None and self._pending is not pending
                 enrolled = profile is not None and profile[0] is not None
                 be.queue_usage("voice", sessionId=session_id,
                                profileId=profile[2] if enrolled else None,
-                               accuracy=round(sim, 3) if enrolled and sim is not None else None,
+                               accuracy=None if asked else float(done is not None),
                                action=result.get("action"))
-        completed = (t_utter, {"sessionId": session_id, "action": action,
-                               "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
+
+    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img):
+        """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
             if be:
                 be.end()
