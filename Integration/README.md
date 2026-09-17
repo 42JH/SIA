@@ -7,8 +7,8 @@ Frontend/Backend/AI 세 프로세스를 하나의 데스크톱 앱으로 묶는 
 1. 앱 시작 시 BE sidecar 실행 → `runtime.json`의 PID와 `/api/status`를 확인 → AI sidecar 실행
 2. 창의 X 버튼은 종료가 아니라 숨기기 (트레이로 감춤)
 3. 트레이 아이콘: "열기"(대시보드 다시 표시) / "종료"(sidecar까지 확실히 kill 후 종료)
-4. (다음 단계) FE의 WS 알림 수신 지점에서 `@tauri-apps/plugin-notification`으로
-   네이티브 토스트 트리거
+4. BE의 `/ws/fe` 알림을 overlay 창(`notify_bridge.rs` + `overlay/index.html`)으로
+   중계해서 토스트/진행상태 표시 — 네이티브 OS 토스트는 안 쓰기로 결정, overlay 창 하나로 통합
 
 ## 아직 안 된 것 / 확정 안 된 것
 
@@ -17,10 +17,10 @@ Frontend/Backend/AI 세 프로세스를 하나의 데스크톱 앱으로 묶는 
   파이썬) 를 만드는 작업이 선행돼야 실제로 뜬다.
 - **sidecar 파일명은 임시 계약** — 현재는 `sia-backend`와 `sia-ai`를 사용한다.
   최종 패키징 방식이 정해지면 실행 인자와 리소스 디렉터리까지 함께 확정해야 한다.
-- **FE 쪽 네이티브 알림 연동 미착수** — `TopNotification`/`BootToast`가
-  WS 메시지를 받는 지점에 `invoke`로 알림 플러그인 호출을 추가해야 함.
-- **onboarding 최초 1회만 표시** 로직은 BE/FE 쪽 작업(별도 트래킹) —
-  이 프로젝트는 그 값을 참조해서 라우팅만 하면 됨.
+- ~~onboarding 최초 1회만 표시~~ → 구현됨 (`lib.rs`의 `spawn_sidecars`가 BE
+  `/api/status`의 `activeVoiceId`·`activeCalibId`가 둘 다 있으면 메인 창 생성을
+  생략한다). 다만 sidecar 바이너리가 없어 BE를 sidecar로 못 띄우는 지금은 이 판단
+  자체가 실행되지 않아 실제 동작 검증은 아직 못 함.
 
 ## 빌드/검증
 
