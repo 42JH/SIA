@@ -1117,6 +1117,60 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+def test_llm_retry():
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    from unittest.mock import patch
+
+    import brain
+
+    class FakeClient:
+        def __init__(self, errors):
+            self.errors, self.calls = list(errors), 0
+            self.models = self
+
+        def generate_content(self, **kw):
+            self.calls += 1
+            if self.errors:
+                raise self.errors.pop(0)
+            return "OK"
+
+    made = []
+
+    def fake_client(key):
+        c = FakeClient(plan.pop(0) if plan else [])
+        made.append(key)
+        return c
+
+    with patch("brain.llm_client", side_effect=fake_client):
+        plan = [[]]                                            # 첫 호출에 성공
+        c0 = brain.llm_client("k1")
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 0 and tries == 1
+
+        plan = [[]]                                            # 429 → 키 전환 후 성공
+        c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
+        c0.errors = [Exception("503 UNAVAILABLE")]
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
+        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
+            brain.llm_generate(c0, ["p"], ["k1"], 0)
+            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
+        except Exception as e:
+            assert "503" in str(e)
+
+    assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
+    assert brain.is_transient_error(Exception("Read timed out"))
+    assert not brain.is_transient_error(Exception("400 INVALID_ARGUMENT"))
+    assert brain.is_quota_error(Exception("429")) and not brain.is_quota_error(Exception("503"))
+
+
 def test_wake_model_load():
     """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
     온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
@@ -1184,4 +1238,5 @@ if __name__ == "__main__":
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
-    print("OK - 26/26 통과")
+    test_llm_retry()
+    print("OK - 27/27 통과")

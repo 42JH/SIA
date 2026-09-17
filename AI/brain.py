@@ -515,6 +515,78 @@ def is_quota_error(e):
     return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
 
 
+def is_transient_error(e):
+    """키를 바꿔도 소용없는 일시 장애 — 같은 키로 한 번 더 시도할 값어치가 있다."""
+    s = str(e).lower()
+    return ("503" in s or "unavailable" in s or "overloaded" in s
+            or "timeout" in s or "timed out" in s or "deadline" in s)
+
+
+LLM_TIMEOUT_MS = int(os.environ.get("LLM_TIMEOUT_MS") or 15000)
+
+
+def llm_client(api_key):
+    """LLM 클라이언트 한 개. 타임아웃을 반드시 건다 — SDK 기본은 무한 대기라
+    응답 없는 요청 하나가 단일 Brain 워커를 영구 정지시킨다."""
+    from google import genai
+    from google.genai import types
+
+    return genai.Client(api_key=api_key,
+                        http_options=types.HttpOptions(timeout=LLM_TIMEOUT_MS))
+
+
+def llm_config():
+    """generate_content 설정 — brain(실서비스)과 eval_prompt(회귀)가 같은 것을 쓴다.
+    한쪽만 바꾸면 '평가에서 잰 값'과 '실제로 도는 값'이 달라진다."""
+    from google.genai import types
+
+    cfg = dict(response_mime_type="application/json", temperature=0.1)
+    if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
+        # thinking_level="MINIMAL" 도 재 봤지만 같은 케이스 3건에서 지연 차이가 없었고
+        # (8.26/5.87/6.06s vs 8.61/5.13/6.09s, 양쪽 다 thoughts=0) 폐기 예정이라는 경고는
+        # 생성용이 아니라 튜닝 설정(ReinforcementTuning)에 붙은 것이라 바꿀 이유가 없다.
+        cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    return cfg
+
+
+def llm_generate(client, parts, keys, key_i):
+    """도구 호출 한 번 + 재시도. (응답, 새 key_i, 시도 횟수) 를 돌려준다.
+
+    재시도 사유는 둘 — 쿼터 소진(429)은 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번 더.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 사라진다."""
+    from google.genai import types
+
+    cfg = llm_config()
+    retried_transient = False
+    tries = 0
+    for _ in range(max(1, len(keys)) + 1):
+        tries += 1
+        try:
+            return client.models.generate_content(
+                model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
+            ), client, key_i, tries
+        except Exception as e:
+            if is_quota_error(e) and len(keys) > 1:
+                key_i = (key_i + 1) % len(keys)
+                client = llm_client(keys[key_i])
+                print(f"쿼터 소진 → 키 {key_i + 1}/{len(keys)}로 전환")
+                continue
+            if is_transient_error(e) and not retried_transient:
+                retried_transient = True
+                print(f"일시 장애 → 한 번 더: {str(e)[:80]}")
+                continue
+            raise
+    raise RuntimeError("LLM 재시도 한도 초과")
+
+
+def llm_json(resp):
+    """응답 텍스트 → dict. 코드펜스를 붙여 주는 경우가 있어 벗겨 낸다."""
+    text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
+    return json.loads(text)
+
+
+
+
 def wav_bytes(audio_i16, sr=16000):
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -614,9 +686,7 @@ class Brain(threading.Thread):
             print(f"시동어 게이트 켜짐 ({WAKE_MODEL.stem}, 임계 {WAKE_THRESHOLD}"
                   + (", 섀도=로그만)" if WAKE_SHADOW else ")"))
         if self._keys:
-            from google import genai
-
-            self._client = genai.Client(api_key=self._keys[0])
+            self._client = llm_client(self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
                   f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
         else:
@@ -1080,29 +1150,11 @@ class Brain(threading.Thread):
         if stt_draft:  # 1단 STT 초안 — 판정 기준은 오디오, 초안은 힌트 (오인식 가능)
             parts.append(f"로컬 STT 초안(오인식 가능, 참고용 힌트): {stt_draft}")
         parts.append(prompt)
-        cfg = dict(response_mime_type="application/json", temperature=0.1)
-        if "lite" not in MODEL:  # 이 용도에 사고 과정은 낭비 — 지연만 3~5초 추가
-            cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         t0 = time.monotonic()
-        for attempt in range(max(1, len(self._keys))):
-            try:
-                resp = self._client.models.generate_content(
-                    model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
-                )
-                break
-            except Exception as e:
-                # 쿼터 소진이고 남은 키가 있으면 다음 키로 재시도
-                if is_quota_error(e) and len(self._keys) > 1 and attempt < len(self._keys) - 1:
-                    self._key_i = (self._key_i + 1) % len(self._keys)
-                    from google import genai
-
-                    self._client = genai.Client(api_key=self._keys[self._key_i])
-                    print(f"쿼터 소진 → 키 {self._key_i + 1}/{len(self._keys)}로 전환")
-                    continue
-                raise
-        text = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-        result = json.loads(text)
-        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), attempt + 1  # 키 회전 횟수 포함
+        resp, self._client, self._key_i, tries = llm_generate(
+            self._client, parts, self._keys, self._key_i)
+        result = llm_json(resp)
+        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), tries  # 키 회전·재시도 횟수 포함
         print(f"[{time.monotonic() - t0:.1f}s] {result.get('transcript', '')!r} → "
               f"{result.get('action')} (명령={result.get('is_command')})")
         return result
