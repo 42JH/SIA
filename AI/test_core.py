@@ -187,11 +187,16 @@ def test_click_recal(tmp_dir=None):
 
 
 def test_vad_segmenter():
+    import voice
     from voice import BLOCK, VadSegmenter
 
     seg = VadSegmenter()
     quiet = np.full(BLOCK, 120, dtype=np.int16)
     loud = np.full(BLOCK, 4000, dtype=np.int16)
+    # floor 를 안 주면 MIC_FLOOR 로 시작한다. 윈도우 볼륨을 올려도 임계에 못 닿는 장치가 있어
+    # (블루투스 헤드셋) 환경변수로 내릴 수 있어야 한다 — noise 도 같이 따라가야 threshold 가 안 터진다.
+    assert seg.floor == seg.noise == voice.MIC_FLOOR
+    assert VadSegmenter(floor=120.0).floor == 120.0   # 명시 인자가 환경변수보다 우선
     t = 0.0
     events = []
 
