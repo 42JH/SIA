@@ -187,11 +187,16 @@ def test_click_recal(tmp_dir=None):
 
 
 def test_vad_segmenter():
+    import voice
     from voice import BLOCK, VadSegmenter
 
     seg = VadSegmenter()
     quiet = np.full(BLOCK, 120, dtype=np.int16)
     loud = np.full(BLOCK, 4000, dtype=np.int16)
+    # floor 를 안 주면 MIC_FLOOR 로 시작한다. 윈도우 볼륨을 올려도 임계에 못 닿는 장치가 있어
+    # (블루투스 헤드셋) 환경변수로 내릴 수 있어야 한다 — noise 도 같이 따라가야 threshold 가 안 터진다.
+    assert seg.floor == seg.noise == voice.MIC_FLOOR
+    assert VadSegmenter(floor=120.0).floor == 120.0   # 명시 인자가 환경변수보다 우선
     t = 0.0
     events = []
 
@@ -442,7 +447,7 @@ def test_wake_first_frame():
     from types import SimpleNamespace
     from brain import WAKE_MODEL, WAKE_THRESHOLD, wake_score_of
 
-    plateau = [0.0, 0.0, 0.6, 0.999, 0.999, 0.999, 0.2]
+    plateau = [0.0, 0.0, round(WAKE_THRESHOLD + 0.01, 3), 0.999, 0.999, 0.999, 0.2]  # 셋째 프레임이 임계를 처음 넘는다
     model = SimpleNamespace(predict_clip=lambda audio: [{WAKE_MODEL.stem: s} for s in plateau])
     top, i_first, lead = wake_score_of(model, np.zeros(16000, np.int16))
     assert top == 0.999 and i_first == 2 and lead == 0
@@ -899,7 +904,7 @@ def test_wake_enroll():
                 self.hold = None
             puts.append(("http://x/api/agent/blobs/wakeword", len(body), "application/octet-stream"))
             return seq == self.seq
-        def commit(self, template, why, bindable=None, generation=None):
+        def commit(self, template, why, generation=None):
             if self.broken:
                 return None
             self.committed.append(template)
@@ -955,7 +960,7 @@ def test_wake_enroll():
     assert len(store.committed) == 1                 # 업로드까지 끝난 뒤에야 확정된다
     template = store.committed[0]
     assert template.wake_text == "시아야" and template.base_n == WAKE_TOTAL
-    assert len(template.embs) == WAKE_TOTAL and template.profile_id == 3
+    assert len(template.embs) == WAKE_TOTAL
     assert len(template.scores) == WAKE_TOTAL         # 시동어 점수 기록 (판정에는 쓰지 않는다)
     we.on_utter(clip())                              # 끝난 뒤 발화는 안 센다
     assert len(link.sent) == WAKE_TOTAL + 4
@@ -1117,6 +1122,88 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+def test_app_ref_resolution():
+    """앱 ref 는 BE 레지스트리에서 찾는다 — 슬러그가 기계마다 다르다.
+
+    실측(9/17): AI 는 app:chrome 을 보냈지만 이 PC 의 BE 엔 app:google-chrome 만 있었고
+    탐색기·그림판은 등록 자체가 없어 "크롬 열어줘"가 매번 APP_NOT_REGISTERED 로 떨어졌다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    b = Brain.__new__(Brain)
+    b.overlay = Mock()
+    apps = [{"ref": "app:calc", "name": "계산기"},
+            {"ref": "app:google-chrome", "name": "Google Chrome"},
+            {"ref": "app:notepad", "name": "메모장"}]
+    b._be = lambda: Mock(call=Mock(return_value=(True, {"apps": apps})))
+    b._apps = None
+    assert b._app_ref("calc", "계산기") == "app:calc"              # ref 완전 일치
+    assert b._app_ref("chrome", "크롬") == "app:google-chrome"      # 슬러그 조각 일치
+    assert b._app_ref("paint", "그림판") is None                    # 등록 없음 → 안내하고 멈춘다
+    b._apps = apps + [{"ref": "app:mspaint-x", "name": "그림판"}]
+    assert b._app_ref("paint", "그림판") == "app:mspaint-x"         # 표시 이름 일치
+
+    b2 = Brain.__new__(Brain)                                      # BE 미접속이면 빈 목록
+    b2.overlay, b2._be, b2._apps = Mock(), (lambda: None), None
+    assert b2._app_ref("calc", "계산기") is None
+
+
+def test_llm_retry():
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    from unittest.mock import patch
+
+    import brain
+
+    class FakeClient:
+        def __init__(self, errors):
+            self.errors, self.calls = list(errors), 0
+            self.models = self
+
+        def generate_content(self, **kw):
+            self.calls += 1
+            if self.errors:
+                raise self.errors.pop(0)
+            return "OK"
+
+    made = []
+
+    def fake_client(key):
+        c = FakeClient(plan.pop(0) if plan else [])
+        made.append(key)
+        return c
+
+    with patch("brain.llm_client", side_effect=fake_client):
+        plan = [[]]                                            # 첫 호출에 성공
+        c0 = brain.llm_client("k1")
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 0 and tries == 1
+
+        plan = [[]]                                            # 429 → 키 전환 후 성공
+        c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
+        c0.errors = [Exception("503 UNAVAILABLE")]
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
+        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
+            brain.llm_generate(c0, ["p"], ["k1"], 0)
+            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
+        except Exception as e:
+            assert "503" in str(e)
+
+    assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
+    assert brain.is_transient_error(Exception("Read timed out"))
+    assert not brain.is_transient_error(Exception("400 INVALID_ARGUMENT"))
+    assert brain.is_quota_error(Exception("429")) and not brain.is_quota_error(Exception("503"))
+
+
 def test_wake_model_load():
     """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
     온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
@@ -1153,6 +1240,30 @@ def test_wake_model_load():
     assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
 
 
+def test_brain_paused_drops_already_queued_utterance():
+    """submit()은 paused 동안 새 발화를 안 쌓지만, 제스처 등록이 막 시작돼 paused가 켜지기
+    *직전*에 이미 큐에 들어간 발화는 소비 스레드(run())가 따로 걸러야 한다 — 안 그러면
+    등록 중에도 그 발화가 그대로 처리되어 세션이 열린다(S15P21D106-279가 노리던 것과 반대)."""
+    import time as time_mod
+    from unittest.mock import Mock, patch
+
+    import brain as brain_mod
+    from brain import Brain
+
+    with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()):
+        b = Brain(Mock())
+    b.submit(b"\x00" * 100, None, None, t_utter=0.0)  # paused=False일 때 정상적으로 큐잉
+    assert len(b.queue) == 1
+    b.paused = True                                    # 등록이 막 시작된 상황을 흉내낸다
+    b.start()
+    for _ in range(40):                                # 최대 ~2초 대기 — 소비 스레드가 버릴 시간을 준다
+        if not b.queue:
+            break
+        time_mod.sleep(0.05)
+    assert not b.queue          # 큐에서 빠졌고(버려졌고)
+    assert b.busy == 0          # 실제 처리 파이프라인(busy 증가)까지는 안 갔다
+
+
 if __name__ == "__main__":
     import sys
     try:
@@ -1181,7 +1292,10 @@ if __name__ == "__main__":
     test_voice_bridge()
     test_wake_enroll()
     test_wake_model_load()
+    test_brain_paused_drops_already_queued_utterance()
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
-    print("OK - 26/26 통과")
+    test_llm_retry()
+    test_app_ref_resolution()
+    print("OK - 28/28 통과")

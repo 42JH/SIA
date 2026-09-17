@@ -281,7 +281,8 @@ def test_overflow_preserves_completed_audio():
             assert brain.queue == [("완성된 발화", "화면 캡처")]
             assert brain._pending == ("창을 닫을까요?",) and brain._accum is accum
             assert len(events) == 1 and events[0][0] == "utter"
-            log.assert_called_once()  # 연속 오버플로에서 로그가 쏟아지지 않는다.
+            # 연속 오버플로에서 로그가 쏟아지지 않는다 (장치 이름 같은 다른 줄은 센 적 없다).
+            assert sum("오버플로" in str(c) for c in log.call_args_list) == 1
         finally:
             listener.stop()
             listener.join(3)

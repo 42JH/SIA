@@ -87,8 +87,7 @@ def wake_info():
     t = store.current
     if t is None:
         sys.exit("등록된 호출어 템플릿이 없습니다" + (f" (읽기 실패: {store.load_error})" if store.load_error else ""))
-    print(f"호출어 \"{t.wake_text}\" — 기준 {t.base_n}개, "
-          f"보이스 프로필 {t.profile_id if t.bound else '미연결'}")
+    print(f"호출어 \"{t.wake_text}\" — 기준 {t.base_n}개")
     print(f"등록 때 시동어 점수(기록용, 판정에는 쓰지 않음): {[round(s, 2) for s in t.scores]}")
     return store
 

@@ -50,6 +50,58 @@ def wait_until(condition, timeout=2.0, interval=0.01):
 
 
 class GesturePreviewTests(unittest.TestCase):
+    def test_encoding_error_does_not_kill_worker(self):
+        link = Link()
+        preview = GesturePreview(link)
+        preview.start()
+        with patch('gesture_be.encode_jpeg', side_effect=[ValueError('bad frame'), 'recovered']):
+            preview.tick(frame(), BASE)
+            self.assertTrue(wait_until(lambda: preview._preview_error))
+            preview.tick(frame(), BASE + 1)
+            self.assertTrue(wait_until(lambda: len(link.events('cam_preview_frame')) == 1))
+        self.assertTrue(preview._thread.is_alive())
+        self.assertEqual(link.events('cam_preview_frame')[0]['jpegB64'], 'recovered')
+        self.assertEqual(link.events('cam_preview_state')[-1]['phase'], 'READY')
+
+    def test_stop_restart_drops_inflight_old_preview(self):
+        link = Link()
+        preview = GesturePreview(link)
+        started, release = threading.Event(), threading.Event()
+        def encode(fr):
+            if int(fr[0,0,0]) == 1:
+                started.set()
+                release.wait(2)
+            return str(int(fr[0,0,0]))
+        with patch('gesture_be.encode_jpeg', side_effect=encode):
+            preview.start()
+            preview.tick(frame(1), BASE)
+            self.assertTrue(started.wait(2))
+            preview.stop()
+            preview.start()
+            preview.tick(frame(2), BASE + 1)
+            release.set()
+            self.assertTrue(wait_until(lambda: len(link.events('cam_preview_frame')) == 1))
+        self.assertEqual(link.events('cam_preview_frame'),
+                         [{'seq': 1, 'jpegB64': '2', 'tsMs': int((BASE + 1) * 1000)}])
+
+    def test_send_failure_is_retried_on_next_frame(self):
+        link = Link()
+        original = link.send_event
+        failed = threading.Event()
+        def send(event, data):
+            if event == 'cam_preview_frame' and not failed.is_set():
+                failed.set()
+                return False
+            return original(event, data)
+        link.send_event = send
+        preview = GesturePreview(link)
+        preview.start()
+        preview.tick(frame(), BASE)
+        self.assertTrue(wait_until(lambda: preview._preview_error))
+        preview.tick(frame(), BASE + 1)
+        self.assertTrue(wait_until(lambda: len(link.events('cam_preview_frame')) == 1))
+        self.assertTrue(preview._thread.is_alive())
+
     def test_start_sends_ready_and_resets_sequence(self):
         link = Link()
         preview = GesturePreview(link)
@@ -89,6 +141,8 @@ class GesturePreviewTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: len(link.events("cam_preview_frame")) >= 2))
         seqs = [d["seq"] for d in link.events("cam_preview_frame")]
         self.assertEqual(seqs, [1, 2])
+        self.assertEqual([d['tsMs'] for d in link.events('cam_preview_frame')],
+                         [int(BASE * 1000), int((BASE + 1.0) * 1000)])
         self.assertTrue(all("jpegB64" in d and d["jpegB64"] for d in link.events("cam_preview_frame")))
 
     def test_tick_throttles_within_frame_interval(self):
@@ -132,6 +186,8 @@ class GesturePreviewTests(unittest.TestCase):
             self.assertTrue(wait_until(lambda: len(link.events("cam_preview_frame")) >= 2, timeout=3.0))
 
         self.assertEqual(processed, [1, 3])  # frame2는 인코딩 단계까지도 못 감
+        self.assertEqual([d['tsMs'] for d in link.events('cam_preview_frame')],
+                         [int(BASE * 1000), int((BASE + 2.0) * 1000)])
 
 
 if __name__ == "__main__":
