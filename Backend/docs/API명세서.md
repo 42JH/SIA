@@ -2124,15 +2124,16 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 ### 3.25 `media.seek` — 영상 앞으로 · 뒤로 · S
 
-포커스된 창에 좌 · 우 방향키를 보낸다. `media.*` 중 유일하게 유튜브 분기가 없다 — 시스템 미디어 키에는 탐색에 해당하는 가상 키가 없어 폴백이 성립하지 않는다.
+좌 · 우 방향키를 보낸다. `media.*` 중 유일하게 유튜브 분기가 없다 — 시스템 미디어 키에는 탐색에 해당하는 가상 키가 없어 폴백이 성립하지 않는다.
 
 | 인자 | 필수 | 규칙 |
 |---|:-:|---|
 | `dir` | O | `forward`(→ 오른쪽 방향키) / `backward`(→ 왼쪽 방향키) |
 | `amount` | | 방향키를 누를 횟수 1~10. 생략 시 1. 범위 밖 값은 거절하지 않고 1~10 으로 클램프한다 |
+| `winRef` | | 영상 창의 `win:N`. 주면 그 창을 앞으로 가져온 뒤 방향키를 보낸다. 생략하면 지금 앞에 있는 창이 받는다 |
 
 ```json
-{ "dir": "forward", "amount": 2 }
+{ "dir": "forward", "amount": 2, "winRef": "win:3" }
 ```
 ```json
 { "content": [{ "type": "text", "text": "실행했습니다" }], "isError": false }
@@ -2140,6 +2141,10 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 ```json
 { "content": [{ "type": "text", "text": "지원하지 않는 이동 방향입니다: rewind (forward|backward)" }], "isError": true, "structuredContent": { "code": "INVALID_REQUEST", "message": "지원하지 않는 이동 방향입니다: rewind (forward|backward)" } }
 ```
+
+**방향키는 앞에 있는 창이 받는다.** 나머지 `media.*` 넷은 시스템 미디어 키가 재생 세션으로 가서 배경 재생도 제어하지만, 이 도구는 그렇지 않다. `context.get` 의 `foreground` 가 영상 창이 아니면 `winRef` 를 넘겨야 하며, 넘기지 않으면 지금 앞에 있는 앱(문서 편집기 등)이 방향키를 받는다.
+
+`winRef` 를 준 경우의 실패는 `window.focus` 와 같다 (`REF_NOT_FOUND` · `ELEVATED_WINDOW` · `FOREGROUND_BLOCKED`, 문장은 §3.6 과 같다). 창을 앞으로 가져오지 못하면 **방향키를 아예 보내지 않는다** — 엉뚱한 앱이 키를 받느니 실패로 돌려준다.
 
 한 번에 움직이는 초는 BE 가 정하지 않는다. 방향키 한 번이 몇 초인지는 플레이어가 정하며(유튜브 5초), AI 는 사용자에게 초를 단정하지 않는다. 유튜브는 영상 플레이어에 포커스가 있어야 방향키에 반응한다.
 
