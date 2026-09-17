@@ -1169,6 +1169,61 @@ def test_app_ref_resolution():
     assert b2._app_ref("calc", "계산기") is None
 
 
+def test_mic_preview():
+    """마이크 레벨 미리보기 — FE 파형의 유일한 공급원이다 (프로토콜 §5.5).
+
+    이 경로가 비어 있으면 FE 는 에러도 없이 평평한 선만 그린다(9/17 실측: AI 에 mic_preview 0건,
+    BE 중계·FE 소비는 이미 있었음). 그래서 배선이 끊기면 조용히 죽는 것부터 잡는다.
+    """
+    import json
+    import threading
+    from unittest.mock import Mock
+
+    from be_link import AgentLink
+    from voice_bridge import MIC_PREVIEW_HZ, MicPreview, mic_level
+
+    # ① 레벨 정규화 — 선형으로 나누면 말소리가 0.03 이라 막대가 안 보인다. dBFS 로 편다.
+    assert mic_level(0) == 0.0 and mic_level(-5) == 0.0     # 무음·음수 방어
+    assert mic_level(32768) == 1.0 and mic_level(10 ** 6) == 1.0   # 포화는 자른다(버리지 않는다)
+    assert 0.45 < mic_level(1000) < 0.55                    # 보통 말소리가 막대 절반쯤
+    assert mic_level(350) < mic_level(1000) < mic_level(4000)
+
+    # ② 수명 — 준비 단계가 없어 STARTING 없이 바로 READY, 끝은 STOPPED.
+    link = Mock()
+    mp = MicPreview(link)
+    mp.tick(5000, 100.0)
+    assert not link.send_event.called                       # 켜기 전엔 아무것도 안 보낸다
+
+    mp.start()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "READY"})
+
+    period = 1.0 / MIC_PREVIEW_HZ
+    mp.tick(1000, 100.0)
+    mp.tick(1000, 100.0 + period / 2)                       # 주기 안의 두 번째는 버린다
+    mp.tick(1000, 100.0 + period * 1.5)
+    levels = [c[0][1] for c in link.send_event.call_args_list if c[0][0] == "mic_preview_level"]
+    assert [x["seq"] for x in levels] == [1, 2], levels     # 한 메시지에 진폭 하나, seq 는 1부터
+    assert all(0.0 <= x["level"] <= 1.0 for x in levels)
+
+    mp.stop()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "STOPPED"})
+    n = link.send_event.call_count
+    mp.stop()                                               # 두 번 꺼도 STOPPED 는 한 번만
+    mp.tick(9000, 200.0)                                    # 꺼진 뒤 레벨은 안 보낸다
+    assert link.send_event.call_count == n
+
+    # ③ 이 두 이벤트가 메인 루프까지 오는가 — 중계 목록에서 빠지면 위 코드가 통째로 죽는다.
+    ln = AgentLink.__new__(AgentLink)
+    ln._events, ln._event_lock = [], threading.Lock()
+    ln._session_condition, ln.be_session_id, ln.session_until_mono = threading.Condition(), None, 0.0
+    ln.gesture_ready = False
+    for attr in ("voice_sync", "calib", "wake", "wake_store"):
+        setattr(ln, attr, None)
+    ln._on_event(json.dumps({"type": "mic_preview_start", "data": {}}))
+    ln._on_event(json.dumps({"type": "mic_preview_stop", "data": {}}))
+    assert ln.take_events() == [("mic_preview_start", {}), ("mic_preview_stop", {})]
+
+
 def test_llm_retry():
     """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
     503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
@@ -1317,5 +1372,6 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_mic_preview()
     test_app_ref_resolution()
     print("OK - 29/29 통과")
