@@ -144,11 +144,6 @@ class VoiceProfileSync:
         self._pending = None
         self._worker = None
 
-    def is_active_profile(self, profile_ref):
-        """서버가 알린 최신 활성 프로필과 인증 당시 프로필이 같은지 확인한다."""
-        with self._condition:
-            return not self._closed and self._desired == profile_ref
-
     def on_changed(self, ref):
         """전체 설정의 blobs.voice와 voice_changed가 같은 최신 요청을 갱신한다."""
         if ref is not None:
