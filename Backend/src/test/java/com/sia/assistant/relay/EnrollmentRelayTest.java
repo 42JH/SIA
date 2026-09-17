@@ -61,4 +61,27 @@ class EnrollmentRelayTest {
         verify(feHub).send(eq("wakeword_done"), eq(Map.of()));
         verifyNoInteractions(agentHub);
     }
+
+    @Test
+    @DisplayName("wakeword_rejected 는 n·total·reason·code 를 그대로 넘긴다 — 순번도 total 도 AI 가 쥔다")
+    void rejectionPassesPayloadThrough() {
+        JsonNode d = om.readTree(
+                "{\"n\":3,\"total\":5,\"reason\":\"주변이 시끄러워요.\",\"code\":\"NOISY\"}");
+        relay.onWakewordRejected(d);
+
+        verify(feHub).send(eq("wakeword_rejected"), argThat(body ->
+                body instanceof JsonNode j && j.path("n").asInt() == 3 && j.path("total").asInt() == 5
+                        && "주변이 시끄러워요.".equals(j.path("reason").asText())
+                        && "NOISY".equals(j.path("code").asText())));
+        verifyNoInteractions(agentHub);
+    }
+
+    @Test
+    @DisplayName("거절 본문이 객체가 아니면 빈 객체로 방어한다")
+    void nonObjectRejectionFallsBackToEmpty() {
+        relay.onWakewordRejected(om.readTree("[1,2]"));
+
+        verify(feHub).send(eq("wakeword_rejected"), eq(Map.of()));
+    }
+
 }
