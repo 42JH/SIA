@@ -442,7 +442,7 @@ def test_wake_first_frame():
     from types import SimpleNamespace
     from brain import WAKE_MODEL, WAKE_THRESHOLD, wake_score_of
 
-    plateau = [0.0, 0.0, 0.6, 0.999, 0.999, 0.999, 0.2]
+    plateau = [0.0, 0.0, round(WAKE_THRESHOLD + 0.01, 3), 0.999, 0.999, 0.999, 0.2]  # 셋째 프레임이 임계를 처음 넘는다
     model = SimpleNamespace(predict_clip=lambda audio: [{WAKE_MODEL.stem: s} for s in plateau])
     top, i_first, lead = wake_score_of(model, np.zeros(16000, np.int16))
     assert top == 0.999 and i_first == 2 and lead == 0
