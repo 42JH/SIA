@@ -67,8 +67,7 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .scrim { position: fixed; z-index: 25; inset: 54px 0 0; border: 0; background: rgb(7 24 49 / 52%); }
 .drawer { position: fixed; z-index: 30; top: 54px; right: 0; width: clamp(280px, 24vw, 330px); height: calc(100vh - 54px); border-left: 1px solid var(--sia-line); background: white; }
 .drawer button { display: grid; width: 100%; grid-template-columns: 48px 1fr 20px; align-items: center; column-gap: 8px; padding: 19px 24px; border: 0; border-bottom: 1px solid var(--sia-soft-line); background: transparent; color: var(--sia-navy); font-size: 16px; font-weight: 700; text-align: left; cursor: pointer; }
-.navIcon { width: 42px; height: 42px; overflow: visible; fill: none; stroke: var(--sia-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.7; }
-.navIcon .gazeDot { fill: var(--sia-navy); stroke: none; }
+.navIcon { width: 42px; height: 42px; object-fit: contain; }
 .detailHead { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: end; margin-bottom: 26px; }
 .detailBack { align-self: start; margin-top: 22px; border: 0; background: transparent; color: var(--sia-navy); font-size: 42px; cursor: pointer; }
 .periods { display: grid; width: min(550px, 46vw); grid-template-columns: repeat(4, 1fr); border: 1px solid var(--sia-line); background: white; clip-path: polygon(15px 0, calc(100% - 15px) 0, 100% 15px, 100% calc(100% - 15px), calc(100% - 15px) 100%, 15px 100%, 0 calc(100% - 15px), 0 15px); }
