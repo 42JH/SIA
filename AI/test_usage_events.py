@@ -50,6 +50,8 @@ def assistant(profile=PROFILE, act=True):
             (True, {"foreground": {"ref": "win:1", "title": "창"},
                     "windows": [{"ref": "win:1", "title": "창"}]})
             if tool == "context.get" else
+            (True, {"apps": [{"ref": "app:calc", "name": "계산기"}]})
+            if tool == "app.list" else
             (True, {"items": [{"name": "test.txt", "path": "test.txt", "selected": False}]})
             if tool == "explorer.items" else (True, {})))
         speaker = None if profile is None else SimpleNamespace(
@@ -190,6 +192,8 @@ def test_failed_batch_is_discarded_without_retry():
 def test_success_pair_session_latency_and_rest_contract():
     with assistant() as (brain, link, clock):
         def call(tool, args=None):
+            if tool == "app.list":  # 앱 ref 는 BE 레지스트리에서 찾는다(슬러그가 기계마다 다르다)
+                return True, {"apps": [{"ref": "app:calc", "name": "계산기"}]}
             if tool == "app.launch":
                 clock.now = 12.75  # BE 응답까지 포함, 발화 시작(10초) 기준
                 link.be_session_id = 999  # 실행 중 세션이 바뀌어도 이미 선택한 세션을 유지한다.
@@ -200,7 +204,7 @@ def test_success_pair_session_latency_and_rest_contract():
         assert events(link) == [
             {"kind": "voice", "sessionId": 128, "profileId": 7, "accuracy": 0.877, "action": "open_app"},
             {"kind": "command", "sessionId": 128, "action": "open_app", "complexity": "SIMPLE", "latencyMs": 2750}]
-        assert [c.args[0] for c in link.call.call_args_list] == ["session.extend", "app.launch"]
+        assert [c.args[0] for c in link.call.call_args_list] == ["session.extend", "app.list", "app.launch"]
         brain._ask.assert_not_called()
         link.rt = {"port": 1234, "token": "test-token"}
         response = Mock()
@@ -455,7 +459,8 @@ def test_unexecuted_actions_and_local_mode():
         link.call.side_effect = None
         link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
         utter(brain, command("web_search", query="실패"))
-        assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 백엔드에 연결되지 않아 실행하지 못했습니다"
+        # BE 가 이유를 말해 줬으면 그대로 전한다 — '연결 안 됨'으로 뭉뚱그리면 원인을 못 찾는다
+        assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 검색 실패"
         assert not events(link, "command")
     with assistant() as (brain, link, _):
         brain.link = None

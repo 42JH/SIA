@@ -1117,6 +1117,34 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+def test_app_ref_resolution():
+    """앱 ref 는 BE 레지스트리에서 찾는다 — 슬러그가 기계마다 다르다.
+
+    실측(9/17): AI 는 app:chrome 을 보냈지만 이 PC 의 BE 엔 app:google-chrome 만 있었고
+    탐색기·그림판은 등록 자체가 없어 "크롬 열어줘"가 매번 APP_NOT_REGISTERED 로 떨어졌다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    b = Brain.__new__(Brain)
+    b.overlay = Mock()
+    apps = [{"ref": "app:calc", "name": "계산기"},
+            {"ref": "app:google-chrome", "name": "Google Chrome"},
+            {"ref": "app:notepad", "name": "메모장"}]
+    b._be = lambda: Mock(call=Mock(return_value=(True, {"apps": apps})))
+    b._apps = None
+    assert b._app_ref("calc", "계산기") == "app:calc"              # ref 완전 일치
+    assert b._app_ref("chrome", "크롬") == "app:google-chrome"      # 슬러그 조각 일치
+    assert b._app_ref("paint", "그림판") is None                    # 등록 없음 → 안내하고 멈춘다
+    b._apps = apps + [{"ref": "app:mspaint-x", "name": "그림판"}]
+    assert b._app_ref("paint", "그림판") == "app:mspaint-x"         # 표시 이름 일치
+
+    b2 = Brain.__new__(Brain)                                      # BE 미접속이면 빈 목록
+    b2.overlay, b2._be, b2._apps = Mock(), (lambda: None), None
+    assert b2._app_ref("calc", "계산기") is None
+
+
 def test_llm_retry():
     """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
     503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
@@ -1239,4 +1267,5 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
-    print("OK - 27/27 통과")
+    test_app_ref_resolution()
+    print("OK - 28/28 통과")

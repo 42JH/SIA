@@ -647,6 +647,8 @@ class Brain(threading.Thread):
     _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
     _router_fails = 0
     _last_be_payload = None  # 마지막 _be_ok 성공 payload
+    _last_be_error = None    # 마지막 _be_ok 실패 시 BE 가 준 {code, message}
+    _apps = None             # BE 앱 레지스트리 캐시 (app.list, 세션 불요)
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
@@ -714,11 +716,13 @@ class Brain(threading.Thread):
         if not be:
             return False
         ok, payload = be.call(tool, args or {})
+        self._last_be_error = None
         if ok is True:
             self._last_be_payload = payload
             return True
         if ok is False and isinstance(payload, dict):
-            print(f"[BE {tool} → 로컬 폴백] {payload.get('code')}: {payload.get('message')}")
+            self._last_be_error = payload   # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
+            print(f"[BE {tool} 거절] {payload.get('code')}: {payload.get('message')}")
         return False
 
     def _win_ref(self, hwnd):
@@ -751,9 +755,35 @@ class Brain(threading.Thread):
         return None
 
     def _be_down(self, what):
-        """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다."""
-        self._say(f"{what} — 백엔드에 연결되지 않아 실행하지 못했습니다")
+        """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다.
+        BE 가 이유를 말해 줬으면 그 이유를, 아예 못 닿았으면 연결 문제를 알린다 —
+        둘을 뭉뚱그리면 사용자도 우리도 원인을 못 찾는다(실측: 앱 미등록을 '연결 안 됨'으로 안내)."""
+        err = getattr(self, "_last_be_error", None)
+        reason = (err or {}).get("message") or "백엔드에 연결되지 않아 실행하지 못했습니다"
+        self._say(f"{what} — {reason}")
         return None
+
+    def _app_ref(self, key, label):
+        """앱 키(chrome·calc…) → BE 앱 ref. 없으면 None.
+
+        BE 레지스트리는 시작 메뉴에서 만들어져 ref 슬러그가 기계마다 다르다 — 이 PC 에선
+        크롬이 app:google-chrome 이고 탐색기·그림판은 아예 없었다(실측). 그래서 app:{key} 를
+        그대로 보내지 않고 목록에서 찾는다. app.list 는 세션이 필요 없는 읽기 도구다.
+        """
+        if self._apps is None:
+            self._apps = self._be_ok("app.list") and (self._last_be_payload or {}).get("apps") or []
+        want = f"app:{key}"
+        for a in self._apps:                      # ① ref 완전 일치
+            if a.get("ref") == want:
+                return want
+        for a in self._apps:                      # ② 슬러그에 키가 포함 (chrome → google-chrome)
+            if key in (a.get("ref") or "").removeprefix("app:").split("-"):
+                return a["ref"]
+        for a in self._apps:                      # ③ 표시 이름이 우리가 말한 그 이름
+            if label and label == (a.get("name") or ""):
+                return a["ref"]
+        return None
+
 
     def _explorer_items(self):
         """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
@@ -1261,8 +1291,13 @@ class Brain(threading.Thread):
                 self._say(f"지원하지 않는 앱: {result.get('app')}")
                 return
             # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
-            elif not self._try_be("app.launch", {"appRef": f"app:{key}"}, say or f"{app} 실행"):
-                return self._be_down(f"{app} 실행")
+            else:
+                ref = self._app_ref(key, app)
+                if not ref:
+                    self._say(f"{app} — 백엔드에 등록된 앱이 아닙니다")
+                    return None
+                if not self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행"):
+                    return self._be_down(f"{app} 실행")
             return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
