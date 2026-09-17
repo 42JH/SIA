@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchDashboardAccuracy, fetchDashboardApps, fetchDashboardLatency, fetchDashboardOverview, fetchDashboardUsage } from '../../api/dashboard';
-import { BarChart, HorizontalBars, LineChart } from './DashboardChart';
+import { BarChart, HorizontalBars } from './DashboardChart';
 import GesturePanel from './GesturePanel';
 import SettingsPanel from './SettingsPanel';
 import VoicePanel from './VoicePanel';
@@ -15,7 +15,9 @@ import navGaze from '../../assets/nav-gaze.png';
 import navGestures from '../../assets/nav-gestures.png';
 import styles from './DashboardHome.module.css';
 
-const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
+const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '1개월' }, { key: 'year', label: '1년' }];
+const nextPeriod = { year: 'month', month: 'week', week: 'day' };
+const periodGrain = { year: '월별', month: '주차별', week: '요일별', day: '시간대별' };
 const details = {
   accuracy: ['인식 정확도', 'AI가 세상을 이해하는 정확도를 한눈에 확인하세요.', fetchDashboardAccuracy],
   latency: ['평균 응답 시간', '작업 유형별 평균 응답 시간을 확인할 수 있습니다.', fetchDashboardLatency],
@@ -27,27 +29,44 @@ const percent = (value) => value == null ? '데이터 없음' : `${Math.round(va
 const seconds = (value) => value == null ? '데이터 없음' : `${(value / 1000).toFixed(1)}초`;
 const weekLabels = ['월', '화', '수', '목', '금', '토', '일'];
 
+function dayKey(value) {
+  const text = value instanceof Date
+    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+    : String(value ?? '');
+  const match = text.match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  return match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : '';
+}
+
 function parseBucketDate(bucket) {
-  const key = String(bucket.key ?? '');
-  const match = key.match(/(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const key = dayKey(bucket?.key);
+  if (!key) return null;
+  const [year, month, day] = key.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function usageCount(bucket) {
+  if (Number.isFinite(bucket?.count)) return bucket.count;
+  return (Number(bucket?.voice) || 0) + (Number(bucket?.gesture) || 0);
+}
+
+function weekUsageBuckets(buckets) {
+  const source = Array.isArray(buckets) ? buckets : [];
+  return weekLabels.map((label, index) => {
+    const byLabel = source.find((bucket) => String(bucket.label ?? '').replace('요일', '').trim().startsWith(label));
+    const byKey = source.find((bucket) => {
+      const today = new Date(); const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7));
+      monday.setDate(monday.getDate() + index);
+      return dayKey(bucket.key) === dayKey(monday);
+    });
+    const match = byLabel ?? byKey ?? source[index] ?? {};
+    return { ...match, key: match.key ?? `week-${index}`, label, count: usageCount(match) };
+  });
 }
 
 function calendarBuckets(buckets, period) {
   if (!Array.isArray(buckets) || !['week', 'year'].includes(period)) return buckets ?? [];
-  if (period === 'week') {
-    const today = new Date(); const monday = new Date(today); const weekday = (today.getDay() + 6) % 7;
-    const hasDatedBuckets = buckets.some((bucket) => parseBucketDate(bucket));
-    monday.setHours(0, 0, 0, 0); monday.setDate(today.getDate() - weekday);
-    return weekLabels.map((label, index) => {
-      const target = new Date(monday); target.setDate(monday.getDate() + index);
-      const dated = buckets.find((bucket) => parseBucketDate(bucket)?.getTime() === target.getTime());
-      const labeled = hasDatedBuckets ? null : buckets.find((bucket) => String(bucket.label ?? '').replace('요일', '').trim().startsWith(label));
-      return { ...(dated ?? labeled ?? {}), key: dated?.key ?? labeled?.key ?? `week-${index}`, label };
-    });
-  }
+  if (period === 'week') return weekUsageBuckets(buckets);
   const year = new Date().getFullYear(); let inferredYear = null; let previousMonth = null;
   const indexed = buckets.map((bucket) => {
     const date = parseBucketDate(bucket); const text = String(bucket.label ?? '');
@@ -95,9 +114,24 @@ export default function DashboardHome() {
   const view = views.includes(requestedView) ? requestedView : 'home';
   const registration = useGestureStore((state) => state.registration);
   const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('day'); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  useEffect(() => { if (view === 'home') load(fetchDashboardOverview, setOverview); }, [view]);
+  useEffect(() => { if (view === 'home') loadHome(); }, [view]);
   useEffect(() => { if (details[view]) load(() => details[view][2](period), setDetail); }, [view, period]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
+  async function loadHome() {
+    setLoading(true); setError('');
+    try {
+      const data = await fetchDashboardOverview();
+      const topApps = data.topApps ?? [];
+      if (topApps.length) { setOverview(data); return; }
+      let items = [];
+      try { items = (await fetchDashboardApps('week')).items ?? []; } catch { /* 홈 개요 표시 우선 */ }
+      if (!items.length) {
+        try { items = (await fetchDashboardApps('year')).items ?? []; } catch { /* 홈 개요 표시 우선 */ }
+      }
+      setOverview({ ...data, topApps: items });
+    } catch (requestError) { setError(requestError.message); }
+    finally { setLoading(false); }
+  }
   const open = (next) => { if (next !== 'gestures') useGestureStore.getState().closeRegistration(); setMenu(false); setError(''); if (details[next]) { setPeriod('day'); setDetail(null); } navigate(next === 'home' ? '/dashboard' : `/dashboard?view=${next}`, { state: { previousDashboardView: view } }); };
   const registrationTitle = registration?.stage === 'complete' || registration?.stage === 'form' ? '제스처 등록' : registration?.stage === 'review' ? '촬영 결과' : '제스처 촬영';
   const panelTitle = view === 'gestures' ? (registration ? registrationTitle : '제스처') : view === 'voice' ? '보이스' : '시선';
@@ -116,7 +150,7 @@ export default function DashboardHome() {
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['home', '대시보드'], ['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
     <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
-      {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} />}
+      {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} loading={loading} />}
       {view === 'gestures' && <div className={styles.panelHeading}><button onClick={back}>‹</button><h1>{panelTitle}</h1></div>}
       {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel onBack={back} />}{view === 'gaze' && <GazePanel onBack={back} />}{view === 'settings' && <SettingsPanel />}
     </section>
@@ -134,10 +168,10 @@ function NavIcon({ kind }) {
 function Overview({ data, open }) {
   if (!data) return null;
   const accuracy = [['음성 인식 정확도', data.accuracy?.voice], ['모션인식 정확도', data.accuracy?.motion]];
-  const buckets = calendarBuckets(data.usage?.buckets ?? [], 'week').map((item) => ({ ...item, count: Number.isFinite(item.count) ? item.count : (item.voice ?? 0) + (item.gesture ?? 0) })); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
+  const buckets = weekUsageBuckets(data.usage?.buckets ?? []); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
   return <><Intro title="SIA 대시보드" description="AI가 더 편리한 일상을 만들어갑니다." />
     <div className={styles.overviewGrid}>
-      <button className={`${styles.dashboardCard} ${styles.usageOverview}`} onClick={() => open('usage')}><Label overline="USAGE" title="제스처 / 보이스 사용량" description="이번 주 사용 현황 · 클릭 시 자세히 보기" /><div className={styles.overviewBars}>{buckets.map((item) => <span key={item.key}><i style={{ height: `${(item.count ?? 0) / maxUsage * 76 + 4}%` }} /><small>{item.label}</small></span>)}</div></button>
+      <button className={`${styles.dashboardCard} ${styles.usageOverview}`} onClick={() => open('usage')}><Label overline="USAGE" title="제스처 / 보이스 사용량" description="이번 주 사용 현황 · 클릭 시 자세히 보기" /><div className={styles.overviewBars}>{buckets.map((item) => <span key={item.key}><i style={{ height: `${Math.max(10, (item.count ?? 0) / maxUsage * 86)}%` }} /><small>{item.label}</small></span>)}</div></button>
       <div className={styles.overviewSide}>
         <button className={`${styles.dashboardCard} ${styles.accuracyOverview}`} onClick={() => open('accuracy')}><Label overline="AI STATUS" title="인식 정확도" /><div className={styles.accuracyRings}>{accuracy.map(([label, value]) => <span key={label}><i style={{ '--accuracy': `${(value ?? 0) * 360}deg` }}><strong>{percent(value)}</strong></i><small>{label}</small></span>)}</div></button>
         <button className={`${styles.dashboardCard} ${styles.latencyOverview}`} onClick={() => open('latency')}><Label overline="RESPONSE" title="평균 응답 시간" /><div><span><small>간단한 작업</small><strong>{seconds(data.latency?.simpleMs)}</strong><i /></span><span><small>복잡한 작업</small><strong>{seconds(data.latency?.complexMs)}</strong><i /></span></div></button>
@@ -146,28 +180,33 @@ function Overview({ data, open }) {
     </div></>;
 }
 
-function Detail({ kind, data, period, setPeriod, open }) {
+function Detail({ kind, data, period, setPeriod, open, loading }) {
   if (!data) return null; const buckets = calendarBuckets(data.buckets ?? [], period).map((bucket) => kind === 'usage' ? { ...bucket, count: Number.isFinite(bucket.count) ? bucket.count : (bucket.voice ?? 0) + (bucket.gesture ?? 0) } : bucket); const summary = calendarSummary(kind, buckets, data.summary ?? {}, period);
   // TODO(BE): 선택한 과거 월·일을 기준으로 조회할 anchor 파라미터가 명세에 추가되면 선택 bucket key를 API에 전달 필요
-  const drillDown = (bucket) => { if (!bucket) return; if (period === 'year') setPeriod('month'); else if (period === 'month') setPeriod('day'); };
+  const canDrill = Boolean(nextPeriod[period]) && !loading;
+  const drillDown = () => {
+    if (!canDrill) return;
+    setPeriod((current) => nextPeriod[current] ?? current);
+  };
   return <><div className={styles.detailHead}><button className={styles.detailBack} onClick={() => open('home')}>‹</button><Intro eyebrow="분석" title={details[kind][0]} description={details[kind][1]} /><Periods period={period} setPeriod={setPeriod} /></div>
-    <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} />
-      {kind === 'accuracy' && <><Legend items={['음성 인식', '모션인식']} /><LineChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
-      {kind === 'latency' && <><Legend items={['간단한 작업', '복잡한 작업']} /><BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
-      {kind === 'usage' && <><Legend items={['보이스', '제스처', '전체 사용량']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gesture' }, { key: 'count' }]} minimumMax={4} valueFormatter={(value) => Math.round(value)} onBucketClick={['year', 'month'].includes(period) ? drillDown : undefined} /></>}
+    <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} period={period} />
+      {kind === 'accuracy' && <><Legend items={['음성 인식', '모션인식']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} valueFormatter={(value) => `${Math.round(value * 100)}%`} onBucketClick={canDrill ? drillDown : undefined} /></>}
+      {kind === 'latency' && <><Legend items={['간단한 작업', '복잡한 작업']} /><BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} onBucketClick={canDrill ? drillDown : undefined} /></>}
+      {kind === 'usage' && <><Legend items={['보이스', '제스처', '전체 사용량']} /><BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'gesture' }, { key: 'count' }]} minimumMax={4} valueFormatter={(value) => Math.round(value)} onBucketClick={canDrill ? drillDown : undefined} /></>}
       {kind === 'apps' && ((data.items ?? []).length ? <HorizontalBars items={data.items} /> : <Empty />)}
     </section><Summary kind={kind} summary={summary} /></>;
 }
 
 function Periods({ period, setPeriod }) { return <div className={styles.periods}>{periods.map((item) => <button className={period === item.key ? styles.activePeriod : ''} onClick={() => setPeriod(item.key)} key={item.key}>{item.label}</button>)}</div>; }
-function ChartHeading({ kind }) {
-  if (kind === 'accuracy') return <div className={styles.chartHeading}><small>RECOGNITION ACCURACY</small></div>;
-  if (kind === 'latency') return <div className={styles.chartHeading}><strong>◉</strong><b>시간대별 평균 응답 시간</b></div>;
-  if (kind === 'usage') return <div className={styles.chartHeading}><b>시간대별 사용량</b><small>VOICE / GESTURE ANALYTICS</small></div>;
+function ChartHeading({ kind, period }) {
+  const grain = periodGrain[period] ?? '기간별';
+  if (kind === 'accuracy') return <div className={styles.chartHeading}><small>RECOGNITION ACCURACY</small><b>{grain} 인식 정확도</b></div>;
+  if (kind === 'latency') return <div className={styles.chartHeading}><strong>◉</strong><b>{grain} 평균 응답 시간</b></div>;
+  if (kind === 'usage') return <div className={styles.chartHeading}><b>{grain} 사용량</b><small>VOICE / GESTURE ANALYTICS</small></div>;
   return <div className={styles.chartHeading}><b>프로그램 사용 순위</b><small>TOP PROGRAMS / FREQUENCY</small><em>실행 횟수 기준</em></div>;
 }
 function Legend({ items }) { return <div className={styles.legend}>{items.map((item, index) => <span key={item}><i className={styles[`legend${index}`]} />{item}</span>)}</div>; }
-function Summary({ kind, summary }) { const items = kind === 'accuracy' ? [['평균 음성 인식 정확도', percent(summary.voice)], ['평균 모션인식 정확도', percent(summary.motion)]] : kind === 'latency' ? [['간단한 작업 평균', seconds(summary.simpleMs)], ['복잡한 작업 평균', seconds(summary.complexMs)], ['전체 평균', seconds(summary.overallMs)]] : kind === 'usage' ? [['보이스 사용', `${summary.voiceTotal ?? 0}회`], ['제스처 사용', `${summary.gestureTotal ?? 0}회`], ['전체 사용량', `${summary.total ?? 0}회`]] : [['전체 프로그램 실행 횟수', `${summary.totalLaunches ?? 0}회`], ['가장 많이 사용한 프로그램', summary.topDisplayName ?? '데이터 없음'], ['해당 프로그램 사용 횟수', `${summary.topCount ?? 0}회`]]; return <div className={`${styles.summaryCards} ${styles[`summary_${kind}`]}`}>{items.map(([label, value], index) => <span className={index === items.length - 1 ? styles.summaryAccent : ''} key={label}><small>{label}</small><strong>{value}</strong><SummaryVisual kind={kind} index={index} /></span>)}</div>; }
+function Summary({ kind, summary }) { const items = kind === 'accuracy' ? [['평균 음성 인식 정확도', percent(summary.voice)], ['평균 모션인식 정확도', percent(summary.motion)]] : kind === 'latency' ? [['간단한 작업 평균', seconds(summary.simpleMs)], ['복잡한 작업 평균', seconds(summary.complexMs)], ['전체 평균', seconds(summary.overallMs)]] : kind === 'usage' ? [['보이스 사용', `${summary.voiceTotal ?? 0}회`], ['제스처 사용', `${summary.gestureTotal ?? 0}회`], ['전체 사용량', `${summary.total ?? 0}회`]] : [['전체 프로그램 실행 횟수', `${summary.totalLaunches ?? 0}회`], ['가장 많이 사용한 프로그램', summary.topDisplayName ?? '데이터 없음'], ['가장 많이 이용된 프로그램 실행 횟수', `${summary.topCount ?? 0}회`]]; return <div className={`${styles.summaryCards} ${styles[`summary_${kind}`]}`}>{items.map(([label, value], index) => <span className={index === items.length - 1 ? styles.summaryAccent : ''} key={label}><small>{label}</small><strong>{value}</strong><SummaryVisual kind={kind} index={index} /></span>)}</div>; }
 function SummaryVisual({ kind, index }) {
   if (kind === 'accuracy' && index === 1) return <svg viewBox="0 0 64 48"><circle cx="34" cy="8" r="4" /><path d="m30 15 10 6 8-3M31 16l-6 12-9 7M26 28l12 4 6 12M22 22l-9 3" /></svg>;
   if ((kind === 'latency' || kind === 'apps') && index === 2 || kind === 'usage' && index === 2) return <svg viewBox="0 0 64 48"><circle cx="32" cy="24" r="17" /><path d="M32 7a17 17 0 0 1 17 17H32Z" /></svg>;

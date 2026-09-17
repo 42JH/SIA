@@ -40,24 +40,26 @@
 .storedPanel { min-width: 0; padding: 34px 25px 22px; background: rgb(255 255 255 / 82%); }
 .listTitle { display: flex; align-items: center; justify-content: space-between; }
 .listTitle span { display: grid; }
+.listTitle b { min-width: 180px; padding: 17px 20px; border: 1px solid #a6bee4; border-radius: 5px; background: #e4edf9; color: #7a94bb; text-align: center; }
 .primary, .secondary, .pillButton, .actionRow button, .modal > button { min-height: 50px; padding: 0 28px; border: 2px solid var(--voice-navy); border-radius: 5px; background: white; color: var(--voice-navy); font-size: 17px; font-weight: 800; cursor: pointer; }
 .primary { border-color: var(--voice-navy); background: linear-gradient(135deg, #101f45, #243f79); color: white; }
 button:disabled { cursor: default; opacity: .45; }
 .listTitle .primary { min-width: 154px; }
 .voiceList { display: grid; gap: 12px; max-height: 408px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
-.voiceCard { display: grid; min-height: 88px; grid-template-columns: minmax(190px, 1.4fr) minmax(120px, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--voice-soft); border-radius: 5px; background: white; }
-.voiceCard:has(> input) { grid-template-columns: 28px minmax(180px, 1.4fr) minmax(110px, 1fr) auto; }
+.voiceCard { display: grid; min-width: 0; min-height: 88px; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) max-content; align-items: start; gap: 8px; padding: 10px 12px; border: 1px solid var(--voice-soft); border-radius: 5px; background: white; }
+.voiceCard:has(> input) { grid-template-columns: 28px minmax(0, 1.3fr) minmax(0, 1fr) max-content; }
 .voiceCard > input { width: 25px; height: 25px; margin: 0; accent-color: var(--voice-navy); }
-.cardAudio { display: flex; min-width: 0; align-items: center; gap: 10px; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.cardAudio { display: flex; min-width: 0; align-items: center; align-self: center; gap: 10px; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
 .cardAudio > span, .liveAudio > span, .reviewMicButton > span { display: grid; width: 58px; height: 58px; flex: 0 0 auto; place-items: center; border: 2px solid var(--voice-navy); border-radius: 50%; }
 .voiceInfo { display: grid; min-width: 0; gap: 6px; color: var(--voice-navy); text-align: left; }
 .nameRow { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .nameRow strong { min-width: 0; }
 .editButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
 .editButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.voiceInfo strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.voiceInfo small { color: var(--voice-blue); font-size: 14px; }
-.pillButton { min-width: 128px; min-height: 48px; padding: 0 16px; border-radius: 28px; font-size: 15px; }
+.voiceInfo strong { overflow: hidden; font-size: clamp(13px, 1.2vw, 18px); text-overflow: ellipsis; white-space: nowrap; }
+.voiceInfo small { min-width: 0; color: var(--voice-blue); font-size: clamp(11px, 0.95vw, 14px); line-height: 1.35; overflow-wrap: anywhere; }
+.pillButton { grid-row: 1; grid-column: 3; align-self: start; min-width: 0; min-height: 42px; margin-top: 8px; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
+.voiceCard:has(> input) .pillButton { grid-column: 4; }
 .bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 80%); }
 .noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--voice-navy); border-radius: 50%; font-size: 27px; font-weight: 800; }
 .bottomBar > strong { color: var(--voice-blue); font-size: 17px; }
@@ -133,4 +135,4 @@ button:disabled { cursor: default; opacity: .45; }
   .bottomBar { min-height: 62px; }
 }
 @media (max-width: 1050px) { .voiceHero { grid-template-columns: 1fr 1fr 104px; } .signalSeal { width: 96px; height: 96px; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .registrationGrid { grid-template-columns: 38% 62%; } .largeWave { gap: 4px; } }
-@media (max-width: 760px) { .voicePage, .registrationPage { margin-top: 0; } .voiceHero { height: 128px; grid-template-columns: 1fr 84px; } .voiceHero h1 { font-size: 34px; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .signalSeal { width: 74px; height: 74px; } .miniWave { height: 38px; gap: 3px; } .miniWave i { width: 4px; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard, .voiceCard:has(> input) { grid-template-columns: auto 1fr; } .cardAudio { grid-column: 1; } .voiceInfo { grid-column: 2; } .pillButton { grid-column: 2; justify-self: start; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 54px 24px 32px; } .actionRow { flex-wrap: wrap; } }
+@media (max-width: 760px) { .voicePage, .registrationPage { margin-top: 0; } .voiceHero { height: 128px; grid-template-columns: 1fr 84px; } .voiceHero h1 { font-size: 34px; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .signalSeal { width: 74px; height: 74px; } .miniWave { height: 38px; gap: 3px; } .miniWave i { width: 4px; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) max-content; gap: 6px; } .cardAudio { min-width: 0; } .wave { min-width: 72px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 54px 24px 32px; } .actionRow { flex-wrap: wrap; } }

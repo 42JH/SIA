@@ -3,7 +3,7 @@ import { create } from 'zustand';
 const freshVoiceEnrollment = {
   wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null,
   voiceTempId: null, voiceSentence: null, voiceCompleted: 0,
-  voiceResult: null, finalVoiceReview: null,
+  voiceResult: null, finalVoiceReview: null, voiceWaveform: [],
 };
 
 export const useOnboardingStore = create((set) => ({
@@ -11,7 +11,7 @@ export const useOnboardingStore = create((set) => ({
   request: null, lastEvent: null,
   wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null,
   voiceTempId: null, voiceSentence: null, voiceCompleted: 0,
-  voiceResult: null, finalVoiceReview: null,
+  voiceResult: null, finalVoiceReview: null, voiceWaveform: [],
   precheck: null, point: null, result: null, poorCount: 0,
   gazeWaitingSince: null, gazeDelayed: false,
   interrupted: false,

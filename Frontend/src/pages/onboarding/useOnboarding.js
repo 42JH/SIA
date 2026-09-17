@@ -58,7 +58,6 @@ export function useOnboarding() {
         const n = Math.min(Math.max(Number(wake.n) || 0, 0), 5);
         change({ wake: { n, total: 5 }, wakeRejection: null, pending: false });
       },
-      // TODO(BE): 지정된 Backend 작업본에는 wakeword_rejected 중계가 아직 없어 반영 전에는 이 이벤트가 도착하지 않음
       wakeword_rejected: (rejection) => {
         if (state().step !== 'wake') return;
         const expected = Math.min(state().wake.n + 1, 5);
@@ -78,13 +77,10 @@ export function useOnboarding() {
       },
       voice_progress: (voiceProgress) => {
         if (!voiceSteps.includes(state().step)) return;
-        const total = Number(voiceProgress.total) || 5;
-        const completed = Number(voiceProgress.n) || 0;
         change({
           voiceTempId: voiceProgress.tempId,
-          voiceCompleted: completed,
+          voiceCompleted: Number(voiceProgress.n) || 0,
           voiceResult: { ...voiceProgress, rejected: false },
-          ...(completed >= total ? { step: 'voiceProcessing' } : {}),
           pending: false,
         });
       },
