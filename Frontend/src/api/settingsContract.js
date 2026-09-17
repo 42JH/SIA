@@ -5,7 +5,7 @@ export function validateSettingsResponse(data) {
   const validDevice = (value) => value === null || typeof value === 'string';
   if (!settings || typeof settings.wakeWord !== 'string' || !settings.wakeWord.trim()
     || !Number.isInteger(settings.sessionSeconds) || settings.sessionSeconds < 1
-    || typeof settings.autoStart !== 'boolean' || typeof settings.gazeCursor !== 'boolean'
+    || typeof settings.autoStart !== 'boolean'
     || !validDevice(settings.micDevice) || !validDevice(settings.cameraDevice)) {
     throw new ApiError('INVALID_SETTINGS_RESPONSE', '백엔드 설정 응답에 필요한 설정값이 없습니다. 백엔드 응답 수정 후 설정 다시 불러오기를 눌러주세요.');
   }

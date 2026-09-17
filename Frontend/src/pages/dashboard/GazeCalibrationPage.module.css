@@ -12,7 +12,6 @@
 .pageTitle > span i { width: 9px; height: 9px; margin-left: -20px; border-radius: 50%; background: #5b82bd; }
 .techFrame { position: relative; border: 2px solid var(--calib-navy); background: rgb(255 255 255 / 82%); clip-path: polygon(18px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .frameLine { position: absolute; top: 8px; left: 28px; width: 120px; height: 2px; background: var(--calib-line); }
-.frameDots { position: absolute; top: 1px; right: 18px; color: var(--calib-navy); font-size: 20px; font-style: normal; letter-spacing: 2px; }
 .primary { background: linear-gradient(135deg, #101f45, #243f79) !important; color: white !important; }
 .shell button, .preparing button { min-width: 172px; min-height: 58px; padding: 0 30px; border: 2px solid var(--calib-navy); border-radius: 5px; background: white; color: var(--calib-navy); font: inherit; font-size: 18px; font-weight: 800; cursor: pointer; }
 button:disabled { cursor: default; opacity: .45; }
@@ -27,7 +26,7 @@ button:disabled { cursor: default; opacity: .45; }
 .cameraPreview { position: absolute; z-index: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .cameraWaiting { position: absolute; z-index: 0; inset: 0; display: grid; place-items: center; color: #c7daf8; font-size: 18px; font-weight: 700; }
 .cameraShade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(rgb(110 157 226 / 20%) 1px, transparent 1px), linear-gradient(90deg, rgb(110 157 226 / 20%) 1px, transparent 1px), rgb(5 23 48 / 18%); background-size: 16.666% 33.333%; }
-.positionFrame .frameLine, .positionFrame .frameDots, .positionFrame .cornerMarks, .positionFrame .personGuide, .positionFrame > strong, .cameraError { z-index: 2; }
+.positionFrame .frameLine, .positionFrame .cornerMarks, .positionFrame .personGuide, .positionFrame > strong, .cameraError { z-index: 2; }
 .cornerMarks i { position: absolute; width: 30px; height: 30px; border-color: var(--calib-navy); border-style: solid; }
 .cornerMarks i:nth-child(1) { top: 38px; left: 56px; border-width: 5px 0 0 5px; }
 .cornerMarks i:nth-child(2) { top: 38px; right: 56px; border-width: 5px 5px 0 0; }

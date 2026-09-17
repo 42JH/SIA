@@ -82,6 +82,17 @@ const displayName = (gesture) => gesture.custom ? gesture.name : (gesture.label 
 const displayTool = (step) => toolLabels[step.tool] || step.tool;
 const initialStep = () => ({ tool: '', args: {} });
 
+const isSelectableGestureTool = (tool) => {
+  const name = tool?.name || '';
+  if (!tool?.available || tool.confirmRequired) return false;
+  return name !== 'context.get'
+    && !name.startsWith('browser.')
+    && name !== 'window.list'
+    && name !== 'explorer.items'
+    && !name.startsWith('session.')
+    && name !== 'screen.capture_region';
+};
+
 function CameraIcon({ video = false }) {
   return video ? (
     <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="9" y="17" width="33" height="30" rx="4" /><path d="m42 26 13-7v26l-13-7Z" /></svg>
@@ -132,7 +143,7 @@ function toEditableSteps(steps = []) {
   }));
 }
 
-function HoverPreview({ gesture, large = false }) {
+function HoverPreview({ gesture, large = false, comparison = false }) {
   const videoRef = useRef(null);
   const url = mediaUrl(gesture.videoUrl);
   const isImage = gesture.motion === 'STATIC';
@@ -144,7 +155,7 @@ function HoverPreview({ gesture, large = false }) {
   };
 
   return (
-    <div className={`${styles.preview} ${large ? styles.largePreview : ''} ${gesture.custom ? styles.customPreview : styles.defaultPreview}`} onMouseEnter={start} onMouseLeave={stop}>
+    <div className={`${styles.preview} ${large ? styles.largePreview : ''} ${comparison ? styles.similarGesturePreview : ''} ${gesture.custom ? styles.customPreview : styles.defaultPreview}`} onMouseEnter={start} onMouseLeave={stop}>
       {url ? (isImage
         ? <img src={url} alt={`${displayName(gesture)} 제스처`} />
         : <video ref={videoRef} src={url} muted loop playsInline preload="metadata" />)
@@ -167,7 +178,7 @@ export default function GesturePanel() {
     try {
       const [gestureItems, toolList, appList] = await Promise.all([fetchAllGestures(), fetchGestureTools(), fetchRegisteredApps()]);
       setItems(gestureItems);
-      setTools(toolList.filter((tool) => tool.available && !tool.confirmRequired));
+      setTools(toolList.filter(isSelectableGestureTool));
       setApps(appList.filter((app) => app.enabled));
     } catch (requestError) {
       setError(requestError.message);
@@ -465,7 +476,7 @@ export function GestureRegistration({ onClose, onSaved }) {
   useEffect(() => {
     Promise.all([fetchGestureTools(), fetchRegisteredApps()])
       .then(([list, appList]) => {
-        setTools(list.filter((tool) => tool.available && !tool.confirmRequired));
+        setTools(list.filter(isSelectableGestureTool));
         setApps(appList.filter((app) => app.enabled));
       })
       .catch((error) => updateRegistration({ error: error.message }));
@@ -503,13 +514,15 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
       if (current?.tempId && data.tempId !== current.tempId) return;
-      if (data.phase === 'REJECTED') updateRegistration({
+      const similarTo = data.similarTo ?? data.similar_to ?? data.similarGesture ?? null;
+      const rejected = data.phase === 'REJECTED' || Boolean(similarTo);
+      if (rejected) updateRegistration({
         tempId: data.tempId,
         stage: 'rejected',
-        phase: data.phase,
-        similarTo: data.similarTo || null,
-        similarity: data.similarity ?? null,
-        error: data.reason || '제스처를 인식하지 못했습니다.',
+        phase: 'REJECTED',
+        similarTo,
+        similarity: data.similarity ?? data.score ?? null,
+        error: data.reason || (similarTo ? '기존 제스처와 너무 유사하여 등록할 수 없습니다.' : '제스처를 인식하지 못했습니다.'),
       });
       else updateRegistration({ tempId: data.tempId, phase: data.phase, captured: data.phase === 'CAPTURED' ? true : current?.captured, stage: data.phase === 'MODE_STARTED' ? 'capture' : current?.stage });
     },
@@ -550,7 +563,17 @@ export function GestureRegistration({ onClose, onSaved }) {
       if (current?.tempId && data.tempId !== current.tempId) return;
       const valid = (data.takes || []).filter((take) => take.previewUrl);
       const previews = valid.length ? valid : current?.previews || [];
-      updateRegistration({ tempId: data.tempId, previews, selectedTake: previews[0]?.take || 1, stage: current?.stage === 'rejected' ? 'rejected' : 'review', ...(data.reason ? { error: data.reason } : {}) });
+      const similarTo = data.similarTo ?? data.similar_to ?? data.similarGesture ?? current?.similarTo ?? null;
+      const rejected = current?.stage === 'rejected' || data.phase === 'REJECTED' || data.accepted === false || Boolean(similarTo);
+      updateRegistration({
+        tempId: data.tempId,
+        previews,
+        selectedTake: previews[0]?.take || 1,
+        stage: rejected ? 'rejected' : 'review',
+        similarTo,
+        similarity: data.similarity ?? data.score ?? current?.similarity ?? null,
+        ...(rejected ? { error: data.reason || current?.error || '기존 제스처와 너무 유사하여 등록할 수 없습니다.' } : data.reason ? { error: data.reason } : {}),
+      });
     },
     macro_saved: () => {
       if (!macroAssignRequested.current) return;
@@ -651,9 +674,14 @@ export function GestureRegistration({ onClose, onSaved }) {
 
   const next = () => updateRegistration({ stage: 'form', error: '' });
   const save = () => {
+    const hasName = Boolean(name.trim());
+    const hasSelectedFunction = steps.some((step) => Boolean(step.tool));
+    if (!hasName && !hasSelectedFunction) { updateRegistration({ error: '제스처 이름과 한 개 이상의 기능을 입력해주세요.' }); return; }
+    if (!hasName) { updateRegistration({ error: '제스처 이름을 입력해주세요.' }); return; }
+    if (!hasSelectedFunction) { updateRegistration({ error: '한 개 이상의 기능을 선택해주세요.' }); return; }
     let parsedSteps;
     try { parsedSteps = parseSteps(steps); } catch (error) { updateRegistration({ error: error.message }); return; }
-    if (!name.trim() || !parsedSteps.length) { updateRegistration({ error: '제스처 이름과 한 개 이상의 기능을 입력해주세요.' }); return; }
+    if (!parsedSteps.length) { updateRegistration({ error: '한 개 이상의 기능을 선택해주세요.' }); return; }
     setSaving(true);
     macroAssignRequested.current = true;
     updateRegistration({ error: '' });
@@ -722,7 +750,7 @@ function RegistrationRejected({ registration, onRetry }) {
     {hasSimilarGesture && <p>둘을 구분하지 못해 잘못 실행될 수 있습니다.<br />손 모양이나 방향을 바꿔 다시 촬영해주세요.</p>}
     <div className={`${styles.similarityGrid} ${hasSimilarGesture ? '' : styles.singlePreview}`}>
       <article><div className={styles.compareMedia}>{registration.frame ? <img src={registration.frame} alt="지금 촬영한 제스처" /> : currentPreview?.previewUrl ? (currentPreview.mediaType === 'IMAGE' ? <img src={mediaUrl(currentPreview.previewUrl)} alt="지금 촬영한 제스처" /> : <video src={mediaUrl(currentPreview.previewUrl)} muted loop autoPlay playsInline />) : <span>촬영 화면</span>}</div><strong>지금 만든 제스처</strong></article>
-      {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{registration.similarTo}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
+      {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} comparison /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{registration.similarTo}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
     </div>
     <button className={styles.primary} onClick={onRetry}>다시 촬영</button>
     {hasSimilarGesture && <small>혼동 가능한 제스처는 등록할 수 없습니다.</small>}

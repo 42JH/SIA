@@ -1,5 +1,4 @@
 .page { position: relative; min-height: 100vh; overflow-x: hidden; background: radial-gradient(circle at 72% 13%, rgb(112 161 216 / 10%) 0 1px, transparent 2px), radial-gradient(circle at 72% 13%, transparent 0 72px, rgb(100 149 204 / 10%) 73px 74px, transparent 75px 99px, rgb(100 149 204 / 8%) 100px 101px, transparent 102px), linear-gradient(135deg, #fbfdff, var(--sia-page)); color: var(--sia-ink); font-family: Pretendard, "Noto Sans KR", sans-serif; }
-.page::after { position: absolute; z-index: 0; top: 85px; right: 5%; width: 230px; color: var(--sia-steel); font-size: 10px; letter-spacing: .48em; line-height: 1.75; white-space: pre; content: "AI FOR A MORE\A HUMAN TOMORROW"; }
 .header { position: sticky; z-index: 20; top: 0; display: grid; height: 54px; grid-template-columns: 190px 1fr 52px; align-items: center; padding: 0 42px; border-bottom: 1px solid var(--sia-line); background: rgb(255 255 255 / 92%); backdrop-filter: blur(8px); }
 .header::before { position: absolute; bottom: -17px; left: 0; width: 238px; height: 17px; border-top: 1px solid var(--sia-line); background: var(--sia-page); clip-path: polygon(0 0, 91% 0, 98% 100%, 8% 100%); content: ""; }
 .header::after { position: absolute; right: 80px; bottom: -1px; width: 380px; height: 1px; background: linear-gradient(90deg, transparent, var(--sia-line)); content: ""; }
@@ -12,7 +11,7 @@
 .view_home .content { padding-top: 24px; padding-bottom: 18px; }
 .view_voice .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
 .view_gaze .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
-.view_gaze::after { display: none; }
+.view_gestures .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
 .loading, .error { position: fixed; z-index: 40; top: 68px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--sia-line); border-radius: 3px; background: white; transform: translateX(-50%); }
 .error { color: var(--color-danger); }
 .intro { position: relative; min-width: 0; }
@@ -44,7 +43,7 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .overviewBars span { display: grid; height: 100%; min-width: 0; flex: 1; align-content: end; justify-items: center; }
 .overviewBars i { width: min(58px, 72%); min-height: 4px; background: linear-gradient(#e5effd, #7898c5); box-shadow: 0 0 18px rgb(120 180 235 / 23%); }
 .overviewBars small { margin: 8px 0 -21px; color: var(--sia-pale); font-size: 11px; }
-.accuracyRings { display: grid; height: calc(100% - 42px); grid-template-columns: repeat(3, 1fr); align-items: center; margin-top: 5px; }
+.accuracyRings { display: grid; height: calc(100% - 42px); grid-template-columns: repeat(2, 1fr); align-items: center; margin-top: 5px; }
 .accuracyRings span { display: grid; height: 82%; align-content: center; justify-items: center; gap: 8px; border-right: 1px solid var(--sia-soft-line); }
 .accuracyRings span:last-child { border: 0; }
 .accuracyRings i { position: relative; display: grid; width: clamp(54px, 5vw, 76px); height: clamp(54px, 5vw, 76px); place-items: center; border-radius: 50%; background: conic-gradient(var(--sia-navy) var(--accuracy), var(--sia-soft) 0); font-style: normal; }
@@ -104,6 +103,7 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .horizontalRow > div { height: 20px; overflow: hidden; border-radius: 12px; background: rgb(139 174 216 / 15%); }
 .horizontalRow i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f4f8ff, #79a0d2); }
 .summaryCards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.summary_accuracy { grid-template-columns: repeat(2, 1fr); }
 .summaryCards > span { display: grid; min-height: 150px; align-content: center; padding: 26px 38px; }
 .summaryCards small { color: var(--sia-muted); font-size: 15px; }
 .summaryCards strong { margin-top: 9px; color: var(--sia-navy); font-size: clamp(32px, 3.2vw, 46px); }
@@ -117,13 +117,9 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .panelHeading button { border: 0; background: transparent; color: var(--sia-navy); font-size: 38px; }
 .panelHeading h1 { margin: 0; font-size: 34px; }
 
-.view_settings .header { width: calc(100% - 76px); height: 66px; box-sizing: border-box; margin: 22px 38px 0; padding: 0 42px; border: 1px solid var(--sia-soft-line); background: rgb(255 255 255 / 82%); clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
-.view_settings .header::before { display: none; }
-.view_settings .header::after { display: none; }
-.view_settings::after { display: none; }
 .view_settings { background: linear-gradient(135deg, #fbfdff, var(--sia-page)); }
-.view_settings .content { width: calc(100% - 76px); padding: 6px 0 18px; }
-.settings { position: relative; display: grid; height: calc(100vh - 112px); min-height: 650px; box-sizing: border-box; grid-template-columns: 1fr 1fr; align-content: start; column-gap: 54px; padding: 142px 38px 30px 29%; border: 1px solid var(--sia-soft-line); background: rgb(255 255 255 / 88%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.view_settings .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
+.settings { position: relative; display: grid; height: calc(100vh - 132px); min-height: 650px; box-sizing: border-box; grid-template-columns: 1fr 1fr; align-content: start; column-gap: 54px; padding: 142px 38px 30px 29%; border: 1px solid var(--sia-soft-line); background: rgb(255 255 255 / 88%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .settings::before { position: absolute; z-index: 2; top: 38px; left: 29%; color: var(--sia-navy); font-size: clamp(34px, 3vw, 48px); font-weight: 800; content: "설정"; }
 .settings::after { position: absolute; z-index: 1; top: 128px; right: 38px; left: 29%; height: 1px; background: var(--sia-soft-line); content: ""; }
 .settingsCorner { position: absolute; z-index: 4; top: -18px; right: -1px; width: min(24%, 280px); height: 92px; overflow: visible; pointer-events: none; }
@@ -164,6 +160,7 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .deviceRow::after { position: absolute; top: 7px; right: 24px; width: 44px; height: 6px; background: repeating-linear-gradient(60deg, var(--sia-blue) 0 4px, transparent 4px 7px); opacity: .75; content: ""; }
 .settingRow label { display: grid; min-width: 0; gap: 8px; color: var(--sia-navy); font-weight: 700; }
 .settingRow input, .settingRow select, .deviceChoice select { width: 100%; height: 44px; min-width: 0; box-sizing: border-box; padding: 0 14px; border: 1px solid var(--sia-line); border-radius: 3px; background: white; color: var(--sia-navy); }
+.deviceValue { display: block; width: 100%; height: 44px; min-width: 0; box-sizing: border-box; overflow: hidden; padding: 0 14px; border: 1px solid var(--sia-line); border-radius: 3px; background: white; color: var(--sia-muted); font-weight: 500; line-height: 42px; text-overflow: ellipsis; white-space: nowrap; }
 .settingRow button, .primary, .dialogActions button { min-height: 44px; padding: 0 24px; border: 1px solid var(--sia-navy); border-radius: 3px; background: white; color: var(--sia-navy); cursor: pointer; }
 .settingRow > button { height: 44px; align-self: end; }
 .wakeRow > button:disabled { background: var(--sia-navy); color: white; -webkit-text-fill-color: white; cursor: default; opacity: 1; }
@@ -177,7 +174,6 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .toggleRow input:checked::after { transform: translateX(21px); }
 .modalBackdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(7 24 49 / 58%); }
 .modal { position: relative; width: min(540px, 100%); min-height: 300px; padding: 58px 48px 34px; border: 2px solid var(--sia-navy); background: white; color: var(--sia-navy); text-align: center; clip-path: polygon(18px 0, 38% 0, 40% 10px, 58% 10px, 60% 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.modal::before { position: absolute; top: 10px; right: 16px; color: var(--sia-navy); font-size: 22px; letter-spacing: 3px; content: "•••"; }
 .modal h2 { margin: 10px 0; font-size: 20px; }
 .modal p { color: var(--sia-muted); }
 .deviceChoice { display: grid; gap: 8px; margin-top: 20px; color: var(--sia-muted); text-align: left; }
