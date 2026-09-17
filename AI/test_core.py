@@ -1240,6 +1240,50 @@ def test_save_crop_paths():
     assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
 
 
+def test_media_seek():
+    """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
+
+    media.* 중 유일하게 배경 재생을 제어하지 못한다(방향키는 포커스 쥔 창이 받는다).
+    그래서 발화 시점 창을 winRef 로 지목하고, 못 찾으면 인자를 빼 BE 기본 동작에 맡긴다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    def run(key, ref, ok=True):
+        b = Brain.__new__(Brain)
+        b.overlay, b.calls, b.said = Mock(), [], []
+        b._last_be_payload, b._last_be_error = None, None
+        b._win_ref = lambda hwnd: ref
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+
+        def try_be(tool, args, say):
+            b.calls.append((tool, args))
+            return ok
+        b._try_be = try_be
+        return b, b._media(key, "이동했습니다", hwnd=1234)
+
+    b, done = run("forward", "win:3")
+    assert done and b.calls == [("media.seek", {"dir": "forward", "winRef": "win:3"})], b.calls
+
+    # back 을 그대로 보내면 BE 가 거절한다 — backward 로 바꿔야 한다.
+    b, done = run("back", "win:3")
+    assert done and b.calls[0][1]["dir"] == "backward", b.calls
+
+    # 대상 창을 못 찾으면 인자를 뺀다(BE 기본: 지금 앞에 있는 창). 빈 winRef 를 보내지 않는다.
+    b, done = run("forward", None)
+    assert done and b.calls == [("media.seek", {"dir": "forward"})], b.calls
+
+    # BE 가 못 하면 사실대로 말하고 로컬 단축키로 대신하지 않는다.
+    b, done = run("forward", "win:3", ok=False)
+    assert not done and b.said, (b.calls, b.said)
+    assert not any(t != "media.seek" for t, _ in b.calls), b.calls
+
+    # 표에 있는 키는 그대로 표대로 나간다 (seek 분기가 가로채지 않는다).
+    b, done = run("playpause", "win:3")
+    assert done and b.calls == [("media.play_pause", None)], b.calls
+
+
 def test_mic_preview():
     """마이크 레벨 미리보기 — FE 파형의 유일한 공급원이다 (프로토콜 §5.5).
 
@@ -1443,7 +1487,8 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 30/30 통과")
+    print("OK - 31/31 통과")

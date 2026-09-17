@@ -442,10 +442,33 @@ def test_media_and_session_end_router_paths():
                 assert any(c.args[0]["type"] == "session_end" for c in link._send.call_args_list)
 
 
+def test_media_seek_targets_utterance_window():
+    """영상 앞·뒤 이동은 media.seek 으로 나가고 발화 시점 창을 지목한다 (-313).
+
+    예전엔 BE 카탈로그에 도구가 없어 "10초 이동은 아직 지원하지 않습니다"로 거절했다.
+    media.* 중 유일하게 배경 재생을 제어하지 못해(방향키는 포커스 쥔 창이 받는다)
+    winRef 가 필요하고, 그래서 context.get 을 먼저 한 번 두드린다.
+    """
+    # 대역 창 제목 — _win_ref 는 제목으로 context.get 목록과 맞춘다(BE 가 hwnd 를 안 준다).
+    with assistant() as (brain, link, _), patch("brain.window_title_of", return_value="창"):
+        utter(brain, command("media", media_key="back"), hwnd=1)
+        assert events(link, "command")[0]["action"] == "media"
+        tools = [c.args[0] for c in link.call.call_args_list]
+        assert tools == ["session.extend", "context.get", "media.seek"], tools
+        args = link.call.call_args_list[-1].args[1]
+        assert args == {"dir": "backward", "winRef": "win:1"}, args   # back 이 아니라 backward
+
+    # 창을 못 찾으면 인자를 빼고 BE 기본 동작(지금 앞에 있는 창)에 맡긴다 — 거절하지 않는다.
+    with assistant() as (brain, link, _), patch("brain.window_title_of", return_value=""):
+        utter(brain, command("media", media_key="forward"), hwnd=1)
+        assert events(link, "command")[0]["action"] == "media"
+        assert link.call.call_args_list[-1].args[1] == {"dir": "forward"}
+
+
 def test_unexecuted_actions_and_local_mode():
     for result in (command(app="unsupported"), command("web_search", query=""),
                    command("find_file", query=""), command("window", window_op="minimize"),
-                   command("media", media_key="forward"), command("none"), command("answer", say="")):
+                   command("none"), command("answer", say="")):
         with assistant() as (brain, link, _):
             utter(brain, result)
             assert len(events(link, "voice")) == 1 and not events(link, "command")
