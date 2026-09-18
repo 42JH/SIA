@@ -21,12 +21,13 @@
 .section h3 { margin: 0 0 18px; color: var(--gesture-ink); font-size: 27px; font-weight: 800; }
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
 .card { position: relative; display: grid; min-height: 238px; grid-template-columns: 58% 42%; overflow: hidden; border: 1.5px solid var(--gesture-line); background: rgb(255 255 255 / 82%); color: var(--gesture-ink); cursor: pointer; clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+.card:has(.customPreview) { grid-template-columns: 62% 38%; min-height: 214px; }
 .card::after, .detailPanel::after, .registrationFormPanel::after, .completePanel::after { position: absolute; right: 20px; bottom: 0; width: 44px; height: 8px; background: repeating-linear-gradient(130deg, var(--gesture-blue) 0 3px, transparent 3px 8px); content: ""; opacity: .68; }
 .card.disabled { color: #8798b2; opacity: .68; }
 .preview { position: relative; display: grid; min-width: 0; height: 100%; place-items: center; overflow: hidden; border: 1.5px solid var(--gesture-blue); background: linear-gradient(145deg, #fff, #f6fbff); clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 13px, 100% calc(100% - 13px), calc(100% - 13px) 100%, 13px 100%, 0 calc(100% - 13px), 0 13px); }
 .card .preview { height: calc(100% - 30px); min-height: 0; align-self: center; margin: 15px; box-sizing: border-box; }
-.card .customPreview { width: calc(100% - 30px); height: auto; aspect-ratio: 1; justify-self: center; }
-.card .customPreview img, .card .customPreview video { object-fit: cover; object-position: center; }
+.card .customPreview { width: calc(100% - 30px); height: auto; aspect-ratio: 16 / 9; justify-self: center; }
+.card .customPreview img, .card .customPreview video { object-fit: contain; object-position: center; }
 .preview::before, .capturedMedia::before, .cameraBox::before, .liveFrame::before, .compareMedia::before { position: absolute; z-index: 2; inset: 24px; background: linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) left top / 38px 4px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) left top / 4px 38px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) right top / 38px 4px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) right top / 4px 38px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) left bottom / 38px 4px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) left bottom / 4px 38px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) right bottom / 38px 4px no-repeat, linear-gradient(var(--gesture-soft-line), var(--gesture-soft-line)) right bottom / 4px 38px no-repeat; content: ""; pointer-events: none; }
 .preview img, .preview video { width: 100%; height: 100%; object-fit: contain; }
 .preview > span { color: #293443; font-size: 48px; filter: grayscale(1); }
@@ -51,7 +52,7 @@
 .deleteCheck input { width: 20px; height: 20px; accent-color: var(--gesture-navy); cursor: pointer; }
 .cardInfo { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 52px 22px 18px 6px; }
 .cardInfo strong { font-size: 22px; font-weight: 800; }
-.cardInfo > span { margin-top: 13px; color: #3975d3; font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
+.cardInfo > span { margin-top: 13px; overflow: hidden; color: #3975d3; font-size: 17px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .cardAction { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--gesture-soft-line); color: var(--gesture-copy); font-size: 14px; font-weight: 700; }
 .cardAction b { font-size: 22px; }
 .warning { position: absolute; right: 15px; bottom: 4px; left: 58%; color: var(--gesture-danger); font-size: 10px; }
@@ -60,20 +61,20 @@
 
 .toolbar, .section, .backdrop, .registration { font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif; }
 .backdrop { position: fixed; z-index: 100; inset: 54px 0 0; display: grid; overflow: hidden; place-items: center; padding: clamp(8px, 1.6vw, 22px) clamp(10px, 2.4vw, 40px); background: rgb(6 29 61 / 58%); }
-.detailModal { position: relative; display: flex; width: min(1440px, 100%); max-width: 100%; max-height: min(calc(100vh - 90px), 100%); min-height: 0; overflow: hidden; flex-direction: column; box-sizing: border-box; padding: 0 clamp(12px, 1.6vw, 24px) clamp(12px, 1.6vw, 24px); background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 24%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.detailModal { position: relative; display: flex; width: min(1440px, 100%); max-width: 100%; height: min(calc(100vh - 78px), 100%); max-height: min(calc(100vh - 78px), 100%); min-height: 0; overflow: hidden; flex-direction: column; box-sizing: border-box; padding: 0 clamp(12px, 1.6vw, 24px) clamp(12px, 1.6vw, 24px); background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 24%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .detailModal > header { position: sticky; z-index: 6; top: 0; display: grid; grid-template-columns: 38px 1fr 38px; align-items: center; min-height: 58px; flex-shrink: 0; border-bottom: 1px solid var(--gesture-soft-line); background: rgb(255 255 255 / 96%); }
 .detailModal header h2 { margin: 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 800; }
 .detailModal header button { border: 0; background: transparent; color: var(--gesture-ink); font-size: 36px; cursor: pointer; }
 .detailModal header button:last-child { visibility: hidden; }
-.detailLayout { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 54%); gap: clamp(10px, 1.4vw, 18px); padding-top: 12px; min-width: 0; min-height: min(480px, calc(100vh - 120px)); flex: 1; overflow: hidden; align-items: stretch; }
+.detailLayout { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 54%); gap: clamp(10px, 1.4vw, 18px); padding-top: 12px; min-width: 0; min-height: 0; flex: 1; overflow: hidden; align-items: stretch; }
 .detailMedia, .capturedPanel { position: relative; display: grid; min-width: 0; min-height: 0; box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr) auto; padding: clamp(16px, 2vw, 26px) clamp(16px, 2.2vw, 30px) 18px; overflow: hidden; background: linear-gradient(145deg, #122957, #233e72); color: #fff; clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .detailMedia h3, .capturedPanel h3 { z-index: 2; margin: 0 0 16px; font-size: clamp(16px, 1.6vw, 21px); }
 .detailMedia > small, .capturedPanel > small { margin-top: 12px; font-size: 11px; font-weight: 700; }
 .detailPanel, .registrationFormPanel, .completePanel { position: relative; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; border: 1.5px solid var(--gesture-line); background: rgb(255 255 255 / 92%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .detailMedia, .detailPanel { min-height: 0; }
-.detailPanel { display: flex; flex-direction: column; }
+.detailPanel { display: flex; overflow: hidden; flex-direction: column; }
 .detailPanel::after, .registrationFormPanel::after, .completePanel::after { right: 30px; }
-.detailBody { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 9px; padding: 30px 30px 12px; text-align: left; }
+.detailBody { display: flex; min-height: 0; overflow-x: hidden; overflow-y: auto; flex: 1; flex-direction: column; gap: 9px; padding: 30px 30px 12px; text-align: left; }
 .detailBody > small { margin-top: 2px; color: var(--gesture-copy); font-size: 10px; font-weight: 800; }
 .detailBody h3 { overflow-wrap: anywhere; margin: -2px 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--gesture-soft-line); font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }
 .detailBody > strong { margin-bottom: 12px; font-size: 17px; }
@@ -82,7 +83,7 @@
 .detailToggle span { display: grid; gap: 3px; font-weight: 700; }
 .detailToggle span small { color: var(--gesture-copy); font-size: 9px; letter-spacing: 2px; }
 .detailToggle .switch { position: relative; inset: auto; }
-.detailPanel > .actions { flex-shrink: 0; justify-content: flex-end; padding: 0 20px 10px; }
+.detailPanel > .actions { position: relative; z-index: 1; flex-shrink: 0; justify-content: flex-end; padding: 12px 20px 16px; background: rgb(255 255 255 / 96%); }
 .detailPanel > .form { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding-bottom: 18px; }
 .actions { display: flex; justify-content: center; gap: 12px; padding: 22px; }
 .actions button { min-width: 120px; }
@@ -96,12 +97,12 @@
 .actionList li { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--gesture-soft-line); background: #f8fbff; }
 .actionList b { font-size: 16px; }
 .actionList span { color: var(--gesture-copy); font-size: 14px; overflow-wrap: anywhere; }
-.form { display: grid; align-content: start; gap: 18px; min-width: 0; max-width: 100%; padding: clamp(16px, 2.4vw, 38px) clamp(12px, 2vw, 34px) 90px; text-align: left; overflow-x: hidden; }
+.form { display: grid; align-content: start; gap: 18px; min-width: 0; max-width: 100%; padding: clamp(16px, 2.4vw, 38px) clamp(12px, 2vw, 34px) 24px; text-align: left; overflow-x: hidden; }
 .form label { display: grid; gap: 8px; color: var(--gesture-ink); font-weight: 700; }
 .form input:not([type="checkbox"]), .form select { min-height: 42px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--gesture-line); border-radius: 5px; background: #fff; color: var(--gesture-ink); }
 .form > div { min-width: 0; max-width: 100%; }
 .form > div > span { display: block; margin-bottom: 12px; color: var(--gesture-copy); font-weight: 700; }
-.stepEditor { display: grid; grid-template-columns: 18px 24px minmax(0, 1fr) 32px; grid-template-rows: auto auto; align-items: center; justify-content: start; column-gap: 8px; row-gap: 8px; width: 100%; max-width: min(100%, 420px); margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--gesture-soft-line); border-radius: 6px; min-width: 0; box-sizing: border-box; overflow: hidden; }
+.stepEditor { display: grid; grid-template-columns: 18px 24px minmax(0, 1fr) 32px; grid-template-rows: auto auto; align-items: center; justify-content: start; column-gap: 8px; row-gap: 8px; width: 100%; max-width: 100%; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--gesture-soft-line); border-radius: 6px; min-width: 0; box-sizing: border-box; overflow: hidden; }
 .stepEditor::before { grid-column: 1; grid-row: 1; color: var(--gesture-blue); content: "⠿"; }
 .stepEditor > b { grid-column: 2; grid-row: 1; text-align: center; }
 .stepEditor > select { grid-column: 3; grid-row: 1; width: 100%; min-width: 0; max-width: 100%; }
@@ -111,24 +112,26 @@
 .stepSettings { display: grid; gap: 5px; min-width: 0; max-width: 100%; }
 .stepSettings input, .stepSettings select { width: 100%; min-width: 0; max-width: 100%; }
 .coordinates { grid-template-columns: repeat(4, minmax(42px, 1fr)); }
-.filePicker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-width: 0; align-items: center; }
-.filePicker > input:first-child { grid-column: 1 / -1; min-width: 0; width: 100%; }
-.filePicker > select { width: auto; min-width: 120px; }
-.filePicker > button { min-height: 42px; padding: 0 14px; border: 1px solid var(--gesture-line); border-radius: 5px; background: #fff; color: var(--gesture-ink); white-space: nowrap; cursor: pointer; }
+.filePicker { display: grid; gap: 8px; min-width: 0; }
+.filePicker > input { min-width: 0; width: 100%; }
+.pickerRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-width: 0; align-items: center; }
+.pickerRow select { width: 100%; min-width: 0; }
+.pickerRow button { min-height: 42px; padding: 0 14px; border: 1px solid var(--gesture-line); border-radius: 5px; background: #fff; color: var(--gesture-ink); white-space: nowrap; cursor: pointer; }
+.pickerReset { justify-self: start; min-height: 36px; padding: 0 4px; border: 0; background: transparent; color: var(--gesture-copy); font-weight: 700; cursor: pointer; }
 .form .hiddenPicker { display: none; }
-.filePicker .pickerError { grid-column: 1 / -1; margin: 0; line-height: 1.45; color: var(--gesture-danger); }
-.addStep { width: 100%; max-width: min(100%, 420px); border-color: var(--gesture-line); border-style: dashed; color: var(--gesture-copy); text-align: left; }
+.filePicker .pickerError { margin: 0; line-height: 1.45; color: var(--gesture-danger); }
+.addStep { width: 100%; max-width: 100%; border-color: var(--gesture-line); border-style: dashed; color: var(--gesture-copy); text-align: left; }
 .form small { display: block; margin-top: 8px; color: var(--gesture-copy); }
 .form .repeat { display: flex; width: max-content; max-width: 100%; align-items: center; gap: 10px; margin-top: 4px; }
 .form .repeat input { width: 18px; min-width: 18px; height: 18px; min-height: 18px; padding: 0; border: 1px solid var(--gesture-line); border-radius: 3px; accent-color: var(--gesture-navy); cursor: pointer; }
 
-.registration { position: fixed; z-index: 15; inset: 54px 0 0; overflow: auto; background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); }
+.registration { position: fixed; z-index: 15; inset: 54px 0 0; display: flex; overflow: hidden; flex-direction: column; background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); }
 :global(body):has(.registration), :global(body):has(.detailModal) { overflow: hidden; }
-.registrationHeading { display: flex; width: min(1540px, calc(100% - 32px)); min-height: 76px; align-items: center; gap: 16px; margin: 0 auto; border-bottom: 1px solid var(--gesture-soft-line); }
+.registrationHeading { display: flex; width: min(1540px, calc(100% - 32px)); min-height: 76px; flex-shrink: 0; align-items: center; gap: 16px; margin: 0 auto; border-bottom: 1px solid var(--gesture-soft-line); }
 .registrationHeading button { border: 0; background: transparent; color: var(--gesture-ink); font-size: 38px; cursor: pointer; }
 .registrationHeading h1 { margin: 0; font-size: 31px; font-weight: 800; }
 .registrationHeading p { margin: 3px 0 0; color: var(--gesture-copy); font-weight: 600; }
-.registrationBody { display: flex; width: min(1540px, calc(100% - 32px)); min-height: calc(100% - 77px); align-items: center; flex-direction: column; justify-content: center; margin: 0 auto; padding: 24px clamp(16px, 2vw, 36px) 38px; text-align: center; box-sizing: border-box; }
+.registrationBody { display: flex; width: min(1540px, calc(100% - 32px)); min-height: 0; flex: 1; align-items: center; flex-direction: column; justify-content: center; margin: 0 auto; padding: 24px clamp(16px, 2vw, 36px) 38px; text-align: center; box-sizing: border-box; overflow: auto; }
 .registrationBody > p { font-weight: 700; }
 .registrationBody > small { margin-top: 12px; color: var(--gesture-copy); }
 .cameraBox, .liveFrame { position: relative; display: grid; width: min(900px, 78vw); aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border: 2px solid var(--gesture-navy); background: #fbfdff; color: var(--gesture-copy); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
@@ -179,12 +182,14 @@
 .captureTypeIcon { display: grid; width: 70px; height: 70px; place-items: center; margin-bottom: 14px; border: 2px solid var(--gesture-blue); border-radius: 50%; background: #f7fbff; }
 .captureTypeIcon svg { width: 40px; height: 40px; fill: none; stroke: var(--gesture-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
 
-.registrationWorkspace { display: grid; width: 100%; min-width: 0; min-height: 0; grid-template-columns: minmax(0, 40%) minmax(0, 60%); gap: 20px; }
-.capturedPanel { min-height: min(560px, calc(100vh - 180px)); }
-.capturedMedia { position: relative; width: 100%; min-height: 0; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #477ecb; background: #f8fbff; }
+.registrationWorkspace { display: grid; width: 100%; min-width: 0; min-height: 0; flex: 1; overflow: hidden; grid-template-columns: minmax(0, 40%) minmax(0, 60%); grid-template-rows: minmax(0, 1fr); gap: 20px; align-items: stretch; align-self: stretch; }
+.capturedPanel { min-height: 0; height: 100%; overflow: hidden; }
+.capturedMedia { position: relative; width: 100%; min-height: 0; height: 100%; overflow: hidden; border: 1px solid #477ecb; background: #f8fbff; }
 .capturedMedia img, .capturedMedia video { position: absolute; width: 100%; height: 100%; inset: 0; object-fit: contain; }
 .capturedPanel > span { justify-self: center; margin-top: 16px; padding: 7px 28px; border: 1px solid #79c7ff; border-radius: 20px; font-size: 13px; }
-.registrationFormPanel > .actions { position: absolute; right: 18px; bottom: 4px; padding: 0; }
+.registrationFormPanel { display: flex; overflow: hidden; flex-direction: column; }
+.registrationFormPanel > .form { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding-bottom: 18px; }
+.registrationFormPanel > .actions { position: relative; z-index: 2; flex-shrink: 0; justify-content: flex-end; padding: 12px 28px 22px; background: rgb(255 255 255 / 96%); }
 .completePanel { display: flex; min-height: 560px; align-items: center; flex-direction: column; justify-content: center; padding: 40px; }
 .completePanel .completeIcon { margin-bottom: 18px; }
 .completePanel h3 { margin: 0; font-size: 29px; }
@@ -209,11 +214,12 @@
   .backdrop, .registrationBody { padding-right: 16px; padding-left: 16px; }
   .registrationHeading { width: calc(100% - 32px); }
   .registrationBody { width: 100%; }
-  .detailLayout, .registrationWorkspace { grid-template-columns: 1fr; overflow: auto; }
+  .detailLayout, .registrationWorkspace { grid-template-columns: 1fr; }
+  .registrationWorkspace { overflow: auto; grid-template-rows: none; }
   .detailLayout { gap: 12px; }
-  .detailMedia, .capturedPanel, .detailPanel { min-height: min(360px, 52vh); }
+  .detailMedia, .capturedPanel, .detailPanel, .registrationFormPanel { min-height: min(360px, 52vh); }
   .stepEditor { grid-template-columns: 18px 24px minmax(0, 1fr) 32px; max-width: 100%; }
-  .filePicker { grid-template-columns: 1fr; }
+  .pickerRow { grid-template-columns: 1fr; }
   .captureTypeDialog > div, .similarityGrid { grid-template-columns: 1fr; }
   .captureTypeDialog { max-height: 90vh; overflow: auto; }
   .captureTypeDialog article { min-height: 270px; }

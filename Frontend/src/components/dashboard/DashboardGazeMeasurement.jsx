@@ -17,8 +17,18 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
   const [caught, setCaught] = useState(() => new Set());
 
   useEffect(() => {
-    const check = () => { if (!document.fullscreenElement) onFailure('전체화면이 해제되었습니다. 측정을 중단한 뒤 다시 시도해주세요.'); };
     const escape = (event) => { if (event.key === 'Escape' && document.fullscreenElement) onCancel(); };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [onCancel]);
+
+  useEffect(() => {
+    if (!introDone) return undefined;
+    if (!document.fullscreenElement) {
+      onFailure('전체화면이 해제되었습니다. 측정을 중단한 뒤 다시 시도해주세요.');
+      return undefined;
+    }
+    const check = () => { if (!document.fullscreenElement) onFailure('전체화면이 해제되었습니다. 측정을 중단한 뒤 다시 시도해주세요.'); };
     let resizeGuardReady = false;
     let measuredWidth = window.innerWidth;
     let measuredHeight = window.innerHeight;
@@ -26,21 +36,19 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
       measuredWidth = window.innerWidth;
       measuredHeight = window.innerHeight;
       resizeGuardReady = true;
-    }, 1000);
+    }, 1200);
     const resized = () => {
       if (!resizeGuardReady || (window.innerWidth === measuredWidth && window.innerHeight === measuredHeight)) return;
       onFailure('화면 크기가 변경되었습니다. 측정을 중단한 뒤 다시 시도해주세요.');
     };
     document.addEventListener('fullscreenchange', check);
-    document.addEventListener('keydown', escape);
     window.addEventListener('resize', resized);
     return () => {
       clearTimeout(guardTimer);
       document.removeEventListener('fullscreenchange', check);
-      document.removeEventListener('keydown', escape);
       window.removeEventListener('resize', resized);
     };
-  }, [onCancel, onFailure]);
+  }, [introDone, onFailure]);
 
   useEffect(() => {
     if (!introDone || !point) return undefined;

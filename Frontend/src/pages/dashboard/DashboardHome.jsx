@@ -175,7 +175,14 @@ export default function DashboardHome() {
     return undefined;
   }, [view, period, anchor]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
-  function loadHome() { load(fetchDashboardOverview, setOverview); }
+  function loadHome() {
+    load(async () => {
+      const overview = await fetchDashboardOverview();
+      // TODO(BE): overview.topApps 는 오늘(day)만이라 주간 사용량 카드와 기간이 다름. 명세에 주간 필드가 생기면 /apps?period=week 호출을 제거할 것
+      const apps = await fetchDashboardApps('week');
+      return { ...overview, topApps: Array.isArray(apps.items) && apps.items.length ? apps.items : (overview.topApps ?? []) };
+    }, setOverview);
+  }
   const open = (next) => {
     if (next !== 'gestures') useGestureStore.getState().closeRegistration();
     setMenu(false); setError('');

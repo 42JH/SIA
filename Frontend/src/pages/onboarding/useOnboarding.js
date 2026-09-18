@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { fetchStatus } from '../../api/status';
-import { subscribeOnboarding } from '../../ws/onboarding';
+import { sendOnboarding, subscribeOnboarding } from '../../ws/onboarding';
 import { useOnboardingStore } from '../../store/onboardingStore';
 
 const voiceSteps = ['voice', 'voiceProcessing', 'voiceReview'];
@@ -65,7 +65,18 @@ export function useOnboarding() {
         const reason = typeof rejection.reason === 'string' ? rejection.reason.trim() : '';
         change({ wakeRejection: { code: rejection.code ?? null, reason: reason || '제대로 녹음되지 않았습니다. 다시 불러주세요.' }, pending: false });
       },
-      wakeword_done: () => { if (state().step === 'wake') change({ wakeDone: true, wakeRejection: null, pending: false }); },
+      wakeword_done: () => {
+        if (state().step !== 'wake') return;
+        try {
+          sendOnboarding('voice_reg_start', {});
+          change({
+            wakeDone: true, wakeRejection: null, pending: true, error: '',
+            step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null,
+          });
+        } catch (error) {
+          change({ wakeDone: true, wakeRejection: null, pending: false, error: error.message });
+        }
+      },
       voice_sentence: (voiceSentence) => {
         if (!voiceSteps.includes(state().step)) return;
         change({

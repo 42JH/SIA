@@ -135,9 +135,15 @@ function displayStepDetail(step, apps) {
   return details.join(' · ') || '추가 설정 없이 실행';
 }
 
+function shortenPath(path) {
+  const name = String(path ?? '').replaceAll('/', '\\').split('\\').filter(Boolean).pop();
+  return name ? `...${name}` : String(path ?? '');
+}
+
 function displayLinkedAction(step, apps) {
   const appName = launchAppName(step, apps);
   if (appName) return `${displayTool(step)} · ${appName}`;
+  if (step.tool === 'files.open' && step.args?.path) return `${displayTool(step)} · ${shortenPath(step.args.path)}`;
   return `${displayTool(step)} · ${displayStepDetail(step, apps)}`;
 }
 
@@ -392,7 +398,7 @@ function GestureDetail({ gesture, tools, apps, appCatalog = [], onClose, onToggl
                 return <li key={`${step.tool}-${index}`}><b>{index + 1}. {displayTool(step)}</b>{appName ? <span>실행 앱 · {appName}</span> : <span>{displayStepDetail(step, appCatalog.length ? appCatalog : apps)}</span>}</li>;
               })}</ol> : <strong>연결된 기능 없음</strong>}
               {gesture.createdAt && <><small>REGISTRATION DATE</small><strong>등록일 {gesture.createdAt.slice(0, 10)}</strong></>}
-              {!gesture.custom && <p>기본 제스처의 이름과 동작은 변경할 수 없습니다.</p>}
+              {!gesture.custom && <p>기본 제스처의 이름과 손 모양은 변경할 수 없습니다. 연결 기능은 수정할 수 있습니다.</p>}
               {!gesture.virtual && <div className={styles.detailToggle}><span><small>USAGE</small>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
             </div>}
             <footer className={styles.actions}>
@@ -418,6 +424,7 @@ function parseSteps(steps) {
     ['amount', 'level', 'x1', 'y1', 'x2', 'y2'].forEach((key) => {
       if (args[key] !== undefined) args[key] = Number(args[key]);
     });
+    if (step.tool === 'scroll.step' && Number.isFinite(args.amount)) args.amount = Math.min(10, Math.max(1, args.amount));
     return { tool: step.tool, args };
   });
 }
@@ -453,7 +460,7 @@ function StepSettings({ step, apps, update }) {
   if (['window.focus', 'window.minimize', 'window.maximize', 'window.restore'].includes(step.tool)) return <div className={styles.stepSettings}>{text('winRef', '창 참조값 (예: win:1)')}</div>;
   if (step.tool === 'window.resize') return <div className={styles.stepSettings}>{text('winRef', '창 참조값')}<select value={step.args.preset ?? ''} onChange={(event) => set('preset', event.target.value)}><option value="">위치 선택</option><option value="LEFT_HALF">왼쪽 절반</option><option value="RIGHT_HALF">오른쪽 절반</option><option value="CENTER">가운데</option></select></div>;
   if (step.tool === 'explorer.items') return <div className={styles.stepSettings}>{text('winRef', '탐색기 창 참조값 (선택)')}</div>;
-  if (step.tool === 'scroll.step') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">방향 선택</option><option value="up">위</option><option value="down">아래</option><option value="left">왼쪽</option><option value="right">오른쪽</option></select><input type="number" min="1" max="10" value={step.args.amount ?? ''} onChange={(event) => set('amount', event.target.value)} placeholder="이동량 1~10 (선택)" /></div>;
+  if (step.tool === 'scroll.step') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">방향 선택</option><option value="up">위</option><option value="down">아래</option><option value="left">왼쪽</option><option value="right">오른쪽</option></select><input type="number" min="1" max="10" value={step.args.amount ?? ''} onChange={(event) => { const raw = event.target.value; if (raw === '') { set('amount', ''); return; } const next = Number(raw); if (!Number.isFinite(next)) return; set('amount', String(Math.min(10, Math.max(1, Math.round(next))))); }} placeholder="이동량 1~10 (선택)" /></div>;
   if (step.tool === 'volume.step') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">방향 선택</option><option value="up">볼륨 올리기</option><option value="down">볼륨 내리기</option></select></div>;
   if (step.tool === 'volume.set') return <div className={styles.stepSettings}><input type="number" min="0" max="100" value={step.args.level ?? ''} onChange={(event) => set('level', event.target.value)} placeholder="볼륨 0~100" /></div>;
   if (step.tool === 'files.open') return <FileTargetPicker path={step.args.path ?? ''} onChange={(path) => set('path', path)} />;
@@ -469,12 +476,14 @@ function FileTargetPicker({ path, onChange }) {
   const [targetType, setTargetType] = useState('file');
   const [pickerError, setPickerError] = useState('');
   const [picking, setPicking] = useState(false);
+  const [choosingAgain, setChoosingAgain] = useState(!path);
 
   const chooseFile = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.path) {
       onChange(file.path);
+      setChoosingAgain(false);
       setPickerError('');
     } else {
       setPickerError('현재 웹 실행 환경에서는 선택한 파일의 절대경로를 가져올 수 없습니다. 경로를 직접 입력해주세요.');
@@ -490,6 +499,7 @@ function FileTargetPicker({ path, onChange }) {
       const rootName = relative.split('\\')[0];
       const base = file.path.slice(0, Math.max(0, file.path.length - relative.length));
       onChange(`${base}${rootName}`);
+      setChoosingAgain(false);
       setPickerError('');
     } else {
       setPickerError('현재 웹 실행 환경에서는 선택한 폴더의 절대경로를 가져올 수 없습니다. 경로를 직접 입력해주세요.');
@@ -506,6 +516,7 @@ function FileTargetPicker({ path, onChange }) {
       const selectedPath = await pickNativeAbsolutePath({ directory });
       if (typeof selectedPath === 'string' && selectedPath) {
         onChange(selectedPath);
+        setChoosingAgain(false);
         return;
       }
       if (selectedPath === null) return;
@@ -513,7 +524,7 @@ function FileTargetPicker({ path, onChange }) {
         setPickerError('Tauri 파일 선택 창을 열 수 없습니다. 경로를 직접 입력해주세요.');
         return;
       }
-    } catch (error) {
+    } catch {
       if (isTauriRuntime()) {
         setPickerError('네이티브 파일 선택기를 열 수 없습니다. 경로를 직접 입력해주세요.');
         return;
@@ -526,9 +537,9 @@ function FileTargetPicker({ path, onChange }) {
   };
 
   return <div className={styles.filePicker}>
-    <input value={path} onChange={(event) => { onChange(event.target.value); setPickerError(''); }} placeholder="열 파일 또는 폴더의 절대경로" />
-    <select value={targetType} onChange={(event) => setTargetType(event.target.value)} aria-label="열 대상 종류"><option value="file">파일 선택</option><option value="folder">폴더 선택</option></select>
-    <button type="button" onClick={openPicker} disabled={picking}>찾아보기</button>
+    {(!path || choosingAgain) && <div className={styles.pickerRow}><select value={targetType} onChange={(event) => setTargetType(event.target.value)} aria-label="열 대상 종류"><option value="file">파일 선택하기</option><option value="folder">폴더 선택하기</option></select><button type="button" onClick={openPicker} disabled={picking}>찾아보기</button></div>}
+    <input value={path} onChange={(event) => { onChange(event.target.value); setPickerError(''); setChoosingAgain(!event.target.value); }} placeholder="선택한 파일 또는 폴더의 절대경로" />
+    {path && !choosingAgain && <button type="button" className={styles.pickerReset} onClick={() => setChoosingAgain(true)}>다시 선택</button>}
     <input ref={fileInput} className={styles.hiddenPicker} type="file" onChange={chooseFile} />
     <input ref={folderInput} className={styles.hiddenPicker} type="file" webkitdirectory="" directory="" onChange={chooseFolder} />
     {pickerError && <small className={styles.pickerError}>{pickerError}</small>}
