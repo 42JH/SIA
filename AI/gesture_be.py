@@ -17,12 +17,13 @@ import numpy as np
 from gesture_diagnostics import save_registration_diagnostic
 
 from hands import (REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
-                   SwipeDetector, normalize_landmarks, scale_by_hand_size,
+                   SwipeDetector, normalize_landmarks, pose_distances, scale_by_hand_size,
                    weighted_distance)
 from custom_motion import (
     CustomGestureStore, FRAMES, MATCH_DISTANCE, PREFIX_MIN_MOTION, distance, encode_sequence,
-    ordered_landmarks, read_templates, trim_motion_frames, template_bytes as encode_template_bytes,
-    matching_distance, motion_matching_distance, TRACKING_GRACE_S,
+    encode_world_sequence, ordered_landmarks, ordered_world_landmarks, read_templates,
+    trim_motion_frames, template_bytes as encode_template_bytes,
+    matching_distance, motion_matching_distance, motion_direction_8, TRACKING_GRACE_S,
 )
 
 
@@ -33,6 +34,94 @@ class GestureRegistrationRejected(ValueError):
         super().__init__(reason)
         self.similar_to = similar_to
         self.similarity = similarity
+
+
+# 내장 정적 제스처 충돌 시 보여줄 유사도의 기준 손모양들. 전부 실제로 촬영된
+# 사진(testdata/builtin_finger_poses.json)의 21개 랜드마크(x,y) — 파일을
+# 런타임에 읽지 않고 값을 그대로 박아 배포 환경 의존을 없앤다.
+# 분류기는 펴짐/굽힘 사이에 여유 구간을 둬서(gesture_pose.py) 손가락을 살짝만
+# 굽혀도 여전히 같은 라벨로 분류하므로, 그 프레임 비율만 보면 항상 100%로
+# 뜬다 — 커스텀 중복 검사와 같은 방식(정규화된 손모양 사이 거리 → exp(-거리))
+# 으로 바꿔야 실제로 얼마나 비슷한지가 드러난다. ILoveYou는 실제 촬영 데이터가
+# 없어 기준이 없고, 그 경우는 기존 방식(분류 일치율)으로 자동 대체된다.
+BUILTIN_POSE_REFERENCES = {
+    "Victory": np.array([
+        [0.4705, 0.7335], [0.4202, 0.6730], [0.4055, 0.5940], [0.4559, 0.5408],
+        [0.5156, 0.5013], [0.4349, 0.4894], [0.4112, 0.3923], [0.3966, 0.3366],
+        [0.3941, 0.2859], [0.4923, 0.4955], [0.4975, 0.3753], [0.4984, 0.3128],
+        [0.5074, 0.2608], [0.5399, 0.5270], [0.5548, 0.4556], [0.5159, 0.5223],
+        [0.4985, 0.5722], [0.5818, 0.5744], [0.5669, 0.5450], [0.5310, 0.5933],
+        [0.5187, 0.6311],
+    ], dtype=np.float32),
+    "Closed_Fist": np.array([
+        [0.5224, 0.6966], [0.4363, 0.6581], [0.3507, 0.5742], [0.3264, 0.4714],
+        [0.3830, 0.4130], [0.3899, 0.4472], [0.3774, 0.3719], [0.3895, 0.4644],
+        [0.3988, 0.4912], [0.4576, 0.4480], [0.4529, 0.3862], [0.4516, 0.5022],
+        [0.4511, 0.4944], [0.5295, 0.4555], [0.5275, 0.4055], [0.5178, 0.5086],
+        [0.5209, 0.5056], [0.6003, 0.4686], [0.5943, 0.4310], [0.5819, 0.4995],
+        [0.5812, 0.5091],
+    ], dtype=np.float32),
+    "Open_Palm": np.array([
+        [0.4739, 0.7525], [0.3975, 0.6914], [0.3452, 0.6025], [0.3093, 0.5313],
+        [0.2569, 0.4957], [0.4346, 0.4753], [0.4181, 0.3762], [0.4166, 0.3152],
+        [0.4216, 0.2630], [0.5063, 0.4730], [0.5183, 0.3604], [0.5296, 0.2949],
+        [0.5388, 0.2420], [0.5673, 0.5015], [0.6037, 0.4024], [0.6274, 0.3460],
+        [0.6468, 0.2965], [0.6174, 0.5508], [0.6697, 0.4831], [0.7021, 0.4412],
+        [0.7291, 0.3999],
+    ], dtype=np.float32),
+    "Pointing_Up": np.array([
+        [0.4819, 0.7085], [0.4344, 0.6512], [0.4130, 0.5725], [0.4602, 0.5170],
+        [0.5220, 0.4885], [0.4574, 0.4750], [0.4547, 0.3706], [0.4558, 0.3104],
+        [0.4651, 0.2584], [0.5125, 0.4976], [0.5280, 0.4332], [0.4949, 0.5053],
+        [0.4898, 0.5378], [0.5625, 0.5308], [0.5664, 0.4983], [0.5198, 0.5684],
+        [0.5161, 0.5911], [0.6072, 0.5704], [0.6041, 0.5380], [0.5640, 0.5846],
+        [0.5600, 0.6030],
+    ], dtype=np.float32),
+    "Thumb_Up": np.array([
+        [0.3840, 0.6687], [0.4084, 0.5315], [0.4623, 0.4373], [0.5263, 0.3639],
+        [0.5480, 0.2991], [0.5840, 0.5032], [0.6182, 0.5044], [0.5746, 0.5236],
+        [0.5394, 0.5366], [0.6080, 0.5792], [0.6105, 0.5719], [0.5683, 0.5760],
+        [0.5403, 0.5885], [0.6027, 0.6492], [0.5992, 0.6247], [0.5623, 0.6280],
+        [0.5300, 0.6383], [0.5895, 0.7108], [0.5888, 0.6841], [0.5539, 0.6773],
+        [0.5236, 0.6805],
+    ], dtype=np.float32),
+    "Thumb_Down": np.array([
+        [0.4195, 0.4106], [0.4488, 0.5077], [0.4940, 0.5977], [0.5474, 0.6678],
+        [0.5457, 0.7230], [0.5996, 0.5505], [0.6554, 0.5667], [0.5792, 0.5402],
+        [0.5434, 0.5274], [0.6156, 0.4920], [0.6722, 0.5039], [0.5779, 0.4854],
+        [0.5542, 0.4851], [0.6173, 0.4344], [0.6714, 0.4468], [0.5895, 0.4367],
+        [0.5648, 0.4360], [0.6129, 0.3765], [0.6554, 0.3820], [0.5982, 0.3868],
+        [0.5766, 0.3872],
+    ], dtype=np.float32),
+}
+
+# 프로토콜 식별자(similarTo)는 그대로 유지하고 사용자 문구에서만 읽기 쉬운
+# 이름을 사용한다.
+BUILTIN_GESTURE_DISPLAY_NAMES = {
+    "Victory": "브이",
+    "Open_Palm": "손바닥 펴기",
+    "Closed_Fist": "주먹 쥐기",
+    "Pointing_Up": "검지 올리기",
+    "Thumb_Up": "엄지 올리기",
+    "Thumb_Down": "엄지 내리기",
+    "ILoveYou": "아이 러브 유",
+}
+
+
+def _builtin_pose_similarity(label, feats):
+    """분류 일치율이 아니라 실제 손모양 거리 기반 유사도. 기준 손모양이 없는
+    라벨은 None을 돌려줘 호출측이 기존 방식(분류 일치율)으로 대신하게 한다.
+
+    pose_distances처럼 반대 손(좌우 반전)으로 찍었을 가능성도 같이 본다 —
+    안 그러면 같은 브이를 반대 손으로 찍었을 때 부당하게 낮은 유사도가 나온다.
+    """
+    reference = BUILTIN_POSE_REFERENCES.get(label)
+    if reference is None:
+        return None
+    ref_feature = normalize_landmarks(reference)
+    mean_feature = np.asarray(feats, dtype=np.float32).mean(axis=0)
+    dist = float(pose_distances(ref_feature[None, :], mean_feature)[0])
+    return round(float(np.exp(-dist)), 4)
 
 
 def registration_blocks_gesture_execution(registration):
@@ -242,17 +331,24 @@ class GestureRegistration:
     BUILTIN_OVERLAP = 0.20
     MIN_PALM_SIZE = 0.055
     MAX_SPREAD = 0.25
+    STATIC_SPREAD_PERCENTILE = 90
+    STATIC_SPREAD_MAX_RATIO = 0.20
+    # 1손 촬영에서 MediaPipe가 화면 가장자리나 얼굴 일부를 잠깐 두 번째 손으로
+    # 잡는 경우가 있다. 한 회차의 절반 미만인 추가 검출은 주로 보이던 손만
+    # 추적하고, 절반 이상 계속될 때만 실제 손 개수 변경으로 본다.
+    ONE_HAND_EXTRA_MAX_RATIO = 0.50
     COLLISION_DIST = 0.45
-    # 회차 간 허용 오차. 모든 회차 쌍을 비교한다.
-    # 실행 인식 임계값(legacy thresh 0.35, MATCH_DISTANCE)과 여유 없이 같은 값을
-    # 쓰면, 등록은 통과하되 회차 간 편차가 그 경계에 딱 붙은 제스처가 생긴다 —
-    # 그러면 실제 재현이 조금만 달라져도(대부분의 실사용) 저장된 회차 중 어느
-    # 것과도 임계값 안에 들지 못해 "될 때도 있고 안 될 때도 있는" 미인식으로
-    # 이어진다. TAKE_CONSISTENCY_MARGIN만큼 낮춰 등록 시 더 일관된 재촬영을
-    # 요구하고, 그만큼 실행 때 안정적으로 인식되게 한다.
-    TAKE_CONSISTENCY_MARGIN = 0.6
-    TAKE_STATIC_DISTANCE = 0.35 * TAKE_CONSISTENCY_MARGIN  # 42차원 kNN의 손끝 가중 L2 단위
-    TAKE_SEQUENCE_DISTANCE = MATCH_DISTANCE * TAKE_CONSISTENCY_MARGIN
+    # 동적 템플릿 실측: 같은 '한 손 비틀기' 3회 내 거리는 최대 0.319,
+    # 서로 다른 저장 제스처의 최근접 거리는 0.482였다. 정적과 같은 0.45를
+    # 쓰면 손 펴기/모으기(0.38~0.44)까지 비틀기로 오판하므로 분리한다.
+    DYNAMIC_COLLISION_DIST = 0.35
+    # 회차 간 허용 오차. 정적은 자세 하나의 손끝 가중 거리라 기존 안전 여유를
+    # 유지한다. 동적은 실측 반복 촬영에서 속도·시작 시점 차이만으로도 0.15~0.35가
+    # 나왔으므로 실행 매칭값의 60%(0.132)를 그대로 쓰면 정상 촬영까지 대부분
+    # 거부한다. 세 회차 템플릿을 모두 저장하는 점을 감안해 0.35까지 허용하되,
+    # 모든 회차 쌍을 비교해 한 회차가 실제로 다른 동작인 경우는 계속 거부한다.
+    TAKE_STATIC_DISTANCE = 0.35 * 0.6  # 42차원 kNN의 손끝 가중 L2 단위
+    TAKE_SEQUENCE_DISTANCE = 0.35
 
     def __init__(self, link, template_cache, custom_store):
         self.link = link
@@ -417,6 +513,12 @@ class GestureRegistration:
             return None
         now = time.monotonic() if now is None else now
         hands = self._as_hands(hands)
+        # The registration screen remains a live camera preview during the
+        # 3-2-1 countdown.  Only RECORDING frames become training samples, but
+        # both phases must stream reg_frame events so the UI never freezes on
+        # the last preview image between takes.
+        if self.phase in ("COUNTDOWN", "RECORDING"):
+            self._emit_frame(frame, now)
         elapsed = now - self.phase_at
         if self.phase == "COUNTDOWN":
             if elapsed < self.countdown_s:
@@ -431,7 +533,6 @@ class GestureRegistration:
             # 흔들린 프레임 한 장이 그대로 등록되는 걸 막기 위함. FE에는 여전히
             # 대표 프레임 하나면 충분하지만(BE가 마지막 프레임을 쓴다), 내부 학습
             # 데이터는 이 구간에서 모인 여러 장을 그대로 쓴다.
-            self._emit_frame(frame, now)
             self._collect(hands, now)
             if now - self.phase_at >= self.take_s:
                 if self.take < self.takes:
@@ -511,12 +612,52 @@ class GestureRegistration:
         # 경우가 실측으로 확인됐다(실제 등록 시도 303프레임 중 11프레임만 순간적으로
         # 작게 잡히고 나머지는 정상). 손이 정말 멀리 있으면 대부분의 프레임이
         # 작게 잡혀 이 기준도 넘지 못하지만, 가끔의 순간적 튐은 통과시킨다.
-        if np.percentile(self.sizes, 10) < self.MIN_PALM_SIZE:
+        # Measure the same tracked hand(s) that will be encoded.  The detector's
+        # first result can be a small background/false second hand during a
+        # one-hand swipe and must not poison the size percentile.
+        if hand_count == 1:
+            measured_sizes = [self._hand_quality(observed["landmarks"])[0]
+                              for take in range(1, self.takes + 1)
+                              for _, observed in self._one_hand_take_observations(take)]
+        else:
+            measured_sizes = [self._hand_quality(hand["landmarks"])[0]
+                              for frames in self.take_frames.values()
+                              for _, hands in frames if len(hands) == 2
+                              for hand in hands]
+        # Compatibility for callers/tests that provide precomputed samples
+        # without raw take frames. Normal registration always uses the path above.
+        if not measured_sizes:
+            measured_sizes = list(self.sizes)
+            if hand_count == 2:
+                measured_sizes.extend(self.sizes2)
+        if not measured_sizes or np.percentile(measured_sizes, 10) < self.MIN_PALM_SIZE:
             raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
-        if self.sizes2 and np.percentile(self.sizes2, 10) < self.MIN_PALM_SIZE:
-            raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
+        # 한 손 등록에서 배경 사람의 손이 잠깐 두 번째 손으로 잡혀도 그 작은
+        # 오검출 때문에 주 손 촬영을 거부하지 않는다. 두 번째 손 크기는 최종
+        # 손 개수가 2손으로 판정된 등록에서만 품질 기준에 포함한다.
+        # For a two-hand take measured_sizes already contains both hands.
         # 순간 좌표 튐 대신 회차별 지속 시간/빈도로 화면 이탈을 판정한다.
         self._validate_frame_bounds()
+        # 기도처럼 두 손을 계속 맞댄 정적 자세는 MediaPipe가 어떤 회차는 한 손,
+        # 어떤 회차는 두 손으로 셀 수 있다. 명확한 두 손 회차가 기존 템플릿과
+        # 아주 가깝다면 그 증거로 중복을 확정하고, 아니면 정확한 재촬영 사유를 준다.
+        if self.motion == self.STATIC:
+            partial = self._partial_two_hand_static_collision()
+            if partial is not None:
+                name, score, one_hand_takes, two_hand_takes = partial
+                if name is not None:
+                    raise GestureRegistrationRejected(
+                        f"'{name}'와 너무 유사합니다",
+                        similar_to=name,
+                        similarity=round(float(np.exp(-score)), 4),
+                    )
+                one_text = "·".join(map(str, one_hand_takes))
+                two_text = "·".join(map(str, two_hand_takes))
+                raise ValueError(
+                    f"{one_text}회차는 한 손, {two_text}회차는 두 손으로 감지되어 "
+                    "두 손을 맞댄 자세의 손 개수를 안정적으로 확인하지 못했습니다. "
+                    "손바닥 사이를 조금 벌려 두 손의 윤곽이 모두 보이게 다시 촬영해주세요"
+                )
         # "손모양이 실제로 안정적이었는지"는 1손 정적은 _upload_static의 MAX_SPREAD가,
         # 2손 정적은 _upload_motion의 회차별 spread 검사가 담당한다 — 둘 다 저장에
         # 실제로 쓰이는 정규화된 손모양 전체를 비교하므로, 여기 손목 각도 하나만 보던
@@ -529,9 +670,39 @@ class GestureRegistration:
         else:
             self._upload_motion(hand_count)
 
+    def _partial_two_hand_static_collision(self):
+        """회차별 손 수가 1손/2손으로 완전히 갈린 접촉 자세를 처리한다."""
+        one_hand_takes = []
+        two_hand_takes = []
+        for take in range(1, self.takes + 1):
+            raw = self.take_frames.get(take, [])
+            valid = [(t, ordered_landmarks(hands)) for t, hands in raw]
+            valid = [(t, points) for t, points in valid if points is not None]
+            if valid and all(len(points) == 1 for _, points in valid):
+                one_hand_takes.append(take)
+            elif valid and all(len(points) == 2 for _, points in valid):
+                two_hand_takes.append((take, valid))
+        if not one_hand_takes or not two_hand_takes:
+            return None
+
+        best = (float("inf"), None)
+        for take, frames in two_hand_takes:
+            average = np.mean([points for _, points in frames], axis=0)
+            sequence = encode_sequence([0, 1], [average, average])
+            candidates = self.custom_store.sequence_comparisons(
+                sequence, self.STATIC, 2,
+                world_sequence=self._two_hand_world_sequence(take, static=True))
+            if candidates and candidates[0]["score"] < best[0]:
+                best = (float(candidates[0]["score"]), candidates[0]["name"])
+        # 한 회차 증거만 쓰는 예외 경로이므로 일반 중복 기준(0.45)보다 엄격한
+        # 실제 실행 인식 기준(0.22) 안에서만 기존 제스처라고 확정한다.
+        if best[1] is not None and best[0] < MATCH_DISTANCE:
+            return best[1], best[0], one_hand_takes, [take for take, _ in two_hand_takes]
+        return None, float("inf"), one_hand_takes, [take for take, _ in two_hand_takes]
+
     def _upload_static(self):
         if len(self.samples) < self.MIN_STATIC_SAMPLES:
-            raise ValueError("손 랜드마크가 충분히 수집되지 않았습니다")
+            raise ValueError("손을 충분한 시간 동안 확인하지 못했습니다. 촬영이 끝날 때까지 손을 화면에 유지해주세요")
         poses = []
         aligned_features = []
         reference = np.asarray(self.samples[0])
@@ -557,39 +728,61 @@ class GestureRegistration:
                     extra_hand_seen = True
             if not features:
                 if extra_hand_seen:
-                    raise ValueError(f"{take}회차 촬영 중 손 개수가 달라졌습니다. 모든 회차에서 손 개수를 유지해주세요")
-                raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
-            poses.append(np.mean(features, axis=0))
+                    raise ValueError(f"{take}회차에서 손 개수가 한 손이 아니라 두 손으로 계속 감지되었습니다. 한 손 동작은 다른 손을 화면 밖에 두고 촬영해주세요")
+                raise ValueError(f"{take}회차에서 손을 확인한 시간이 너무 짧습니다. 촬영이 끝날 때까지 손을 보여주세요")
+            pose = np.mean(features, axis=0)
+            self._validate_static_stability(
+                take, [float(weighted_distance(feature - pose)) for feature in features]
+            )
+            poses.append(pose)
             aligned_features.extend(features)
         feats = np.asarray(aligned_features, dtype=np.float32)
+        # 촬영 자체가 일관되지 않으면 한 회차의 우연한 근접값을 중복으로
+        # 확정하지 않는다. 품질 검사를 통과한 뒤 기존 제스처와 비교한다.
+        # 기존/내장 제스처와 겹치지 않는다는 걸 먼저 확인한 뒤에야 회차 간
+        # 일관성을 본다 — 애초에 충돌·중복이라 거부될 동작이면 일관성부터
+        # 맞추라고 헛수고를 시키지 않는다(동적 등록과 같은 원칙).
         ranked_hits = sorted(self.builtin_hits.items(), key=lambda item: (-item[1], item[0]))
+        # When unverified finger poses dominate, naming the smaller classified
+        # subset as a built-in collision is misleading and may show a tiny
+        # geometric similarity. A clear label still wins when it has at least
+        # as much evidence as the uncertain frames.
+        top_builtin_count = ranked_hits[0][1] if ranked_hits else 0
+        if (self.builtin_uncertain >= len(feats) * self.BUILTIN_OVERLAP
+                and self.builtin_uncertain > top_builtin_count):
+            raise ValueError("손가락 모양을 정확히 확인하기 어렵습니다. 손가락이 겹치지 않도록 보여주세요")
         if ranked_hits and ranked_hits[0][1] >= len(feats) * self.BUILTIN_OVERLAP:
             label, count = ranked_hits[0]
             # dict 삽입 순서는 촬영 초반의 오인식을 우선시한다. 최빈 후보를 쓰고
             # 동률이면 특정 동작과 같다고 단정하지 않는다.
             if len(ranked_hits) > 1 and ranked_hits[1][1] == count:
                 raise ValueError("촬영 중 여러 기본 제스처가 비슷한 빈도로 인식되었습니다. 손 모양을 고정해 다시 촬영해주세요")
-            raise GestureRegistrationRejected(
-                f"기본 제스처 '{label}'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
-                similar_to=label,
-                # 손모양 거리 기반 유사도(exp(-거리))와는 척도가 다르지만, 촬영
-                # 프레임 중 그 기본 제스처로 분류된 비율도 "얼마나 비슷했는지"를
-                # 보여주는 값이라 그대로 보낸다.
-                similarity=round(count / len(feats), 4),
-            )
+            # 전체 프레임을 합친 비율만 보면, 회차 하나의 소수 프레임이 나머지
+            # 회차와 무관하게 전체 판정을 뒤집을 수 있다(그 회차가 유난히 프레임이
+            # 많았다면). 커스텀 중복 다수결(_validate_custom_collision_votes)과
+            # 같은 원리로, 이 라벨이 회차 과반수에서도 독자적으로 우세했는지
+            # 추가로 확인한다.
+            if self._builtin_static_takes_agree(label):
+                # 분류 일치율(몇 %가 같은 라벨로 분류됐는지)만 보면, 분류기가 펴짐·
+                # 굽힘 사이에 두는 여유 구간 안에서는 손가락을 살짝 굽혀도 여전히
+                # 같은 라벨로 분류돼 항상 100%로 뜬다. 기준 손모양이 있는 라벨은
+                # 실제 손모양 거리 기반 유사도로 대신한다 — 없으면 분류 일치율로
+                # 되돌아간다.
+                geo_similarity = _builtin_pose_similarity(label, feats)
+                display_name = BUILTIN_GESTURE_DISPLAY_NAMES.get(label, label)
+                raise GestureRegistrationRejected(
+                    f"기본 제스처 '{display_name}'와 너무 비슷합니다. 다른 손 모양으로 등록해주세요",
+                    similar_to=label,
+                    similarity=geo_similarity if geo_similarity is not None else round(count / len(feats), 4),
+                )
         if self.builtin_uncertain >= len(feats) * self.BUILTIN_OVERLAP:
-            raise ValueError("손가락의 굽힘을 명확히 확인하지 못했습니다. 손가락이 겹치지 않도록 손 모양을 보여주세요")
-        near, dist = self.custom_store.nearest_class(feats)
-        print(f"[제스처 중복 검사] tempId={self.temp_id} motion=STATIC nearest={near!r} distance={dist:.4f} threshold={self.COLLISION_DIST}")
-        if near and dist < self.COLLISION_DIST:
-            # 랜드마크 거리는 확률이 아니므로, 화면 표시용으로 단조 감소 점수로
-            # 변환한다. 0은 동일, 거리가 멀수록 0에 가까워진다.
-            similarity = round(float(np.exp(-dist)), 4)
-            raise GestureRegistrationRejected(
-                f"'{near}'와 너무 유사합니다",
-                similar_to=near,
-                similarity=similarity,
-            )
+            raise ValueError("손가락 모양을 정확히 확인하기 어렵습니다. 손가락이 겹치지 않도록 보여주세요")
+        matches = []
+        for take, pose in enumerate(poses, 1):
+            near, dist = self.custom_store.nearest_class(np.asarray([pose], dtype=np.float32))
+            matches.append((dist, near))
+            print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion=STATIC "
+                  f"nearest={near!r} distance={dist:.4f} threshold={self.COLLISION_DIST}")
         # 위 nearest_class는 1손 정적(legacy) 저장소만 본다 — 같은 손모양을 동적으로
         # 등록해뒀으면 못 잡는다(정적/동적은 완전히 분리된 저장소·특징 표현이라).
         # 회전 정규화 없는(legacy와 다른) 대표 자세를 새로 만들어 self.data의
@@ -600,31 +793,45 @@ class GestureRegistration:
                    if p is not None and len(p) == 1]
             if raw:
                 raw_per_take.append(np.mean(raw, axis=0))
-        if raw_per_take:
-            cross_pose = encode_sequence([0, 1], [np.mean(raw_per_take, axis=0)] * 2)
+        for index, raw_pose in enumerate(raw_per_take):
+            cross_pose = encode_sequence([0, 1], [raw_pose] * 2)
             cross_candidates = self.custom_store.cross_boundary_matches(cross_pose, self.STATIC, 1)
-            if cross_candidates:
-                cross_dist, cross_name = cross_candidates[0]
-                print(f"[제스처 중복 검사(경계)] tempId={self.temp_id} motion=STATIC nearest={cross_name!r} "
-                      f"distance={cross_dist:.4f} threshold={self.COLLISION_DIST}")
-                if cross_dist < self.COLLISION_DIST:
-                    similarity = round(float(np.exp(-cross_dist)), 4)
-                    raise GestureRegistrationRejected(
-                        f"'{cross_name}'와 너무 유사합니다",
-                        similar_to=cross_name,
-                        similarity=similarity,
-                    )
-        # 기존/내장 제스처와 겹치지 않는다는 걸 먼저 확인한 뒤에야 회차 간
-        # 일관성·표본 분산을 본다 — 애초에 중복이라 거부될 동작이면 일관성부터
-        # 맞추라고 헛수고를 시키지 않는다.
+            if cross_candidates and cross_candidates[0][0] < matches[index][0]:
+                matches[index] = cross_candidates[0]
+        self._validate_custom_collision_votes(matches)
+        # 충돌·중복이 아니라는 게 확인된 뒤에야 회차 간 일관성을 본다.
         self._validate_take_consistency(
             poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE
         )
-        spread = float(weighted_distance(feats - feats.mean(axis=0)).mean())
-        if spread > self.MAX_SPREAD:
-            raise ValueError("샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요")
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
+
+    def _builtin_static_takes_agree(self, label):
+        """label이 회차 과반수에서도 독자적으로 우세했는지 확인한다.
+
+        전체 프레임을 합친 비율만 보면, 한 회차의 소수 프레임이 나머지
+        회차와 무관하게 전체 판정을 뒤집을 수 있다 — 다른 두 회차가 전혀
+        다른 손모양이었어도, 그 회차가 프레임을 더 많이 만들었다면 그
+        회차만으로 "내장 제스처와 충돌"이라고 오판할 수 있다. 커스텀 중복
+        다수결과 같은 원리를 내장 정적 충돌 판정에도 적용한다.
+        """
+        votes = 0
+        for take in range(1, self.takes + 1):
+            hits = {}
+            total = 0
+            for _, hands in self.take_frames.get(take, []):
+                if len(hands) != 1:
+                    continue
+                total += 1
+                frame_label = hands[0].get("gesture")
+                if frame_label and frame_label != "None":
+                    hits[frame_label] = hits.get(frame_label, 0) + 1
+            if not total:
+                continue
+            ranked = sorted(hits.items(), key=lambda item: (-item[1], item[0]))
+            if ranked and ranked[0][0] == label and ranked[0][1] >= total * self.BUILTIN_OVERLAP:
+                votes += 1
+        return votes >= max(1, self.takes // 2 + 1)
 
     # 동적 등록이 겹쳐선 안 되는 내장 동적 감지기 목록 — (표시 이름, 실행 때와 같은
     # 설정으로 새 인스턴스를 만드는 함수, 손 하나(dict)에서 그 감지기가 원하는
@@ -638,8 +845,17 @@ class GestureRegistration:
         ("스와이프", lambda: SwipeDetector(**SCREEN_SWIPE_CONFIG),
          lambda h: h["landmarks"][9]),
     )
+    # 거부 문구에 방향까지 보여준다 — similar_to(BE 이벤트 이름)는 이미
+    # 방향별로 구분돼 나가고 있었는데, 사용자에게 보이는 문구만 "스와이프"
+    # 통칭이라 어느 방향과 겹쳤는지 알 수 없었다.
+    SWIPE_DIRECTION_LABELS = {
+        "Swipe_Left": "왼쪽 스와이프",
+        "Swipe_Right": "오른쪽 스와이프",
+        "Swipe_Up": "위쪽 스와이프",
+        "Swipe_Down": "아래쪽 스와이프",
+    }
 
-    def _builtin_dynamic_collision(self):
+    def _builtin_dynamic_collision(self, hand_count=None, take_directions=None):
         """동적 등록이 내장 동적 감지기와 겹치는지, 실제 감지기로 그대로 재생해 확인한다.
 
         실행 때와 같은 감지기·같은 설정을 써서 "이 촬영이 실제로 라이브였다면
@@ -672,12 +888,21 @@ class GestureRegistration:
         기준 거리로 나눈 근사값이다(손 크기 보정 포함, 1.0 초과는 자름) — 커스텀
         중복 유사도(exp(-거리), 항상 0~1)와 척도·의미가 다른 근사치임을 참고할 것.
         """
+        hand_count = self._infer_hand_count() if hand_count is None else hand_count
         for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
             for take in range(1, self.takes + 1):
                 detectors = {}
                 histories = {}  # side -> [(t, x, y)] 손 크기 보정된 좌표, 유사도 근사용
                 separations = []  # (t, 두 손 사이 거리) — 2손 프레임에서만 채워진다
-                for t, hands in self.take_frames.get(take, []):
+                if hand_count == 1:
+                    # 배경 사람의 손이 순간적으로 함께 잡혀도 내장 스와이프로
+                    # 재생하지 않는다. 등록 템플릿에 실제로 쓰는 주 손 궤적과
+                    # 같은 것을 사용해야 품질 검사와 충돌 검사의 대상이 일치한다.
+                    source = [(t, [observed]) for t, observed
+                              in self._one_hand_take_observations(take)]
+                else:
+                    source = self.take_frames.get(take, [])
+                for t, hands in source:
                     if len(hands) == 2:
                         p0, p1 = hands[0]["landmarks"][9], hands[1]["landmarks"][9]
                         separations.append((t, float(np.hypot(p0[0] - p1[0], p0[1] - p1[1]))))
@@ -695,6 +920,17 @@ class GestureRegistration:
                         if event and self._hands_were_converging(separations, t):
                             print(f"[제스처 스와이프 제외] tempId={self.temp_id} take={take} hand={side} "
                                   f"direction={event} (두 손이 서로 다가가는 중이라 충돌로 안 셈)")
+                            event = None
+                        take_direction = (take_directions[take - 1]
+                                          if take_directions and take <= len(take_directions)
+                                          else None)
+                        if (event in ("Swipe_Left", "Swipe_Right")
+                                and take_direction in {
+                                    "UP", "UP_RIGHT", "DOWN_RIGHT", "DOWN",
+                                    "DOWN_LEFT", "UP_LEFT",
+                                }):
+                            print(f"[gesture diagonal bypass] tempId={self.temp_id} take={take} "
+                                  f"builtin={event} direction={take_direction}")
                             event = None
                         if event:
                             start = self.take_frames[take][0][0]
@@ -748,10 +984,117 @@ class GestureRegistration:
         if np.isfinite(distances).all() and np.any(np.max(distances, axis=1) <= threshold):
             return
         i, j = np.unravel_index(np.argmax(distances), distances.shape)
+        if self.motion == self.STATIC:
+            raise ValueError(
+                f"{i+1}회차와 {j+1}회차의 손가락 모양이 서로 다릅니다. "
+                "모든 회차에서 같은 손 모양을 유지해주세요"
+            )
         raise ValueError(
-            f"{i+1}회차와 {j+1}회차의 손모양 또는 동작이 서로 다릅니다. "
-            "모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+            f"{i+1}회차와 {j+1}회차의 움직임 차이가 큽니다. "
+            "같은 손 모양으로 같은 방향의 동작을 반복해주세요"
         )
+
+    def _validate_motion_directions(self, sequences):
+        """세 촬영의 끝점 이동이 같은 45도 방향 구간인지 확인한다."""
+        labels = {
+            "RIGHT": "오른쪽", "DOWN_RIGHT": "오른쪽 아래", "DOWN": "아래쪽",
+            "DOWN_LEFT": "왼쪽 아래", "LEFT": "왼쪽", "UP_LEFT": "왼쪽 위",
+            "UP": "위쪽", "UP_RIGHT": "오른쪽 위",
+        }
+        hand_count = self._infer_hand_count()
+        directions = [motion_direction_8(sequence, hand_count) for sequence in sequences]
+        for i in range(len(sequences)):
+            for j in range(i + 1, len(sequences)):
+                if directions[i] is not None and directions[j] is not None:
+                    print(f"[제스처 회차 방향] tempId={self.temp_id} takes={i+1},{j+1} "
+                          f"directions={directions[i]},{directions[j]}")
+                    if directions[i] != directions[j]:
+                        raise ValueError(
+                            f"{i+1}회차는 {labels[directions[i]]}, {j+1}회차는 "
+                            f"{labels[directions[j]]} 방향으로 움직였습니다. "
+                            "세 번 모두 같은 방향으로 움직여주세요"
+                        )
+                    continue
+                first = (sequences[i][-1] - sequences[i][0]).ravel()
+                second = (sequences[j][-1] - sequences[j][0]).ravel()
+                first_norm, second_norm = np.linalg.norm(first), np.linalg.norm(second)
+                # 원형 동작처럼 시작과 끝이 가까우면 끝점 방향 자체가 의미 없으므로
+                # 기존 전체 궤적 거리만 사용한다.
+                if first_norm < 0.1 or second_norm < 0.1:
+                    continue
+                cosine = float(np.dot(first, second) / (first_norm * second_norm))
+                print(f"[제스처 회차 방향] tempId={self.temp_id} takes={i+1},{j+1} "
+                      f"cosine={cosine:.4f}")
+                if cosine < 0:
+                    raise ValueError(
+                        f"{i+1}회차와 {j+1}회차의 동작 방향이 반대입니다. "
+                        "모든 회차에서 같은 방향으로 움직여주세요"
+                    )
+
+    @staticmethod
+    def _dynamic_take_distance(a, b, hand_count):
+        """Scale-normalized distance used only for repeat-take consistency.
+
+        A large swipe spans several palm lengths, so a small timing difference
+        creates a large absolute landmark error even when direction and path
+        are the same.  Duplicate/runtime matching keeps its strict absolute
+        distance; only the three attempts' consistency score is normalized by
+        their own movement magnitude.
+        """
+        raw = motion_matching_distance(a, b, hand_count)
+        still_a = np.repeat(a[:1], len(a), axis=0)
+        still_b = np.repeat(b[:1], len(b), axis=0)
+        magnitude = (distance(a, still_a, hand_count)
+                     + distance(b, still_b, hand_count)) / 2
+        return raw / max(1.0, magnitude)
+
+    def _validate_static_stability(self, take, spreads):
+        """자연스러운 떨림은 허용하고 지속적인 손가락 모양 변화만 거부한다."""
+        values = np.asarray(spreads, dtype=float)
+        if not len(values) or not np.isfinite(values).all():
+            raise ValueError(f"{take}회차에서 손 모양을 안정적으로 확인하지 못했습니다. 다시 촬영해주세요")
+        percentile = float(np.percentile(values, self.STATIC_SPREAD_PERCENTILE))
+        exceed_ratio = float(np.mean(values > self.MAX_SPREAD))
+        print(f"[제스처 정적 안정성] tempId={self.temp_id} take={take} "
+              f"p{self.STATIC_SPREAD_PERCENTILE}={percentile:.4f} "
+              f"overRatio={exceed_ratio:.3f} threshold={self.MAX_SPREAD}")
+        # 한두 프레임의 좌표 튐이나 전체 프레임의 20% 미만인 순간 흔들림은
+        # 허용한다. 대표 자세에서 크게 벗어난 상태가 지속될 때만 거부한다.
+        if (percentile > self.MAX_SPREAD
+                and exceed_ratio + 1e-9 >= self.STATIC_SPREAD_MAX_RATIO):
+            raise ValueError(
+                f"{take}회차 촬영 중 손 모양이 많이 바뀌었습니다. "
+                "손 전체가 조금 움직이는 것은 괜찮지만 손가락 모양은 유지해주세요"
+            )
+
+    def _validate_custom_collision_votes(self, matches, threshold=None):
+        """같은 기존 제스처와 과반수 회차가 겹칠 때만 중복으로 확정한다."""
+        threshold = self.COLLISION_DIST if threshold is None else threshold
+        required = max(1, len(matches) // 2 + 1)
+        hits = {}
+        for score, name in matches:
+            if name and np.isfinite(score) and score < threshold:
+                hits.setdefault(name, []).append(float(score))
+        repeated = [(len(scores), float(np.mean(scores)), name)
+                    for name, scores in hits.items() if len(scores) >= required]
+        if repeated:
+            count, mean_dist, name = min(repeated, key=lambda item: (-item[0], item[1], item[2]))
+            print(f"[제스처 중복 확정] tempId={self.temp_id} name={name!r} "
+                  f"votes={count}/{len(matches)} meanDistance={mean_dist:.4f} "
+                  f"threshold={threshold}")
+            raise GestureRegistrationRejected(
+                f"'{name}'와 너무 유사합니다",
+                similar_to=name,
+                similarity=round(float(np.exp(-mean_dist)), 4),
+            )
+        if hits:
+            detail = ", ".join(f"{name}:{len(scores)}/{len(matches)}" for name, scores in sorted(hits.items()))
+            print(f"[제스처 중복 불확실] tempId={self.temp_id} hits={detail} "
+                  f"threshold={threshold}")
+            raise ValueError(
+                "3회 중 일부 촬영만 기존 제스처와 비슷해 정확히 판단하기 어렵습니다. "
+                "세 번 모두 같은 손 모양과 동작으로 다시 촬영해주세요"
+            )
 
     def _two_hand_take_frames(self, take):
         """이 회차를 두 손 프레임 기준으로 정리한다.
@@ -779,9 +1122,77 @@ class GestureRegistration:
         valid = [frames[i] for i in two_idxs]
         inner = frames[two_idxs[0]:two_idxs[-1] + 1]
         gaps = [b - a for (a, _), (b, _) in zip(valid, valid[1:])]
-        ok = not (len(valid) < len(inner) * 0.8
+        enough_two_hand_evidence = len(valid) >= max(2, int(np.ceil(len(frames) * 0.2)))
+        ok = enough_two_hand_evidence and not (len(valid) < len(inner) * 0.8
                   or (len(valid) < len(inner) and max(gaps, default=0) >= TRACKING_GRACE_S))
         return ok, valid
+
+    def _two_hand_world_sequence(self, take, static=False):
+        """Build optional 3D data for a two-hand take.
+
+        Missing world landmarks never affect one-hand or dynamic registration.
+        For a new two-hand static template, however, most accepted frames must
+        carry valid world landmarks or the pose would silently fall back to the
+        ambiguous 2D representation that confuses prayer with a roof.
+        """
+        raw = self.take_frames.get(take, [])
+        frames = [(t, ordered_world_landmarks(hands)) for t, hands in raw]
+        valid = [(t, points) for t, points in frames if points is not None]
+        if not valid or len(valid) < max(2, int(np.ceil(len(raw) * 0.7))):
+            return None
+        if static:
+            average = np.mean([points for _, points in valid], axis=0)
+            return encode_world_sequence([0, 1], [average, average])
+        return encode_world_sequence([t for t, _ in valid], [p for _, p in valid])
+
+    def _one_hand_take_observations(self, take):
+        """1손 촬영에서 순간적인 두 번째 손 오검출을 제거해 주 손만 반환한다.
+
+        한 손만 잡힌 프레임들에서 가장 자주 나온 handedness를 주 손으로 정한다.
+        두 손이 잡힌 프레임에서는 같은 handedness를 우선 선택하고, 라벨까지
+        흔들렸으면 직전 주 손의 손목 위치와 가장 가까운 후보로 추적을 잇는다.
+        """
+        raw = self.take_frames.get(take, [])
+        singleton_sides = []
+        for _, hands in raw:
+            if len(hands) == 1 and ordered_landmarks(hands) is not None:
+                singleton_sides.append(hands[0].get("handedness") or "Unknown")
+        preferred = (max(set(singleton_sides), key=singleton_sides.count)
+                     if singleton_sides else None)
+        extra = sum(len(hands) > 1 for _, hands in raw)
+        if raw and extra / len(raw) >= self.ONE_HAND_EXTRA_MAX_RATIO:
+            raise ValueError(
+                f"{take}회차에서 손 개수가 한 손이 아니라 두 손으로 계속 감지되었습니다. "
+                "한 손 동작은 다른 손을 화면 밖에 두고 다시 촬영해주세요"
+            )
+
+        observations = []
+        previous = None
+        for timestamp, hands in raw:
+            candidates = []
+            for observed in hands:
+                points = ordered_landmarks([observed])
+                if points is not None:
+                    candidates.append((observed, points[0]))
+            if not candidates:
+                continue
+            same_side = [item for item in candidates
+                         if (item[0].get("handedness") or "Unknown") == preferred]
+            pool = same_side or candidates
+            if previous is None:
+                # 첫 프레임부터 오검출이 섞였으면 더 크게 잡힌 손을 실제 손으로 본다.
+                chosen_observed, chosen_points = max(
+                    pool, key=lambda item: self._hand_quality(item[1])[0])
+            else:
+                chosen_observed, chosen_points = min(
+                    pool, key=lambda item: float(np.linalg.norm(item[1][0] - previous[0])))
+            previous = chosen_points
+            observations.append((timestamp, chosen_observed))
+        return observations
+
+    def _one_hand_take_frames(self, take):
+        return [(timestamp, np.asarray(observed["landmarks"], dtype=np.float32)[None, ...])
+                for timestamp, observed in self._one_hand_take_observations(take)]
 
     def _infer_hand_count(self):
         """이번 등록이 한 손/두 손 촬영인지 판정한다.
@@ -829,6 +1240,8 @@ class GestureRegistration:
         만든 뒤, 인식 때와 똑같은 형태(그 자세를 2점으로 복제)로 저장한다.
         """
         sequences = []
+        world_sequences = []
+        world_valid = []
         durations = []
         for take in range(1, self.takes + 1):
             raw = self.take_frames.get(take, [])
@@ -839,13 +1252,15 @@ class GestureRegistration:
                     raise ValueError(f"{take}회차에서 두 손을 확인하지 못했습니다. 손 개수를 유지하고 두 손을 보여주세요")
                 if not ok:
                     raise ValueError(
-                        f"{take}회차에서 두 손을 오래 놓쳤습니다. 손을 맞댄 채로 시작·종료하는 건 "
-                        "괜찮지만, 두 손이 벌어져 있는 동안은 계속 두 손을 보여주세요"
+                        f"{take}회차에서 두 손 중 한 손을 일정 시간 확인하지 못했습니다. "
+                        "손을 맞댄 채로 시작하거나 끝내는 것은 괜찮지만, 동작 중에는 두 손이 모두 보이게 해주세요"
                     )
                 frames = valid
+            elif hand_count == 1:
+                frames = self._one_hand_take_frames(take)
             frames = [(t, pts) for t, pts in frames if pts is not None]
             if len(frames) < 2:
-                raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+                raise ValueError(f"{take}회차에서 손을 확인한 시간이 너무 짧습니다. 촬영이 끝날 때까지 손을 보여주세요")
             # 손을 놓친 구간이 촬영 맨 앞이나 끝에 걸리면, 놓친 프레임이 그냥
             # 통째로 사라져 위 길이·아래 중간 공백 검사 어디에도 안 걸린다 —
             # 동작의 앞부분(또는 뒷부분)이 잘려나간 채로 조용히 넘어가, 다른
@@ -863,7 +1278,7 @@ class GestureRegistration:
             # 평균의 의미가 없다 — encode_sequence가 요구하는 수학적 최소(2)와는 별개로,
             # 노이즈를 실제로 줄이려면 이만큼은 있어야 한다.
             if self.motion == self.STATIC and len(frames) < self.MIN_STATIC_MOTION_FRAMES:
-                raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+                raise ValueError(f"{take}회차에서 손을 확인한 시간이 너무 짧습니다. 촬영이 끝날 때까지 손을 보여주세요")
             # ordered_landmarks는 프레임별로 유효하면 통과시키므로(1손·2손 각각
             # 정상 모양), 회차 중간에 손 개수가 바뀌어도(가려짐 등) 여기까진
             # 안 걸러진다 — 그대로 두면 다음 encode_sequence가 raw numpy 오류로
@@ -885,12 +1300,10 @@ class GestureRegistration:
                 # 벗어났는지를 본다 — 1손 정적의 MAX_SPREAD와 같은 기준·같은 개념.
                 # 손 전체가 살짝 돌아간 것(저장 시 지워짐)은 안 걸리고, 손가락이
                 # 실제로 흔들린 경우만 잡힌다.
-                spread = max(
+                self._validate_static_stability(take, [
                     distance(encode_sequence([0, 1], [pts, pts]), seq, hand_count)
                     for _, pts in frames
-                )
-                if spread > self.MAX_SPREAD:
-                    raise ValueError(f"{take}회차 촬영 중 손모양이 흔들렸습니다. 자세를 고정해 다시 촬영하세요")
+                ])
             else:
                 original_start, original_end = frames[0][0], frames[-1][0]
                 frames = trim_motion_frames(frames)
@@ -898,13 +1311,28 @@ class GestureRegistration:
                 seq = encode_sequence([t for t, _ in frames], [pts for _, pts in frames])
                 movement = distance(seq, np.repeat(seq[:1], FRAMES, axis=0), hand_count)
                 if movement < PREFIX_MIN_MOTION:
-                    raise ValueError(f"{take}회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요")
+                    raise ValueError(f"{take}회차의 움직임이 너무 작아 동적 제스처로 구분하기 어렵습니다. 동작을 조금 더 크게 해주세요")
             sequences.append(seq)
+            if self.motion == self.STATIC and hand_count == 2:
+                world_seq = self._two_hand_world_sequence(take, static=True)
+                world_valid.append(world_seq is not None)
+                world_sequences.append(
+                    world_seq if world_seq is not None
+                    else np.zeros((FRAMES, 2, 21, 3), np.float32))
+            else:
+                world_valid.append(False)
+                world_sequences.append(np.zeros((FRAMES, 2, 21, 3), np.float32))
             durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
-        compare = motion_matching_distance if self.motion == self.DYNAMIC else matching_distance
+        take_directions = ([motion_direction_8(sequence, hand_count) for sequence in sequences]
+                           if self.motion == self.DYNAMIC else None)
+        compare = (lambda a, b, count: self._dynamic_take_distance(a, b, count)
+                   if self.motion == self.DYNAMIC else matching_distance(a, b, count))
         matches = []
         for take, seq in enumerate(sequences, 1):
-            candidates = self.custom_store.sequence_comparisons(seq, self.motion, hand_count)
+            world_seq = (world_sequences[take - 1]
+                         if world_valid[take - 1] else None)
+            candidates = self.custom_store.sequence_comparisons(
+                seq, self.motion, hand_count, world_sequence=world_seq)
             score, name = ((candidates[0]['score'], candidates[0]['name']) if candidates
                            else (float('inf'), None))
             self.comparison_diagnostics.append(dict(take=take, candidates=candidates))
@@ -922,7 +1350,9 @@ class GestureRegistration:
                 if legacy_name and legacy_dist < score:
                     score, name = legacy_dist, legacy_name
             matches.append((score, name))
-            print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion={self.motion} hands={hand_count} nearest={name!r} distance={score:.4f} threshold={self.COLLISION_DIST}")
+            collision_threshold = (self.DYNAMIC_COLLISION_DIST
+                                   if self.motion == self.DYNAMIC else self.COLLISION_DIST)
+            print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion={self.motion} hands={hand_count} nearest={name!r} distance={score:.4f} threshold={collision_threshold}")
         # 내장 동적 감지기(스와이프 등)는 NPZ 템플릿이 아니라 별도 상태기계라
         # nearest_sequence 충돌검사 대상에 없다. 그대로 두면 내장 동작과 똑같이
         # 움직이는 동작을 커스텀으로 등록해도 경고 없이 통과하는데, 실행 시에는
@@ -931,31 +1361,32 @@ class GestureRegistration:
         # 검사 대상이다 — 한 손만의 움직임이 내장과 겹쳐도, 실행 중 2손 인식이
         # 그 프레임만 실패하면 그 손 하나만으로 내장 동작이 새어나갈 수 있다.
         if self.motion == self.DYNAMIC:
-            collided, collided_event, collided_similarity = self._builtin_dynamic_collision()
+            collided, collided_event, collided_similarity = self._builtin_dynamic_collision(
+                hand_count, take_directions)
             if collided:
                 # similar_to는 표시용 통칭("스와이프")이 아니라 구체적인 이벤트
                 # 이름("Swipe_Left" 등, BE 기본 제스처 이름과 일치)을 보낸다 —
                 # FE가 그 이름으로 실제 제스처를 찾아 보여줄 수 있게 한다.
+                # 문구(reason)도 통칭 대신 방향까지 보여준다 — 매핑에 없는
+                # 이벤트(향후 다른 내장 동적 감지기)는 통칭으로 되돌아간다.
                 # similarity는 실제 감지기가 보는 발동 여부/거리와는 다른, 발동
                 # 직전 이동거리 ÷ 발동 기준 거리의 근사값이다(_builtin_dynamic_collision
                 # 참고) — 커스텀 중복 유사도와 척도가 다를 수 있다.
+                display_name = self.SWIPE_DIRECTION_LABELS.get(collided_event, collided)
                 raise GestureRegistrationRejected(
-                    f"'{collided}'와 너무 유사합니다", similar_to=collided_event,
+                    f"'{display_name}'와 너무 유사합니다", similar_to=collided_event,
                     similarity=collided_similarity,
                 )
-        dist, near = min(matches, key=lambda item: item[0])
-        if near and dist < self.COLLISION_DIST:
-            similarity = round(float(np.exp(-dist)), 4)
-            raise GestureRegistrationRejected(
-                f"'{near}'와 너무 유사합니다",
-                similar_to=near,
-                similarity=similarity,
-            )
-        # 기존/내장 제스처와 겹치지 않는다는 걸 먼저 확인한 뒤에야 회차 간
-        # 일관성을 본다 — 애초에 중복이라 거부될 동작이면 일관성부터 맞추라고
-        # 헛수고를 시키지 않는다. 위 두 검사 모두 회차 전체를 이미 다 보므로
-        # (내장 충돌은 모든 회차를 순회, 중복검사는 회차별로 비교) 순서를
-        # 바꿔도 검사 자체의 정확도는 그대로다.
+        self._validate_custom_collision_votes(
+            matches,
+            self.DYNAMIC_COLLISION_DIST if self.motion == self.DYNAMIC else self.COLLISION_DIST,
+        )
+        if self.motion == self.DYNAMIC:
+            self._validate_motion_directions(sequences)
+        # 충돌·중복이 아니라는 게 확인된 뒤에야 회차 간 일관성(모양·방향)을
+        # 본다 — 애초에 거부될 동작이면 일관성부터 맞추라고 헛수고를 시키지
+        # 않는다. 위 두 검사(내장 충돌은 모든 회차를 순회, 중복검사는 회차별로
+        # 비교) 모두 회차 전체를 이미 다 보므로 순서를 바꿔도 정확도는 그대로다.
         self._validate_take_consistency(
             sequences, lambda a, b: compare(a, b, hand_count), self.TAKE_SEQUENCE_DISTANCE
         )
@@ -965,5 +1396,7 @@ class GestureRegistration:
             motions=np.array([self.motion] * len(sequences)),
             hand_counts=np.array([hand_count] * len(sequences), dtype=np.int32),
             durations=np.array(durations, dtype=np.float32),
+            world_sequences=np.stack(world_sequences),
+            world_valid=np.array(world_valid, dtype=bool),
         )
         self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))

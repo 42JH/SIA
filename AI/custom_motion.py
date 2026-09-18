@@ -19,6 +19,11 @@ FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
 PREFIX_DISTANCE = 0.16
 PREFIX_MIN_MOTION = 0.08
+DIRECTION_MIN_MOTION = 0.10
+DIRECTION_NAMES_8 = (
+    "RIGHT", "DOWN_RIGHT", "DOWN", "DOWN_LEFT",
+    "LEFT", "UP_LEFT", "UP", "UP_RIGHT",
+)
 # 정적/동적 경계를 넘는 중복 검사(cross_boundary_matches, cross_legacy_matches)의
 # 대상 폭. PREFIX_MIN_MOTION은 "동적으로 인정되려면 최소 이만큼은 움직여야 한다"는
 # 등록 게이트라, 통과한 동적 시퀀스는 전부 이 값 이상 움직인다. 그중에서도 이
@@ -38,13 +43,30 @@ TRACKING_GRACE_S = 0.15
 # 보수적인 값이다. 걸리면 보정을 건너뛰고 기존 동작(회전 미보정)으로 되돌아간다.
 ROTATION_REF_MIN = 0.35
 EXTRA_KEYS = ("sequences", "sequence_names", "motions", "hand_counts", "durations")
+WORLD_KEYS = ("world_sequences", "world_valid")
+# Put the view-invariant 3D error on the existing collision-score scale.  In
+# captured three-take data the same two-hand pose stays below 0.10 raw error;
+# opposing versus parallel palms are around 0.43, which must remain outside
+# the registration collision threshold (0.45).
+WORLD_DISTANCE_SCALE = 1.5
 
 
 def empty_templates():
     return dict(X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
                 sequences=np.empty((0, FRAMES, 2, 21, 2), np.float32),
                 sequence_names=np.array([], dtype="U1"), motions=np.array([], dtype="U7"),
-                hand_counts=np.array([], dtype=np.int32), durations=np.array([], dtype=np.float32))
+                hand_counts=np.array([], dtype=np.int32), durations=np.array([], dtype=np.float32),
+                world_sequences=np.empty((0, FRAMES, 2, 21, 3), np.float32),
+                world_valid=np.array([], dtype=bool))
+
+
+def _ordered_hands(hands):
+    """Return the same stable hand order used by both 2D and world landmarks."""
+    if len(hands) != 2:
+        return list(hands)
+    if {h.get("handedness") for h in hands} == {"Left", "Right"}:
+        return sorted(hands, key=lambda h: h["handedness"])
+    return sorted(hands, key=lambda h: h["landmarks"][0][0])
 
 
 def hand_identity(hands):
@@ -78,6 +100,19 @@ def ordered_landmarks(hands):
     if points.shape != (len(hands), 21, 2) or not np.isfinite(points).all():
         return None
     if np.any(np.linalg.norm(points[:, 9] - points[:, 0], axis=-1) < 0.055):
+        return None
+    return points
+
+
+def ordered_world_landmarks(hands):
+    """World landmarks in exactly the same hand order as ordered_landmarks."""
+    if len(hands) != 2:
+        return None
+    hands = _ordered_hands(hands)
+    points = np.asarray([h.get("world_landmarks") for h in hands], dtype=np.float32)
+    if points.shape != (2, 21, 3) or not np.isfinite(points).all():
+        return None
+    if np.any(np.linalg.norm(points[:, 9] - points[:, 0], axis=-1) < 1e-5):
         return None
     return points
 
@@ -132,6 +167,49 @@ def encode_sequence(times, points):
     return result
 
 
+def encode_world_sequence(times, points):
+    """Encode two-hand 3D shape without using invalid inter-hand world origins.
+
+    MediaPipe world coordinates have a separate origin for each hand.  Each
+    wrist is therefore centred independently; one shared scale keeps the two
+    hand shapes comparable while their relative palm orientation is retained.
+    """
+    times, points = np.asarray(times), np.asarray(points, dtype=np.float32)
+    if points.ndim != 4 or points.shape[1:] != (2, 21, 3) or len(times) < 2:
+        raise ValueError("invalid two-hand world landmark sequence")
+    centred = points - points[:, :, :1]
+    scale = np.linalg.norm(centred[0, :, 9], axis=-1).mean()
+    centred /= max(float(scale), 1e-6)
+    flat = centred.reshape(len(times), -1)
+    grid = np.linspace(times[0], times[-1], FRAMES)
+    sampled = np.stack([np.interp(grid, times, col) for col in flat.T], axis=-1)
+    return sampled.reshape(FRAMES, 2, 21, 3).astype(np.float32)
+
+
+def world_matching_distance(a, b):
+    """View-invariant two-hand 3D pose distance using one shared rotation.
+
+    A single Kabsch rotation is fitted to both hands together.  It removes a
+    changed camera view but cannot rotate each palm independently, so prayer
+    (opposing palms) remains distinct from a roof (roughly parallel palms).
+    """
+    values = []
+    weights = np.tile(np.asarray(LANDMARK_WEIGHTS, dtype=np.float32), 2)
+    weights /= weights.sum()
+    for current, reference in zip(a, b):
+        x = current.reshape(-1, 3)
+        y = reference.reshape(-1, 3)
+        covariance = (x * weights[:, None]).T @ y
+        u, _, vt = np.linalg.svd(covariance)
+        rotation = u @ vt
+        if np.linalg.det(rotation) < 0:
+            u[:, -1] *= -1
+            rotation = u @ vt
+        error = (x @ rotation) - y
+        values.append(np.sum(weights * np.sum(error * error, axis=-1)))
+    return float(np.sqrt(np.mean(values)))
+
+
 def distance(a, b, count):
     """RMS 랜드마크 오차. 손끝(hands.LANDMARK_WEIGHTS)에 가중치를 둬 "구간 전체는
     비슷한데 손끝 모양만 다른" 오인식을 줄인다. 가중치 평균이 1일 때는 기존
@@ -176,6 +254,21 @@ def motion_features(sequence, count):
                 separation=separation - separation[0])
 
 
+def motion_direction_8(sequence, count, min_motion=DIRECTION_MIN_MOTION):
+    """Classify end-to-end wrist movement into one of eight screen sectors."""
+    points = np.asarray(sequence, dtype=np.float32)
+    if points.ndim != 4 or count not in (1, 2):
+        return None
+    start = points[0, :count, 0].mean(axis=0)
+    end = points[-1, :count, 0].mean(axis=0)
+    delta = end - start
+    if float(np.linalg.norm(delta)) < min_motion:
+        return None
+    angle = float(np.arctan2(delta[1], delta[0]))
+    sector = int(np.floor((angle + np.pi / 8) / (np.pi / 4))) % 8
+    return DIRECTION_NAMES_8[sector]
+
+
 def motion_comparison(a, b, count):
     """동적 중복/실행/후보 검사 공통 점수. 한 특징 차이가 평균에 묻히지 않게 한다.
 
@@ -183,6 +276,15 @@ def motion_comparison(a, b, count):
     회전 변화는 라디안 단위이며 최댓값으로 판정한다. 확률이 아니다.
     한 손 반전은 모든 특징에 동일하게 적용하고 양손 역할은 바꾸지 않는다.
     """
+    direction_a = motion_direction_8(a, count)
+    direction_b = motion_direction_8(b, count)
+    if direction_a is not None and direction_b is not None and direction_a != direction_b:
+        return dict(
+            landmark=float('inf'), shape=float('inf'), rotation=float('inf'),
+            wrist=float('inf'), separation=float('inf'), score=float('inf'),
+            mirrored=False, direction=direction_a,
+            reference_direction=direction_b, direction_match=False,
+        )
     fa = motion_features(a, count)
     def rms(v):
         return float(np.max(np.sqrt(np.mean(v ** 2, axis=0))))
@@ -197,7 +299,9 @@ def motion_comparison(a, b, count):
         parts = dict(landmark=distance(a, candidate, count), shape=shape,
                      rotation=rms(angle), wrist=rms(wrist),
                      separation=rms(fa['separation'] - fb['separation']))
-        return dict(**parts, score=max(parts.values()), mirrored=mirrored)
+        return dict(**parts, score=max(parts.values()), mirrored=mirrored,
+                    direction=direction_a, reference_direction=direction_b,
+                    direction_match=True)
     result = compare(b, False)
     if count == 1:
         mirrored = np.array(b, copy=True)
@@ -227,7 +331,7 @@ def static_execution_allowed(active, registering, claimed, custom_pose, name):
 def read_templates(payload, name=None):
     result = empty_templates()
     with np.load(io.BytesIO(payload), allow_pickle=False) as data:
-        if "schema_version" in data and int(data["schema_version"]) != 2:
+        if "schema_version" in data and int(data["schema_version"]) not in (2, 3):
             raise ValueError("지원하지 않는 제스처 템플릿 버전입니다")
         for key in result:
             if key in data:
@@ -242,6 +346,11 @@ def read_templates(payload, name=None):
     for key in EXTRA_KEYS[1:]:
         if result[key].shape != (len(seq),):
             raise ValueError("동작 메타데이터 수가 일치하지 않습니다")
+    if result["world_sequences"].shape != (len(seq), FRAMES, 2, 21, 3):
+        result["world_sequences"] = np.zeros((len(seq), FRAMES, 2, 21, 3), np.float32)
+        result["world_valid"] = np.zeros(len(seq), dtype=bool)
+    if result["world_valid"].shape != (len(seq),):
+        raise ValueError("invalid world landmark metadata")
     if not np.isin(result["hand_counts"], [1, 2]).all() or not np.isin(result["motions"], ["STATIC", "DYNAMIC"]).all():
         raise ValueError("잘못된 손 수 또는 동작 종류입니다")
     if not np.isfinite(result["durations"]).all() or np.any(result["durations"] <= 0) or np.any(result["durations"] > 30):
@@ -256,7 +365,7 @@ def read_templates(payload, name=None):
 
 def template_bytes(data):
     out = io.BytesIO()
-    np.savez_compressed(out, schema_version=np.array(2), **data)
+    np.savez_compressed(out, schema_version=np.array(3), **data)
     return out.getvalue()
 
 
@@ -285,7 +394,7 @@ class CustomGestureStore:
     def classify_with_distance(self, landmarks, disabled=()):
         return self.legacy.classify_with_distance(landmarks, disabled=disabled)
 
-    def sequence_comparisons(self, sequence, motion, count):
+    def sequence_comparisons(self, sequence, motion, count, world_sequence=None):
         # 기존 템플릿도 비교할 때만 정지 구간을 잘라 신규 촬영과 기준을 맞춘다.
         # 원본 파일과 실행용 템플릿은 여기서 변경하지 않는다.
         def comparison(seq):
@@ -301,6 +410,12 @@ class CustomGestureStore:
             reference = comparison(s)
             details = (motion_comparison(sequence, reference, count) if motion == 'DYNAMIC'
                        else dict(score=matching_distance(sequence, reference, count)))
+            if (motion == "STATIC" and count == 2 and world_sequence is not None
+                    and bool(self.data["world_valid"][index])):
+                world_score = WORLD_DISTANCE_SCALE * world_matching_distance(
+                    world_sequence, self.data["world_sequences"][index])
+                details.update(score=world_score, world_score=world_score,
+                               score_source="WORLD_3D")
             candidates.append(dict(template_index=index, name=str(name), **details))
         return sorted(candidates, key=lambda item: item['score'])
 
@@ -416,14 +531,25 @@ class CustomGestureStore:
         if not self.history or now - self.history[-1][0] >= 0.05:
             self.history.append((now, points, identity))
         count = len(points)
+        current_world = None
+        if count == 2:
+            world_points = ordered_world_landmarks(hands)
+            if world_points is not None:
+                current_world = encode_world_sequence([0, 1], [world_points, world_points])
         best_static, best_dynamic = (MATCH_DISTANCE, None), (MATCH_DISTANCE, None)
         pending_motion = False
-        for seq, name, motion, n, duration in zip(*(self.data[k] for k in EXTRA_KEYS)):
+        for index, (seq, name, motion, n, duration) in enumerate(
+                zip(*(self.data[k] for k in EXTRA_KEYS))):
             if count != n or name in disabled:
                 continue
             if motion == "STATIC":
                 current = encode_sequence([0, 1], [points, points])
-                score = matching_distance(current, seq, count)
+                if (count == 2 and current_world is not None
+                        and bool(self.data["world_valid"][index])):
+                    score = WORLD_DISTANCE_SCALE * world_matching_distance(
+                        current_world, self.data["world_sequences"][index])
+                else:
+                    score = matching_distance(current, seq, count)
                 if score < best_static[0]:
                     best_static = score, str(name)
                 continue
