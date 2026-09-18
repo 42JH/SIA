@@ -506,7 +506,9 @@ def test_unexecuted_actions_and_local_mode():
         assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):
         brain.link = None
-        brain.session_until = 100.0  # BE 없이 도는 경우 — 세션은 로컬 미러가 들고 있다
+        # 세션은 BE 소유다(-320) — BE 가 없으면 세션도 없어 모든 발화가 호출어 게이트를 탄다.
+        # 여기 주제는 "BE 없이도 answer 문구는 나간다" 이므로 게이트만 통과시킨다.
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
         utter(brain, command("answer"))
         assert not events(link)
         assert brain.overlay.toast.call_args.args[0] == "완료"

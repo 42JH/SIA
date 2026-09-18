@@ -1266,6 +1266,33 @@ def test_save_crop_paths():
     assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
 
 
+def test_session_is_be_owned():
+    """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
+
+    9/18 라이브에서 발화 19건 중 실행 0건이 나왔다. AI 가 SESSION_S=90 을 들고 있었는데
+    BE 기본은 15초였고, 개시/연장 판정을 t_utter(사용자가 말한 시각)로 해서 LLM 왕복
+    12~29초 뒤 호출 시점엔 이미 닫힌 세션에 extend 를 보냈다. BE 의 renew 는 만료된 세션을
+    못 살리므로(active==null → SESSION_REQUIRED) 명령이 통째로 버려졌다.
+    """
+    import brain as b
+
+    # 자기 시계가 남아 있으면 BE 설정과 어긋나 같은 사고가 반복된다.
+    assert not hasattr(b, "SESSION_S"), "AI 에 세션 길이 상수가 다시 생겼다"
+    assert "session_until" not in b.Brain.__init__.__code__.co_names, "로컬 세션 미러가 다시 생겼다"
+
+    br = b.Brain.__new__(b.Brain)
+
+    br.link = None                                   # BE 미연결 → 세션 없음
+    assert br._session_until() == 0.0 and not br._session_live()
+
+    now = __import__("time").monotonic()
+    br.link = type("L", (), {"connected": True, "session_until_mono": now + 30})()
+    assert br._session_until() == now + 30 and br._session_live()   # BE 값을 그대로 쓴다
+
+    br.link.session_until_mono = now - 1             # BE 기준 이미 만료
+    assert not br._session_live(), "만료 판정은 호출 시점 기준이어야 한다"
+
+
 def test_media_seek():
     """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
 
@@ -1513,8 +1540,9 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_session_is_be_owned()
     test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 31/31 통과")
+    print("OK - 32/32 통과")

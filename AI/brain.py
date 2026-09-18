@@ -6,7 +6,8 @@
 로컬 VLM(Ollama 등)으로 갈아끼울 때는 이 파일의 _ask()만 교체하면 된다.
 
 상태 두 가지를 이 클래스가 소유한다:
-- 활성 세션: 호출어로 명령이 한 번 통하면 SESSION_S 동안 호출어 없이 명령 인정.
+- 활성 세션: 호출어로 명령이 한 번 통하면 BE 가 정한 시간 동안 호출어 없이 명령 인정.
+  마감 시각은 BE 소유다 — AI 는 자기 시계를 갖지 않고 session_state{deadlineMs} 만 본다.
   유효 명령마다 갱신 ("그만/이제 됐어" → end_session으로 즉시 종료)
 - 확인 대기: 파괴적 동작(창 닫기)은 즉시 실행하지 않고 되물은 뒤,
   다음 발화의 승인(confirm_yes)/거부(confirm_no)로 처리
@@ -40,7 +41,6 @@ SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전�
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
 HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
-SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
 WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
 WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
@@ -724,6 +724,9 @@ class Brain(threading.Thread):
     _last_be_payload = None  # 마지막 _be_ok 성공 payload
     _last_be_error = None    # 마지막 _be_ok 실패 시 BE 가 준 {code, message}
     _apps = None             # BE 앱 레지스트리 캐시 (app.list, 세션 불요)
+    # BE 미연결이면 세션이 없어 모든 발화가 호출어 게이트를 탄다 — 그 경로가 읽는 필드도 기본값이 필요하다.
+    _wake_notified = None
+    _speaker_error_notified = False
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
@@ -748,7 +751,6 @@ class Brain(threading.Thread):
         self._audio_generation = 0
         self._audio_since = 0.0
         self.busy = 0
-        self.session_until = 0.0
         self._pending = None  # (확인 질문, 종류, 만료 시각, 대상, 원래 명령의 완료 통계, 질문 시각)
         self._client = None
         self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
@@ -765,7 +767,7 @@ class Brain(threading.Thread):
         if self._keys:
             self._client = llm_client(self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
-                  f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
+                  f"호출어 '{WAKE_WORD}', 세션 길이는 BE 설정)")
         else:
             print("GEMINI_API_KEY 없음 → 1단 로컬 명령(음소거·볼륨 등)만 동작, 나머지 발화는 안내 후 버림.")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
@@ -779,9 +781,20 @@ class Brain(threading.Thread):
         return self.link if (self.link and self.link.connected) else None
 
     def _session_until(self):
-        """활성 세션 마감(모노토닉). BE 연결 시 BE 소유 타이머, 아니면 로컬."""
+        """활성 세션 마감(모노토닉) — **BE 소유**. AI 는 자기 시계를 갖지 않는다.
+
+        BE 가 session_state{deadlineMs} 로 밀어 준 값(be_link.session_until_mono)만 쓴다.
+        BE 미연결이면 세션은 없다 — 실행도 BE 가 하므로 따로 시계를 둘 이유가 없고,
+        로컬 미러를 두면 BE(기본 15 s)와 어긋나 SESSION_REQUIRED 로 전부 거절된다(9/18 실측).
+        """
         be = self._be()
-        return be.session_until_mono if be else self.session_until
+        return be.session_until_mono if be else 0.0
+
+    def _session_live(self):
+        """지금 이 순간 BE 세션이 살아 있나 — 연장(extend)이 통할지의 기준.
+        발화 시점이 아니라 호출 시점으로 본다: renew 는 BE 의 현재 상태를 보고 판단하므로,
+        LLM 왕복 사이에 만료됐으면 연장이 아니라 개시로 보내야 한다."""
+        return time.monotonic() < self._session_until()
 
     def _be_ok(self, tool, args=None):
         """BE MCP 도구 호출 → 실행됐으면 True, 결과는 _last_be_payload. 토스트 없음(중간 단계용).
@@ -1056,8 +1069,7 @@ class Brain(threading.Thread):
                         if be and not WAKE_SHADOW and not in_session:
                             be.wake_detected()  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
                         if only_wake:
-                            if be is None and not in_session:
-                                self.session_until = time.monotonic() + SESSION_S
+                            # BE 가 없으면 세션도 없다 — 실행이 BE 전용이라 로컬 세션은 의미가 없다.
                             self._say("네, 듣고 있어요")
                             log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                           wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
@@ -1292,11 +1304,10 @@ class Brain(threading.Thread):
                 be = self._be()
                 if be:
                     be.renew(opening=True)  # BE 가 세션 개시 → session_state 로 마감시각 회신
-                self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
                 self._say("네, 듣고 있어요")
             return
         # 코드 차원 호출어 게이트: 세션이 없을 땐 wake_heard 없이는 절대 통과 못 함 —
-        # 환각 한 번이 90초 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
+        # 환각 한 번이 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
         if t_utter >= self._session_until() and not result.get("wake_heard"):
             print(f"[무시] 호출어 없음: {result.get('transcript', '')!r}")
             return
@@ -1306,8 +1317,11 @@ class Brain(threading.Thread):
         session_id = be.be_session_id if be else None
         if action != "end_session":  # '그만'은 세션을 연장하지 않는다.
             if be:
-                session_id = be.renew(opening=t_utter >= self._session_until())
-            self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
+                # 개시/연장 판정은 발화 시점(t_utter)이 아니라 **지금** BE 상태로 한다.
+                # 사용자는 세션 안에서 말했지만 LLM 왕복(실측 12~29 s)이 BE 세션(기본 15 s)보다
+                # 길면 호출 시점엔 이미 닫혀 있다. 그때 연장을 보내면 SessionService.renew 가
+                # active==null 로 SESSION_REQUIRED 를 던져 명령이 통째로 버려진다(9/18 실측 0/19).
+                session_id = be.renew(opening=not self._session_live())
         with self._audio_lock:
             if generation is not None and generation != self._audio_generation:
                 return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
@@ -1336,7 +1350,6 @@ class Brain(threading.Thread):
         if action == "end_session":
             if be:
                 be.end()
-            self.session_until = 0.0
             self._pending = None
             self._say(say or "대기 모드로 전환합니다")
             return completed if self.act else None

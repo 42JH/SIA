@@ -182,8 +182,7 @@ def test_wake_only_run_skips_command_processing():
                     brain.speaker.verify.assert_not_called()
                     assert any(c.args[0] == "네, 듣고 있어요" for c in brain.overlay.toast.call_args_list)
                     assert not brain._accum.n_joined
-                    if local:
-                        assert brain.session_until > clock.now
+                    # 세션은 BE 소유가 됐다(-320) — BE 가 없으면 로컬로 세션을 열지 않는다.
                 elif attached:
                     brain.speaker.verify.assert_called_once()
                     assert log.call_args.kwargs["gate"] == "speaker_reject"

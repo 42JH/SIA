@@ -367,8 +367,11 @@ def test_inflight_audio_is_not_executed_after_switch():
         brain.queue, brain.busy = [], 0
         brain._pending = brain.speaker = brain.wake = brain.link = None
         brain.wake_template = None
-        # 이 검사의 주제는 입력 전환이다 — 호출어 판정을 타지 않도록 활성 세션 안에서 돌린다.
-        brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
+        # 이 검사의 주제는 입력 전환이다 — 세션은 BE 소유가 됐으므로(-320) BE 대역 없이는
+        # 세션이 없다. 호출어 판정에 걸리지 않게 게이트만 통과시킨다.
+        brain._accum = SpeakerAccum()
+        brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
         brain._try_router = lambda *_: None
         executed = []
         brain._execute = lambda *args: executed.append(args)
@@ -401,7 +404,11 @@ def test_slow_execution_does_not_block_audio():
     brain.queue, brain.busy = [], 0
     brain._pending = brain.speaker = brain.wake = brain.link = None
     brain.wake_template = None
-    brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
+    brain._accum = SpeakerAccum()
+    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    # 세션은 BE 소유가 됐다(-320). BE 대역이 없으면 세션도 없어 모든 발화가 호출어 게이트를
+    # 탄다 — 이 테스트의 관심사는 '입력이 바뀌면 진행 중 발화를 실행하지 않는다' 라 게이트는 통과시킨다.
+    brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
     brain._try_router = lambda *_: {"action": "test"}
     listener = VoiceListener(collections.deque(), on_reset=brain.reset_audio)
     started, release, completed = threading.Event(), threading.Event(), threading.Event()
