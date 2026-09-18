@@ -45,7 +45,11 @@ HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 
 Pending = collections.namedtuple(  # 확인 대기 — 자리 인덱스로 읽던 6튜플을 이름으로 바꿨다
     "Pending", "q kind expire target completed asked_at generation")
 MAX_INFLIGHT = 4          # 동시에 처리할 발화 수 상한 — 몰릴 때 LLM 왕복이 무제한으로 늘지 않게
-CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
+CONFIRM_TIMEOUT_S = 10.0  # 파괴적 동작 확인 대기 시간 — **FE 표시와 같은 값이어야 한다**.
+# FE 는 확인창 카운트다운을 10초로 고정하고 우리가 보내는 timeoutSec 을 보지 않는다
+# (notificationStore.js CONFIRM_TIMEOUT_SEC, Tauri overlay/index.html 도 같은 값).
+# 여기가 더 길면 화면에서 확인창이 사라진 뒤에도 "응" 이 먹혀 창이 닫히고 파일이 지워진다 —
+# 사용자는 질문이 끝난 줄 아는데 되돌릴 수 없는 동작이 실행된다. 어긋나면 짧은 쪽으로 맞춘다.
 WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
 WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
                           # 배경 오발 1.41건/h(봉인 스트림 17.7 h). 0.5 로 두면 배경 오발이 3.11건/h 로 v1(2.49)보다 나빠진다.

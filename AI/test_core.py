@@ -1143,6 +1143,25 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+
+def test_confirm_window_is_not_longer_than_what_the_user_sees():
+    """확인 수용 시간이 FE 표시보다 길면 안 된다 (-324).
+
+    FE 는 확인창 카운트다운을 자기 상수 10초로 고정하고 우리가 보내는 timeoutSec 을
+    보지 않는다(notificationStore.js, Tauri overlay/index.html). 우리가 더 길게 받으면
+    화면에서 질문이 사라진 뒤에 말한 "응" 이 먹혀 창이 닫히고 파일이 지워진다.
+    되돌릴 수 없는 동작이라, 어긋날 바엔 짧은 쪽이 맞다(늦은 승인은 거절될 뿐이다).
+    """
+    from brain import CONFIRM_TIMEOUT_S
+
+    FE_CONFIRM_SEC = 10   # Frontend/src/store/notificationStore.js · Integration/overlay/index.html
+    assert CONFIRM_TIMEOUT_S <= FE_CONFIRM_SEC, (
+        f"AI 가 {CONFIRM_TIMEOUT_S}초까지 받는데 화면은 {FE_CONFIRM_SEC}초만 보여 준다 — "
+        "안 보이는 확인이 실행된다")
+    # 정수로 내려가는 값이라 소수점이 잘려도 더 길어지지 않아야 한다
+    assert int(CONFIRM_TIMEOUT_S) <= FE_CONFIRM_SEC
+
+
 def test_app_ref_resolution():
     """앱 ref 는 BE 레지스트리에서 찾는다 — 슬러그가 기계마다 다르다.
 
@@ -1844,4 +1863,5 @@ if __name__ == "__main__":
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 39/39 통과")
+    test_confirm_window_is_not_longer_than_what_the_user_sees()
+    print("OK - 40/40 통과")
