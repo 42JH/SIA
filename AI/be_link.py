@@ -199,6 +199,9 @@ class AgentLink:
         if self.wake_store is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
             # 호출어 설정을 먼저 적용한다. 다운로드 시작 뒤 설정이 바뀌면 받은 파일이 폐기된다.
             self.wake_store.on_settings(d.get("settings"))   # settings.wakeWord — 호출어 문자열 자체
+            if self.wake is not None:
+                # 수집 중이면 새 이름으로 다시 받게 한다 — 옛 이름으로 5개를 채운 뒤 버리지 않도록
+                self.wake.on_word_changed(self.wake_store.wake_word())
             blobs = d.get("blobs")
             if isinstance(blobs, dict) and "wakeword" in blobs:
                 self.wake_store.on_blob(blobs["wakeword"])   # 전역 호출어 템플릿 참조 (sha256 또는 null)

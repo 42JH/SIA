@@ -150,6 +150,11 @@ class SpeakerVerifier:
 WAKE_TEMPLATE_VERSION = 2
 WAKE_SR = 16000
 WAKE_LEGACY_EXTRA_MAX = 10   # 이전 실측 NPZ의 추가 행은 읽기만 허용한다. 판정은 등록 당시 기준 행만 쓴다.
+# 사용자 지정 호출어 헤드의 특징 이름·차원 — wake_head.HEAD_EXTRACTOR·HEAD_DIM 과 같은 값이다.
+# 여기서 wake_head 를 import 하지 않으려고 따로 적는다.
+WAKE_HEAD_EXTRACTOR = "openwakeword-embedding-16x96"
+WAKE_HEAD_DIM = 1536
+WAKE_HEAD_FIELDS = ("head_W", "head_b", "head_mu", "head_sd", "head_extractor")
 
 
 class WakeTemplate:
@@ -157,19 +162,25 @@ class WakeTemplate:
 
     발음은 시동어 모델에서, 목소리는 등록 임베딩과의 유사도로 따로 확인한다.
     보이스 프로필 번호와는 묶지 않는다 — 화자 재등록으로 번호가 바뀌어도 등록본은 그대로 쓴다 (303).
+    "시아야"가 아닌 호출어는 등록 녹음으로 학습한 발음 판정 헤드 (W, b, mu, sd) 를 함께 담는다 (wake_head.py).
     NOTE(한계): 짧은 호출어는 화자 정보가 적다. 등록자·타인 녹음으로 임계값을 확인해야 한다.
     """
 
-    def __init__(self, wake_text, scores, embs, base_n, extractor=MODEL_SOURCE):
+    def __init__(self, wake_text, scores, embs, base_n, extractor=MODEL_SOURCE, head=None):
         self.wake_text = wake_text
         self.scores = tuple(float(s) for s in scores)   # 등록 때 시동어 점수 — 실측 기록용, 판정에는 안 쓴다
         self.embs = np.asarray(embs, dtype=np.float32)
         self.base_n = int(base_n)
         self.extractor = extractor
+        self.head = None if head is None else tuple(np.asarray(v, dtype=np.float32) for v in head)
 
     @property
     def base_embs(self):
         return self.embs[:self.base_n]
+
+    @property
+    def has_head(self):
+        return self.head is not None
 
     # --- 판정 ---
     def similarity(self, emb):
@@ -185,10 +196,12 @@ class WakeTemplate:
 
     # --- 저장 ---
     def npz_bytes(self):
+        # 헤드 칸은 헤드가 있을 때만 쓴다 — 헤드 없는 파일은 이전과 같은 칸·같은 순서여야 본문 비교로 재업로드를 건너뛴다
+        head = {} if self.head is None else dict(zip(WAKE_HEAD_FIELDS, (*self.head, WAKE_HEAD_EXTRACTOR)))
         buf = io.BytesIO()
         np.savez(buf, version=WAKE_TEMPLATE_VERSION, extractor=self.extractor, sr=WAKE_SR,
                  wake_text=self.wake_text, scores=np.asarray(self.scores, dtype=np.float32),
-                 embs=self.embs, base_n=self.base_n)
+                 embs=self.embs, base_n=self.base_n, **head)
         return buf.getvalue()
 
     @staticmethod
@@ -218,6 +231,19 @@ class WakeTemplate:
             if scores.ndim != 1 or scores.dtype.kind not in "fi" or not np.isfinite(scores).all():
                 raise ValueError("등록 점수 기록이 유한한 1차원 배열이 아닙니다")
             # 이전 형식의 profile_id 필드는 있어도 읽지 않는다
+            head = None
+            if any(name in data.files for name in WAKE_HEAD_FIELDS):
+                if not all(name in data.files for name in WAKE_HEAD_FIELDS):
+                    raise ValueError("호출어 헤드 칸이 일부 빠졌습니다")
+                if str(data["head_extractor"]) != WAKE_HEAD_EXTRACTOR:
+                    raise ValueError(f"다른 특징으로 만든 호출어 헤드입니다 ({data['head_extractor']})")
+                W, b, mu, sd = (data[name] for name in WAKE_HEAD_FIELDS[:4])
+                if not all(v.shape == (WAKE_HEAD_DIM,) and v.dtype.kind in "fi" and np.isfinite(v).all()
+                           for v in (W, mu, sd)) or not (sd > 0).all():
+                    raise ValueError(f"호출어 헤드 W·mu·sd 는 유한한 {WAKE_HEAD_DIM}차원이고 sd 는 0보다 커야 합니다")
+                if b.shape != () or b.dtype.kind not in "fi" or not np.isfinite(b):
+                    raise ValueError("호출어 헤드 b 는 유한한 스칼라여야 합니다")
+                head = (W, b, mu, sd)
         embs = np.array(embs, dtype=np.float32)
         embs.setflags(write=False)
-        return WakeTemplate(wake_text, scores, embs, base_n, extractor)
+        return WakeTemplate(wake_text, scores, embs, base_n, extractor, head)

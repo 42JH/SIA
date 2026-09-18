@@ -27,6 +27,8 @@ import time
 import wave
 from pathlib import Path
 
+from wake_head import score_utterance
+
 HERE = Path(__file__).parent
 LOG_DIR = HERE / "logs"
 EVAL_DIR = HERE / "eval" / "cases"
@@ -77,12 +79,23 @@ WAKE_CLIP_MAX_S = 2.5     # NOTE(튜닝): 호출어 구간으로 잘라낼 수 �
 WAKE_CLIP_PAD_S = 0.15    # 말소리 앞뒤로 남기는 여유. 첫 음절이 깎이면 임베딩이 흔들린다
 WAKE_CLIP_TAIL_JOIN_S = 0.05  # 호출어 끝 뒤로 말소리가 쉬지 않고 이어질 때만 쓰는 더 짧은 꼬리 — 그 뒤는
                           # 호출어가 아니라 이어진 명령(다른 사람일 수도 있다)이므로 여유를 거의 두지 않는다
-WAKE_CLIP_TAIL_S = 0.15   # 첫 임계 넘음(i_max, 호출어가 끝난 지점) 뒤로 더 보는 시간. 짧게 두는 게 요점이다 —
+WAKE_CLIP_TAIL_S = 0.15   # i_max(호출어가 끝난 지점) 뒤로 더 보는 시간. 짧게 두는 게 요점이다 —
+                          # i_max 의 출처는 경로마다 다르다: "시아야" 는 첫 임계 넘음, 사용자 지정 호출어는 헤드 최고점.
                           # "시아야 크롬 열어줘" 에서 뒤에 이어진 명령까지 넣으면 그 명령을 말한 사람
                           # (다른 사람일 수 있다)으로 호출자의 신원을 판정하게 된다.
                           # 명령 오디오가 버려지는 것은 아니다: 판정에만 이 구간을 쓰고 LLM 에는 발화 전체가 그대로 간다.
 WAKE_TEMPLATE_MIN_SIM = 0.35  # NOTE(튜닝): 호출어 구간의 화자 유사도 하한 (세션 개시 기준). 아직 안 잰 초기값이다.
                           # 문장 화자인증보다 입력이 짧아 별도 임계값을 쓴다. 등록자·타인 녹음으로 조정한다.
+WAKE_WORD_LOGPROB_MIN = -4.0  # NOTE(튜닝): "시아야" 가 아닌 호출어의 단어 확률 하한 (router.Router.word_logprob).
+                              # 실측 중앙값 — 실제 호출 −2.2, 한 글자 다른 단어 −3.8, 다른 호출어 −4.9, 다른 말 −5.7.
+                              # 놓친 본인 호출은 −4.1~−5.0 이었다. 올리면 본인 호출을 더 놓치고 내리면 다른 말이 통과한다.
+WAKE_WORD_BEFORE_S, WAKE_WORD_AFTER_S = 2.0, 0.5  # NOTE(튜닝): 단어 확률은 호출어 끝 앞 2 s·뒤 0.5 s 만 본다.
+                              # 받아쓰기 모델은 구간의 첫 단어가 호출어인지를 보므로 앞에 붙은 다른 말이 길면 확률이 내려간다 —
+                              # 호출 앞에 본인의 다른 말 3 s 를 붙인 40개에서 발화 전체는 35개, 이 구간은 38개가 기준을 넘었다.
+WAKE_SOLO_MAX_SPEECH_S = 0.90  # NOTE(튜닝): 사용자 지정 호출어에서 "단독 호출" 로 보는 말소리 길이 상한 (speech_s).
+                              # 헤드가 찍는 경계만으로는 호출어와 명령을 못 가른다 — 최고점 기준은 경계가 늦어 명령 16건 중 6~8건을 삼켰다 (배경 조건에 따라 갈린다).
+                              # 조용한 실측(호출어 4개 101건): 단독 0.33~0.99 s, 명령 0.93~1.77 s 라 0.85~0.95 어디를 잡아도 2건만 틀린다.
+                              # 소음에서는 배경이 말소리로 세어져 길이가 부풀고 단독이 명령 경로로 넘어간다 — 명령이 버려지는 반대 방향은 생기지 않는다.
 SPEAKER_JUDGE_SPEECH_S = 1.0  # NOTE(튜닝): 말소리가 이보다 짧으면 화자 판정을 못 믿는다 — 실측에서 말소리 1 s 이하 구간은
                               # 본인의 가장 낮은 유사도가 타인의 가장 높은 유사도보다 낮아, 어떤 값으로도 둘을 가를 수 없었다.
                               # 거부해도 BE 이벤트(voice_rejected)는 안 보낸다 — 단독 "시아야"(말소리 0.5~0.7 s)가 조용해도 85% 거부라 쏘면 본인 호출마다 문구가 뜬다.
@@ -195,8 +208,9 @@ def notice_data(message, kind=None, **fields):
     return data
 
 
-def build_prompt(session_active, pending_q, has_crop=True):
-    p = [f'너는 사용자의 화면을 함께 보는 데스크톱 음성 비서다. 이름은 "{WAKE_WORD}".']
+def build_prompt(session_active, pending_q, has_crop=True, wake_word=WAKE_WORD):
+    """wake_word: 지금 적용 중인 호출어 — 설정이 바뀌었는데 옛 호출어로 물으면 LLM 이 새 호출어를 못 들은 것으로 판정한다."""
+    p = [f'너는 사용자의 화면을 함께 보는 데스크톱 음성 비서다. 이름은 "{wake_word}".']
     if has_crop:
         p.append("입력: (1) 방금 사용자의 발화 오디오, (2) 전체 화면 스크린샷,"
                  " (3) 발화 시작 순간 사용자가 응시하던 영역의 크롭.")
@@ -210,9 +224,9 @@ def build_prompt(session_active, pending_q, has_crop=True):
         p.append(f'주의: 비서가 방금 사용자에게 확인을 요청한 상태다 — "{pending_q}" '
                  '이번 발화가 그 승인(응, 그래, 해줘, 닫아 등)이면 action="confirm_yes", '
                  '거부(아니, 취소, 하지마)면 action="confirm_no"로 답하라.')
-    p.append(f'wake_heard: 발화에 호출어 "{WAKE_WORD}"(유사 발음 포함)가 또렷이 들렸으면 true, 아니면 false.')
+    p.append(f'wake_heard: 발화에 호출어 "{wake_word}"(유사 발음 포함)가 또렷이 들렸으면 true, 아니면 false.')
     if session_active:
-        p.append(f'현재 활성 세션 중이다: 호출어("{WAKE_WORD}") 없이도 사용자가 비서/PC를 향해 말한 '
+        p.append(f'현재 활성 세션 중이다: 호출어("{wake_word}") 없이도 사용자가 비서/PC를 향해 말한 '
                  "명령·질문이면 is_command=true. 혼잣말, 타인과의 대화, 잡음, 노래, TV/영상 소리는 여전히 false.")
     else:
         p.append("호출어 규칙: wake_heard가 true일 때만 is_command=true가 될 수 있다. "
@@ -535,11 +549,12 @@ def speech_span(audio_i16, sr=16000, floor=350.0, block=480):
 def wake_clip(audio, i_max, lead=0, sr=16000):
     """호출어 구간 → (오디오, 시작 s, 끝 s, 경계 확실함). 등록과 실행이 같이 쓰는 전처리다.
 
-    처음 임계를 넘은 프레임(i_max)이 호출어가 끝난 지점에 가장 가깝다. 거기서 짧은 꼬리만 더 보고 끊고, 앞으로는 말소리를
-    따라 WAKE_CLIP_MAX_S 까지만 잡는다. 쉬지 않고 말이 이어지면 꼬리를 더 줄인다 — 그 뒤는 호출어가
-    아니라 이어진 명령이고 다른 사람일 수도 있다. 첫 임계 넘음이 말소리보다 앞에 찍혀 구간이 무너지면
+    i_max 프레임이 호출어가 끝난 지점에 가장 가깝다 ("시아야" 는 첫 임계 넘음, 사용자 지정 호출어는 헤드 최고점에서 온다).
+    거기서 짧은 꼬리만 더 보고 끊고, 앞으로는 말소리를 따라 WAKE_CLIP_MAX_S 까지만 잡는다.
+    쉬지 않고 말이 이어지면 꼬리를 더 줄인다 — 그 뒤는 호출어가
+    아니라 이어진 명령이고 다른 사람일 수도 있다. i_max 가 말소리보다 앞에 찍혀 구간이 무너지면
     경계를 못 믿는 것으로 본다. 원본 오디오는 그대로 남는다.
-    NOTE(한계): 첫 임계 넘음에 오차가 있고 화자를 가르지는 않는다 — 늦게 찍히고 곧바로 다른 사람이 말하면
+    NOTE(한계): i_max 에 오차가 있고 화자를 가르지는 않는다 — 늦게 찍히고 곧바로 다른 사람이 말하면
     꼬리만큼 섞인다. 실제 연속 발화로 구간 분리의 정확도를 확인해야 한다."""
     span = speech_span(audio, sr)
     if span is None:
@@ -583,7 +598,8 @@ def wake_only(audio, i_max, lead=0, sr=16000):
     """호출어 구간만 있고 앞뒤에 다른 말소리가 없으면 단독 호출 후보로 본다.
 
     화자 일치는 별도로 확인한다. 뒤에 짧은 명령이 붙거나 경계·품질이 불확실하면 기존 명령 처리로 넘긴다.
-    NOTE(한계): 첫 임계 넘음(i_max)으로 경계를 추정하므로, 호출어와 명령이 이어진 녹음으로 확인해야 한다.
+    NOTE(한계): i_max 로 경계를 추정하므로, 호출어와 명령이 이어진 녹음으로 확인해야 한다.
+    i_max 의 출처는 경로마다 다르다: "시아야" 는 첫 임계 넘음, 사용자 지정 호출어는 헤드 최고점.
     """
     if i_max is None:
         return False
@@ -746,6 +762,9 @@ class Brain(threading.Thread):
     # 청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
     # 돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려간다(불러도 무반응).
     _wake_lock = threading.Lock()
+    _head_feats = None     # 사용자 지정 호출어 헤드용 특징 추출기 — 첫 사용 때 만든다
+    _head_top = None       # 이번 발화의 헤드 최고점 (콘솔 확인 줄용)
+    _wake_word_lp = None   # 이번 발화의 호출어 단어 확률 — 확인하지 않았으면 None (로그용)
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -999,7 +1018,8 @@ class Brain(threading.Thread):
 
         시동어 모델과 등록자 유사도를 모두 통과해야 세션을 연다.
         템플릿이 없거나 손상됐거나 판정 중 바뀌면 거절한다.
-        NOTE(한계): 본인이 말한 비슷한 발음을 시동어 모델이 잘못 검출할 수 있다. 지원 호출어는 '시아야'다.
+        NOTE(한계): 본인이 말한 비슷한 발음을 시동어 모델이 잘못 검출할 수 있다. 고정 모델은 '시아야'만 알고,
+        다른 호출어는 _custom_wake_ok 가 등록 때 학습한 헤드와 단어 확률로 본다.
         """
         store = self.wake_template
         if store is None:
@@ -1007,9 +1027,7 @@ class Brain(threading.Thread):
             return False, "no_store", None, None, None
         word, template, generation = store.snapshot()
         if word != WAKE_MODEL_WORD:
-            self._wake_notice("unsupported_word",
-                              f'호출어 "{word}" 는 아직 지원하지 않습니다 — 설정을 "{WAKE_MODEL_WORD}" 로 바꿔 주세요.')
-            return False, "unsupported_word", None, None, None
+            return self._custom_wake_ok(audio, i_max, oww_pass, store, word, template, generation)
         if self.wake is None:
             self._wake_notice("no_model", "호출어 모델이 없어 세션을 열 수 없습니다 — openwakeword 설치가 필요합니다")
             return False, "no_wake_model", None, None, None
@@ -1044,9 +1062,74 @@ class Brain(threading.Thread):
         self._wake_notified = None
         return True, "ok", sim, clip_t0, clip_t1
 
+    def _custom_wake_ok(self, audio, i_max, oww_pass, store, word, template, generation):
+        """"시아야" 가 아닌 호출어의 인증 — _wake_ok 와 같은 반환. oww_pass·i_max 는 run 이 등록본의 헤드로 채점한 결과다.
+
+        헤드는 느슨한 앞문이다 (다른 말의 절반이 통과한다). 그 뒤 등록 목소리 유사도(14 ms)를 먼저 보고,
+        마지막에 받아쓰기 모델의 단어 확률(발화당 약 50 ms, GPU)로 그 단어가 맞는지 거른다.
+        --no-speaker 여도 단어 확률은 확인한다."""
+        if template is None:
+            broken = store.load_error
+            self._wake_notice("no_template",
+                              "호출어 등록본이 손상됐습니다 — 앱에서 호출어를 다시 등록해 주세요." if broken
+                              else "호출어를 먼저 등록해 주세요 — 앱의 이름 불러보기에서 5번 부르면 됩니다.")
+            return False, "template_broken" if broken else "template_missing", None, None, None
+        if not template.matches_setting(word):
+            self._wake_notice("stale_template",
+                              f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
+            return False, "template_stale", None, None, None
+        if not template.has_head:
+            self._wake_notice("head_missing", "호출어를 다시 등록해 주세요")
+            return False, "head_missing", None, None, None
+        if not oww_pass:
+            return False, "no_candidate", None, None, None
+        clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max)
+        sim = None
+        if self.speaker is not None:
+            try:
+                emb = self.speaker.embed(clip)
+            except Exception as e:
+                print(f"[호출어 목소리 판정 실패] {e}")
+                return False, "embed_failed", None, clip_t0, clip_t1
+            sim = template.similarity(emb)
+            if sim is None or sim < WAKE_TEMPLATE_MIN_SIM:
+                print(f"[호출어 목소리 불일치] 유사도 {sim} < {WAKE_TEMPLATE_MIN_SIM}")
+                return False, "speaker", sim, clip_t0, clip_t1
+        end = i_max * WAKE_FRAME_S - WAKE_PAD_S   # 호출어가 끝난 시각 (wake_clip 과 같은 환산)
+        lo = max(0, int((end - WAKE_WORD_BEFORE_S) * 16000))
+        hi = min(len(audio), int((end + WAKE_WORD_AFTER_S) * 16000))
+        lp = self.word_logprob(audio[lo:hi], word.strip())
+        self._wake_word_lp = None if lp is None else round(lp, 3)
+
+        def num(v):
+            return "-" if v is None else f"{v:.2f}"
+
+        print(f'[호출어 확인] "{word}" 헤드 {num(self._head_top)} · 단어 확률 {num(lp)} (기준 {WAKE_WORD_LOGPROB_MIN})'
+              f" · 목소리 {num(sim) if self.speaker is not None else '확인 안 함'}")
+        if lp is None:
+            self._wake_notice("stt_unavailable", "받아쓰기 모델을 쓸 수 없어 호출어를 확인하지 못했습니다")
+            return False, "stt_unavailable", sim, clip_t0, clip_t1
+        if lp < WAKE_WORD_LOGPROB_MIN:
+            return False, "word_mismatch", sim, clip_t0, clip_t1
+        if not store.still_current(generation):
+            print("[호출어 판정 폐기] 판정 도중 템플릿이 바뀌었습니다 — 세션을 열지 않습니다")
+            return False, "template_changed", sim, clip_t0, clip_t1
+        self._wake_notified = None
+        return True, "ok" if self.speaker is not None else "content_only", sim, clip_t0, clip_t1
+
+    def _head_features(self):
+        """사용자 지정 호출어 헤드용 특징 추출기 — run 스레드만 쓰고 한 번 만들어 재사용한다.
+        score_utterance 는 발화를 통째로 계산해 앞 문맥이 남지 않으므로 발화마다 새로 만들 필요가 없다."""
+        if self._head_feats is None:
+            from wake_head import _features
+
+            self._head_feats = _features()
+        return self._head_feats
+
     def ensure_router(self):
-        """1단 라우터(로컬 STT)를 만들어 돌려준다 — 만들 수 없으면 None 이고 다시 시도하지 않는다.
-        예열·1단 판정·화자 등록의 문장 확인이 이 하나를 나눠 쓴다 — 받아쓰기 모델을 두 벌 올리지 않으려고."""
+        """1단 라우터(로컬 STT) — 첫 사용 때 만들고, 호출어 설정이 바뀌었으면 맞춘다. 쓸 수 없으면 None 이고 다시 시도하지 않는다.
+        예열·1단 판정·화자 등록의 문장 확인·호출어 단어 확인이 이 하나를 나눠 쓴다 — 받아쓰기 모델을 두 벌 올리지 않으려고.
+        사전 매칭의 호출어가 옛 값이면 BE 없이 돌 때 "철수야 크롬 열어줘" 가 호출어 없는 발화로 버려진다."""
         if self._router_dead:
             return None
         if self.router is None:
@@ -1055,12 +1138,26 @@ class Brain(threading.Thread):
 
                 with self._router_lock:
                     if self.router is None:
-                        self.router = Router(WAKE_WORD)
+                        self.router = Router(self._wake_word())
             except Exception as e:
                 self._router_dead = True
                 print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
                 return None
+        word = self._wake_word()
+        if self.router.word != word:
+            self.router.set_wake(word)
         return self.router
+
+    def word_logprob(self, audio, word):
+        """받아쓰기 모델로 본 word 의 단어 확률 (router.Router.word_logprob). 라우터를 못 쓰거나 실패하면 None."""
+        router = self.ensure_router()
+        if router is None:
+            return None
+        try:
+            return router.word_logprob(audio, word)
+        except Exception as e:
+            print(f"[호출어 단어 확률 실패] {type(e).__name__}: {e}")
+            return None
 
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
@@ -1072,7 +1169,7 @@ class Brain(threading.Thread):
 
             with self._router_lock:
                 if self.router is None:
-                    self.router = Router(WAKE_WORD)
+                    self.router = Router(self._wake_word())
             self.router.warm()
         except Exception as e:
             print(f"[STT 예열 실패 → 첫 발화 때 로드] {e}")
@@ -1160,7 +1257,28 @@ class Brain(threading.Thread):
             # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
             wake_score, i_max, lead, oww_pass = None, None, 0, False
             wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
-            if self.wake is not None:
+            self._head_top = self._wake_word_lp = None
+            store = self.wake_template
+            word, template, _ = store.snapshot() if store is not None else (WAKE_MODEL_WORD, None, None)
+            if word != WAKE_MODEL_WORD:
+                # 사용자 지정 호출어 — 고정 모델 대신 등록 때 학습한 헤드로 채점한다. 헤드의 끝 시각을 고정 모델의
+                # 프레임 번호로 바꿔 넣어 뒤의 wake_only·wake_clip·speaker_input 을 그대로 쓴다.
+                # 헤드가 없으면 채점하지 않는다 (oww_pass False → _wake_ok 가 재등록을 안내한다).
+                # NOTE(한계): 헤드의 최고점 경계는 호출어 끝보다 늦게 찍혀 뒤에 붙은 명령을 삼킬 수 있다 —
+                # 그래서 단독 호출 판정은 말소리 길이(WAKE_SOLO_MAX_SPEECH_S)로 한 번 더 가른다.
+                # 소음에서는 배경이 말소리로 세어져 길이가 부풀고 단독 호출이 명령 경로로 넘어간다
+                # (명령이 버려지는 반대 방향은 생기지 않는다).
+                if template is not None and template.has_head:
+                    try:
+                        top, t_end = score_utterance(self._head_features(), template.head, audio)
+                    except Exception as e:
+                        print(f"[호출어 헤드 채점 실패] {type(e).__name__}: {e}")
+                        top, t_end = 0.0, None
+                    wake_score = self._head_top = round(top, 3)
+                    if t_end is not None:
+                        i_max = round((t_end + WAKE_PAD_S) / WAKE_FRAME_S)
+                    oww_pass = i_max is not None
+            elif self.wake is not None:
                 with self._wake_lock:      # 모델 하나를 여러 발화가 나눠 쓴다 — 직렬 + 버퍼 비우고 시작
                     self.wake.reset()
                     wake_score, i_max, lead = wake_score_of(self.wake, audio)
@@ -1169,10 +1287,14 @@ class Brain(threading.Thread):
             confirming = self._pending_for(t_utter) is not None
             only_wake = (oww_pass and not WAKE_SHADOW
                          and not confirming
-                         and wake_only(audio, i_max, lead))
-            # 활성 세션의 명령은 기존 화자 게이트로 보낸다. 단독 호출 후보는 세션 안에서도
-            # 개인화를 확인해야 타인의 호출에 곧바로 응답하는 우회가 생기지 않는다.
-            if in_session and not only_wake:
+                         and wake_only(audio, i_max, lead)
+                         # 사용자 지정 호출어의 헤드 경계는 최고점 기준이라 늦게 찍혀 뒤에 붙은 명령을
+                         # 삼킬 수 있다. 말소리 길이로 한 번 더 가른다 ("시아야" 는 고정 모델 경계 그대로).
+                         and (word == WAKE_MODEL_WORD or speech_s(audio) < WAKE_SOLO_MAX_SPEECH_S))
+            # 세션 안에서는 호출어가 필요 없다 (BE 프로토콜 §8.2) — 게이트는 아래 화자 인증 하나다.
+            # 단독 호출 후보만 따로 호출어를 다시 보던 길은 없앴다. 같은 일(본인 확인)을 두 곳에서
+            # 하면서 기준만 달라, 본인의 짧은 명령이 호출어 게이트에서 먼저 죽었다.
+            if in_session:
                 wake_ok, wake_why = True, "in_session"
             else:
                 wake_ok, wake_why, wake_sim, seg_t0, seg_t1 = self._wake_ok(audio, i_max, lead, oww_pass)
@@ -1190,6 +1312,7 @@ class Brain(threading.Thread):
                         self._say("네, 듣고 있어요")
                         log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                       wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                      wake_word_lp=self._wake_word_lp,
                                       wake_live=live_score, wake_cut=live_cut,
                                       seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
                         return  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
@@ -1198,6 +1321,7 @@ class Brain(threading.Thread):
                           + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
                     log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
                                   wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                  wake_word_lp=self._wake_word_lp,
                                   wake_live=live_score, wake_cut=live_cut,
                                   seg_t0=seg_t0, seg_t1=seg_t1,
                                   session=in_session, **audio_stats(audio))
@@ -1256,6 +1380,16 @@ class Brain(threading.Thread):
                         be.voice_rejected()
                         be.queue_usage("voice-rejected", sessionId=be.be_session_id)
                     return
+            if in_session and only_wake:
+                # 세션이 열려 있는데 이름만 다시 불렀다 — 화자 인증까지는 지났으므로 답만 하고 끝낸다.
+                # 호출어 판정을 다시 하지는 않는다 (게이트는 위 화자 인증 하나다).
+                self._say("네, 듣고 있어요")
+                log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
+                              wake_sim=None, wake_word_lp=self._wake_word_lp,
+                              wake_live=live_score, wake_cut=live_cut,
+                              speaker_sim=round(sim, 3) if sim is not None else None,
+                              seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
+                return
             # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
             # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
             result, stt_draft, tier = None, None, 2
@@ -1348,19 +1482,8 @@ class Brain(threading.Thread):
     def _try_router(self, audio, t_utter, lat=None):
         """1단 라우터 시도 — 액션 dict(즉시 실행) / STT 초안 str(승격 힌트) /
         None(라우터 사용 불가). 어떤 오류도 2단 승격으로 흡수한다."""
-        if self._router_dead:
+        if self.ensure_router() is None:
             return None
-        if self.router is None:
-            try:
-                from router import Router
-
-                with self._router_lock:
-                    if self.router is None:
-                        self.router = Router(WAKE_WORD)
-            except Exception as e:
-                self._router_dead = True
-                print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
-                return None
         try:
             text, sec = self.router.transcribe(audio)
             hit = self.router.route(text, True)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
@@ -1384,7 +1507,7 @@ class Brain(threading.Thread):
 
         t_utter = t_utter or time.monotonic()
         pending_q = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
-        prompt = build_prompt(t_utter < self._session_until(), pending_q, crop_img is not None)
+        prompt = build_prompt(t_utter < self._session_until(), pending_q, crop_img is not None, self._wake_word())
 
         # 이미지 다이어트 + thinking 끄기 = 실측 8~9초 → 2.4~3.0초 (품질 손실 체감 없음)
         parts = [types.Part.from_bytes(data=wav_bytes(audio), mime_type="audio/wav")]

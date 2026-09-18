@@ -1,6 +1,8 @@
 .venv/
 __pycache__/
 models/*.npz
+# 사용자 지정 호출어 헤드의 부정 뱅크만 예외 — 만드는 데 쓴 특징 파일이 한 PC 에만 있어 다른 PC 는 받아 써야 한다
+!models/wake_neg_bank.npz
 models/*.pth
 custom_gestures.npz
 be_custom_gestures.npz
