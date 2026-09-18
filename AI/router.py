@@ -228,14 +228,17 @@ class Router:
         self.last_logprob = min((s.avg_logprob for s in segments), default=None)
         return text, time.monotonic() - t0
 
-    def word_logprob(self, audio_i16, word):
+    def word_logprob(self, audio_i16, word, detail=False):
         """발화에 word 가 들어 있는 정도 → 평균 로그 확률 (0 에 가까울수록 그 단어).
 
         받아 적게 하지 않고, 같은 모델에게 word 의 글자 조각(토큰)을 강제로 맞춰 보게 해 각 조각의 확률을 읽는다.
         받아쓰기로 확인하면 짧은 단독 호출을 인사말("잘했어요" 등)로 바꿔 적어 실제 호출 41개 중 28개만 통과했고,
         단어 확률로는 37개가 통과했다. 무관한 말은 두 방식 모두 0건이었다.
         프롬프트는 주지 않는다 — 받아쓰기 확인에서 프롬프트가 결과를 호출어 쪽으로 끌어 다른 호출어("시아야")의
-        오통과를 늘렸다. 단어 앞 공백 유무에 따라 토큰이 달라 두 후보 중 높은 값을 쓴다. transcribe 의 통계(last_logprob)는 건드리지 않는다."""
+        오통과를 늘렸다. 단어 앞 공백 유무에 따라 토큰이 달라 두 후보 중 높은 값을 쓴다. transcribe 의 통계(last_logprob)는 건드리지 않는다.
+
+        detail=True 면 (평균, 마지막 조각) 을 돌려준다. 끝음절이 빠진 말("철수야" 에 대한 "철수")은 앞 조각이 잘 맞아
+        평균으로는 묻히고 마지막 조각만 폭락한다 — 실측 예 [-0.12, -0.00, -0.07, -11.27], 평균 -2.87."""
         import numpy as np
         from faster_whisper import WhisperModel
         from faster_whisper.audio import pad_or_trim
@@ -259,9 +262,10 @@ class Router:
 
         def lp(c):
             p = m.model.align(enc, self._tok.sot_sequence, [c], frames)[0].text_token_probs[:len(c)]   # 끝의 종료 토큰은 뺀다
-            return float(np.mean(np.log(np.maximum(p, 1e-9))))
+            return np.log(np.maximum(np.asarray(p), 1e-9))
 
-        return max(lp(c) for c in cands)
+        best = max((lp(c) for c in cands), key=lambda v: v.mean())
+        return (float(best.mean()), float(best[-1])) if detail else float(best.mean())
 
     def _residual(self, c, name):
         """호출어·앱 이름을 뺀 나머지 — 군말뿐인지 판단용."""
