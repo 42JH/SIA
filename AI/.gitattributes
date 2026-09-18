@@ -1,0 +1,2 @@
+# 부정 뱅크(models/wake_neg_bank.npz)를 리포에 올리므로 git 이 텍스트로 보고 줄바꿈을 바꾸거나 diff 를 뜨지 않게 한다
+*.npz binary
