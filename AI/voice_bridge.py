@@ -44,7 +44,22 @@ VOICE_MIN_SIM = 0.40   # NOTE(튜닝): 문장 하나가 앞 문장들과 이만�
                        # 여기서는 명백한 사고(다른 사람이 읽음·큰 잡음)만 잡고, 미세한 일관성은 5문장을 다 모은 뒤에 본다.
                        # 실측(2026-09-10, 본인 한 명이 같은 자리에서 읽은 5문장): 앞 문장들과 유사도 0.64 / 0.74 / 0.71 / 0.82,
                        # 5문장 일관성 0.78 — 0.40 은 여유 있다. 다른 사람·다른 마이크는 아직 안 쟀다
-REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(INCONSISTENT)와 소음(NOISY) 을 따로 센다. 1번 문장이 잘못 녹음되면 그게
+VOICE_MIN_TEXT_SIM = float(os.environ.get("VOICE_MIN_TEXT_SIM") or 0.8)
+                       # NOTE(튜닝): 받아쓴 말이 등록 문장 5개 중 어느 것과도 이만큼 안 닮으면 다른 문장을 읽은 것으로 보고 MISMATCH.
+                       # 마이크 실측(2026-09-18): 문장의 단어를 바꿔 읽으면 0.65 / 0.74 / 0.77 — 받아쓰기가 어미까지 같이 바꿔
+                       # 적어서 생각보다 많이 떨어진다. 엉뚱한 잡담 0.33, 받아쓰기가 아예 망가진 경우("골프.") 0.18.
+                       # 글자만 바꿔 넣어 본 비교로는 원문 그대로·띄어쓰기만 다름 1.00 · 끝 글자 오타 0.97 · 뒤에 군말 0.95 ·
+                       # 조사 탈락 0.93 · 단어 하나 바꿈 0.92 · 앞 절반만 0.76.
+                       # 0.8 은 실측된 단어 바꿈(최고 0.77)은 잡고, 제대로 읽었는데 받아쓰기가 조금 틀린 경우(0.93 이상)는
+                       # 넉넉히 통과시키는 자리다. 화면에 어느 문장이 뜨는지는 FE 가 정해서 순번 n 으로는 알 수 없으므로
+                       # 5개 중 가장 닮은 것과 견준다.
+                       # NOTE(한계): 자모 단위 문자열 비교라 짧은 단어 하나만 바꾸면(글자 기준 0.92) 못 잡는다. 거기까지 가르려면
+                       # 문자열 비교로는 안 되고 발음열 대조가 필요하다
+MISMATCH_DROP_SIM = 0.5  # NOTE(튜닝): 이만큼도 안 닮으면 낭독 시도로 치지 않고 그냥 버린다 — 거절도 보내지 않고 예산도 쓰지 않는다.
+                       # 등록 중에는 호출어 게이트가 없어 주변 말소리가 그대로 문장 후보로 들어오는데(배경 잡담 실측 0.33,
+                       # 받아쓰기가 망가진 경우 0.18), 그때마다 거절을 보내면 FE 에 남의 소리로 만든 안내가 계속 뜬다.
+                       # 읽다가 틀린 경우(실측 0.65~0.88)는 이 위라 그대로 거절 안내를 받는다
+REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(INCONSISTENT)·소음(NOISY)·문장 불일치(MISMATCH) 를 따로 센다. 1번 문장이 잘못 녹음되면 그게
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
 WAKE_ENROLL_IDLE_S = float(os.environ.get("WAKE_ENROLL_IDLE_S") or 180.0)
 # NOTE(튜닝): 마지막 샘플(또는 시작) 뒤 이만큼 조용하면 수집을 접는다. 온보딩을 중간에
@@ -289,6 +304,8 @@ class VoiceSession:
     def __init__(self, link, speaker, profile_path):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
         self.speaker = speaker              # SpeakerVerifier — 등록 임베딩·centroid 계산용
+        self.stt = None                     # 받아쓰기(Router)를 주는 함수 — assistant 가 brain.ensure_router 를 꽂는다.
+                                            # None 이거나 받아쓰기를 못 쓰면 문장 확인을 건너뛴다 (등록 자체는 막지 않는다)
         self.profile_path = str(profile_path)
         self.active = False
         self.started_at = 0.0               # 이 수집이 시작된 시각 — 두 수집이 겹치면 나중에 시작한 쪽이 발화를 받는다
@@ -299,6 +316,8 @@ class VoiceSession:
         self._embs = {}                     # n -> 임베딩. 문장을 받을 때 그 자리에서 채운다
         self._rejects = 0                   # 이번 등록에서 목소리 불일치로 무른 횟수 (REJECT_BUDGET 까지)
         self._noisy = 0                     # 이번 등록에서 소음으로 무른 횟수 (REJECT_BUDGET 까지)
+        self._mismatch = 0                  # 이번 등록에서 문장이 다르게 들려 무른 횟수 (REJECT_BUDGET 까지)
+        self._idle_noted = False            # 받을 문장이 없는 동안 안내를 이미 적었다 — 주변 소리마다 같은 줄을 쌓지 않게
         self._last_reject = None            # (n, 임베딩) — 직전에 목소리 불일치로 무른 시도. 같은 문장 두 시도를 견주는 데 쓴다
         self._suspect = set()               # 찌그러진 것으로 의심돼 비교 기준에서 뺀 문장 번호
         self._collect_t = 0.0               # 마지막 voice_collect 시각 — 그보다 먼저 시작된 발화는 이전 지시의 것이다
@@ -324,9 +343,10 @@ class VoiceSession:
         self.total = int(total or len(SENTENCES))
         self._samples, self._embs, self._n, self._rejects, self._noisy = {}, {}, 0, 0, 0
         self._last_reject, self._suspect, self._warn_pending, self._warned = None, set(), False, False
+        self._mismatch, self._idle_noted = 0, False
         self.epoch += 1
         # 모델(첫 로드 12 s)은 낭독하는 동안 미리 — 마무리 때 메인 루프가 멈추지 않게. 이미 로드됐으면 즉시 끝난다
-        self._preload = threading.Thread(target=self.speaker._model, daemon=True)
+        self._preload = threading.Thread(target=self._preload_models, daemon=True)
         self._preload.start()
         self._tx("voice_ready", {"tempId": tempId})
 
@@ -334,7 +354,7 @@ class VoiceSession:
         log_rx("voice_collect", {"tempId": tempId, "n": n})
         if not self.active or tempId != self.tempId or not n:
             return
-        self._n = int(n)
+        self._n, self._idle_noted = int(n), False
         self._collect_t = time.monotonic()  # 이 시각 전에 시작된 발화는 이전 지시의 것 — on_utter 가 버린다
         self._warn_pending = False          # 다시 읽기로 답했다 — 앞선 경고에 대한 "그대로 진행" 이 늦게 와도 받지 않는다
         self.epoch += 1                    # 새 회차 — 진행 중이던 업로드의 결과는 이 문장에 반영하지 않는다
@@ -348,7 +368,7 @@ class VoiceSession:
         if self._last_reject and self._last_reject[0] != self._n:
             self._last_reject = None        # 다른 문장으로 넘어갔으면 직전 거절은 뜻이 없다
         if not self._embs:
-            self._rejects = self._noisy = 0  # 앞 문장이 다 사라지면 비교 기준도 사라진다 — 거절 예산도 되돌린다
+            self._rejects = self._noisy = self._mismatch = 0  # 앞 문장이 다 사라지면 비교 기준도 사라진다 — 거절 예산도 되돌린다
         text = SENTENCES[self._n - 1] if self._n <= len(SENTENCES) else "?"
         if dropped:
             print(f"[화자 등록] 문장 {self._n}/{self.total} 재수집 — 이전 샘플 {dropped}개 폐기")
@@ -394,8 +414,15 @@ class VoiceSession:
         if not self.active:
             return
         if self._n == 0:
-            # 다섯 문장을 다 읽고 확정을 기다리는 중이다. 명령으로 넘기지 않는 게 맞지만, 왜 안 먹는지는 남겨 둔다
-            print("[화자 등록] 확정 전이라 발화를 받지 않는다 — 등록을 마치거나 중단하세요")
+            # 지금은 받을 문장이 없다 — 판독 결과 화면(다음 문장을 누르기 전)이거나, 다 읽고 확정을 기다리는 중이다.
+            # 명령으로 넘기지 않는 게 맞지만 왜 안 먹는지는 남겨 둔다. 기다리는 동안 주변 소리가 VAD 를 계속 열기 때문에
+            # 한 번만 적는다 — 다음 지시(voice_collect)가 오면 다시 적는다
+            if not self._idle_noted:
+                self._idle_noted = True
+                print("[화자 등록] " + ("다섯 문장을 다 받았다 — 등록을 마치거나 중단하세요"
+                                        if len(self._samples) >= self.total else
+                                        "판독 결과 화면을 기다리는 중 — 화면에서 다음 문장으로 넘어가세요")
+                      + " (그때까지 들어온 소리는 받지 않는다)")
             return
         if t_utter is not None and t_utter < self._collect_t:
             # "이 문장 다시" 를 누르기 직전에 시작한 낭독 — 받으면 방금 무르려던 그 발화로 문장이 넘어간다.
@@ -424,6 +451,22 @@ class VoiceSession:
         if self._preload is not None:
             self._preload.join()            # 첫 문장이면 모델 로드(첫 12 s)를 여기서 기다린다
             self._preload = None
+        text_ok, why, text_sim = self._reads_sentence(audio)
+        if not text_ok:
+            # 화면에 뜬 문장이 아니라 다른 말이 들어왔다 — 임베딩에 넣지 않는다. 엉뚱한 발화로 만든 프로필은
+            # 본인 목소리인데도 나중에 인증을 통과하지 못하게 만든다
+            if text_sim < MISMATCH_DROP_SIM:
+                # 낭독이라고 보기 어렵다(주변 말소리·소음) — 조용히 버린다. 거절을 보내면 사용자가 하지도 않은
+                # 발화로 안내가 뜨고, 거절 예산까지 소진돼 정작 본인이 다시 읽을 기회가 줄어든다
+                print(f"[화자 등록] 문장 {n} 후보 아님 — {why}, 낭독으로 치지 않고 버린다")
+                return
+            if self._mismatch < REJECT_BUDGET:
+                # 읽다가 틀렸거나 받아쓰기가 흔들렸다 — 사유를 보내고 같은 문장을 다시 기다린다.
+                # 예산이 떨어지면 받아 준다: 발음이나 마이크 탓에 받아쓰기가 계속 뭉개지는 사람이 등록에 갇히지 않게
+                self._mismatch += 1
+                self._reject(n, "MISMATCH", "화면의 문장과 다르게 들렸어요. 문장을 그대로 읽어주세요.",
+                             f"{why}, 거절 {self._mismatch}/{REJECT_BUDGET}")
+                return
         try:
             emb = self.speaker.embed(audio)
             if not np.isfinite(emb).all():
@@ -457,7 +500,7 @@ class VoiceSession:
         self._last_reject = None
         self._samples[n], self._embs[n] = audio, emb
         # 이 문장의 판독 결과 — 거절 예산이 떨어져 받아 준 문장도 여기서 "낮음" 이 되어 사용자가 그 자리에서 다시 읽을 수 있다
-        quality = "양호" if (sim is None or sim >= QUALITY_MIN_SIM) and noise != "높음" else "낮음"
+        quality = "양호" if (sim is None or sim >= QUALITY_MIN_SIM) and noise != "높음" and text_ok else "낮음"
         # 통과 로그 — 실측 때 VOICE_MIN_SIM·MIN_SPEECH_S 를 맞추는 근거. 예산 소진 뒤 통과한 문장도 유사도가 남는다
         print(f"[화자 등록] 문장 {n} 통과 — 말소리 {spoken:.1f} s, "
               + (f"앞 문장들과 유사도 {sim:.2f}" if sim is not None else "첫 문장(비교 없음)")
@@ -473,10 +516,46 @@ class VoiceSession:
         self._start_upload(wav_bytes(audio), None, round(len(audio) / SR, 1), quality, noise, n, False)
 
     # ── 내부 ──
+    def _preload_models(self):
+        """낭독하는 동안 무거운 모델을 미리 올린다 — 화자 임베딩(첫 12 s)과 문장 확인용 받아쓰기.
+        받아쓰기는 보통 시작 직후 예열(brain.warm_stt_async)에서 이미 올라와 있어 곧바로 끝난다."""
+        self.speaker._model()
+        try:
+            router = self.stt() if self.stt else None
+            if router is not None:
+                router.warm()
+        except Exception as e:
+            print(f"[화자 등록] 받아쓰기 예열 실패 — 첫 문장 때 올린다: {e}")
+
+    def _reads_sentence(self, audio):
+        """받아쓴 말이 등록 문장 중 하나인가 — (통과 여부, 근거, 가장 닮은 정도).
+
+        받아쓰기를 아예 쓸 수 없으면(설치 없음·실패) 통과로 둔다. 받아쓰기 신뢰도가 낮아도 판정은 그대로 한다 —
+        신뢰도가 낮다고 봐주면 whisper 가 못 알아들은 엉뚱한 발화까지 같이 통과한다(실측: "골프." 0.18 통과).
+        받아쓰기가 계속 뭉개지는 사람은 호출측의 거절 예산(REJECT_BUDGET)이 풀어 준다.
+        """
+        try:
+            router = self.stt() if self.stt else None
+            if router is None:
+                return True, "받아쓰기 없음", 1.0
+            text, sec = router.transcribe(audio)
+        except Exception as e:
+            print(f"[화자 등록] 받아쓰기 실패 — 문장 확인을 건너뛴다: {e}")
+            return True, "받아쓰기 실패", 1.0
+        from router import _compact, similar
+
+        heard = _compact(text)
+        sim = max(similar(heard, _compact(s)) for s in SENTENCES)
+        logprob = router.last_logprob
+        print(f"[화자 등록] 받아쓰기 {sec:.1f} s \"{text}\" — 등록 문장과 가장 닮은 정도 {sim:.2f}"
+              + (f", 받아쓰기 신뢰도 {logprob:.2f}" if logprob is not None else ""))
+        return sim >= VOICE_MIN_TEXT_SIM, f"등록 문장과 닮은 정도 {sim:.2f} < {VOICE_MIN_TEXT_SIM}", sim
+
     def _reject(self, n, code, reason, why):
         """문장 하나를 무르고 사유를 보낸다. self._n 은 그대로 둔다 — 순번을 진행하지 않고 같은 문장을 계속 기다린다.
 
-        code 는 REJECT_CODES 의 TOO_SHORT·TOO_LONG·NOISY·INCONSISTENT 만 보내고, 목소리 분석 실패·저장 실패는 reason 만 보낸다.
+        code 는 REJECT_CODES 의 TOO_SHORT·TOO_LONG·NOISY·MISMATCH·INCONSISTENT 만 보내고, 목소리 분석 실패·저장 실패는
+        reason 만 보낸다.
         """
         print(f"[화자 등록] 문장 {n} 거절({code or '사유만'}) — {why}, 다시 기다린다")
         data = {"tempId": self.tempId, "n": n, "reason": reason}

@@ -5,7 +5,8 @@
   [상시] 시선을 백그라운드 추적 (커서·화면에 아무 영향 없음)
   [상시] 마이크 대기 → 발화 감지 순간, 그때 응시하던 화면 영역을 캡처
   발화가 끝나면 오디오+전체화면+응시크롭을 Gemini 한 콜로 → 명령 판단·해석·실행
-  호출어("시아야")로 명령이 한 번 통하면 90초 활성 세션 — 그동안은 호출어 없이 명령
+  호출어("시아야")로 명령이 한 번 통하면 활성 세션 — 그동안은 호출어 없이 명령
+  (세션 길이는 BE 소유다. AI 는 자기 시계를 갖지 않는다 — -320)
   손 제스처 = 커맨드 단축키 (정적/커스텀은 BE 매핑으로 실행; BE 매핑이 없는 동적
   제스처는 감지·HUD 표시만 하고 실행하지 않는다 — 로컬 폴백은 없다;
   컨텍스트 의존: 유튜브 활성 시 미디어 제어)
@@ -48,7 +49,7 @@ from hands import (GestureEngine, GestureStable, HoldToggle, MotionHandTracker,
                    scale_landmarks_by_hand_size)
 from main import Camera, GazeWorker, open_camera
 
-HERE = Path(__file__).parent
+from paths import asset_path, data_path  # 얼렸을 때 자산/사용자 데이터가 갈라진다
 
 GESTURE_HOLD_S = 0.8   # 제스처 커맨드: 이 시간 유지해야 발동 (오작동 방지)
 GESTURE_COOLDOWN_S = 1.2  # 연타 용도(10초 건너뛰기 반복)를 위해 짧게 — 홀드+재무장이 있어 안전
@@ -156,7 +157,7 @@ def run_check(camera_idx):
     mics = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
     print(f"마이크: {len(mics)}개 감지" if mics else "마이크 없음!")
     print(f"Gemini 키: {'있음' if load_api_key() else '없음 (음성 명령 비활성)'}  모델: {MODEL}")
-    calib_path = HERE / "models" / "calib.npz"
+    calib_path = data_path("models", "calib.npz")
     print(f"시선 캘리브레이션: {'있음' if calib_path.exists() else '없음 → python calibrate.py'}")
     cap = open_camera(camera_idx)
     ok, _ = cap.read()
@@ -185,7 +186,7 @@ def main():
 
     # --- 시선 (없어도 동작: 지시어 해석력만 떨어짐) ---
     calib = None
-    calib_path = HERE / "models" / "calib.npz"
+    calib_path = data_path("models", "calib.npz")
     if calib_path.exists():
         try:
             calib = Calibrator.load(calib_path)
@@ -194,7 +195,7 @@ def main():
     if calib is not None and tuple(calib.screen) != screen:
         print("해상도가 캘리브레이션 때와 다름 → 시선 없이 진행 (calibrate.py 재실행 권장)")
         calib = None
-    face = make_engine(HERE / "models")
+    face = make_engine(asset_path("models"))
     if calib is not None and calib.W.shape[0] != 1 + face.dim + face.dim * (face.dim + 1) // 2:
         print("특징 차원 변경(딥 모델 on/off) → 시선 없이 진행 (calibrate.py 재실행 권장)")
         calib = None
@@ -214,7 +215,7 @@ def main():
         from speaker import SpeakerVerifier
 
         # 미등록이어도 넘긴다 — brain 은 enrolled 를 매번 확인하므로 FE 등록(65) 뒤 재시작 없이 게이트가 켜진다
-        speaker = SpeakerVerifier(HERE / "models" / "speaker.npz")
+        speaker = SpeakerVerifier(data_path("models", "speaker.npz"))
         # 화자 모델은 첫 embed() 에서 올라간다 (실측 12 s) — 첫 "시아야" 에서 치르면 그 호출이 무시된 것처럼
         # 보이므로 시작하자마자 뒤에서 한 번 불러 둔다. 카메라·오버레이는 기다리지 않는다.
         threading.Thread(target=lambda: speaker.embed(np.zeros(16000, np.int16)),
@@ -227,7 +228,7 @@ def main():
     # 온보딩 5회로 만든 호출어 기준을 읽는다. BE 연결 뒤 활성 보이스 프로필과 함께 사용한다.
     from voice_bridge import WakeTemplateStore
 
-    wake_store = WakeTemplateStore(HERE / "models" / "wake.npz")
+    wake_store = WakeTemplateStore(data_path("models", "wake.npz"))
     if wake_store.current is None:
         print("호출어 템플릿 없음 → 세션이 열리지 않습니다. 앱의 이름 불러보기로 호출어를 5번 등록하세요."
               + (f" (등록본 손상: {wake_store.load_error})" if wake_store.load_error else ""))
@@ -235,7 +236,10 @@ def main():
         print(f"호출어 개인화 켜짐 — \"{wake_store.current.wake_text}\", 기준 {wake_store.current.base_n}개"
               f" (임계 {WAKE_TEMPLATE_MIN_SIM})")
 
-    # BE 연결 계층 — runtime.json 있으면 WS/MCP 접속(백그라운드), 없거나 SIA_NO_BE 면
+    # BE 연결 계층 — runtime.json 있으면 WS/MCP 접속(백그라운드).
+    # 주의: -320 이후 BE 가 없으면 **세션도 없고 실행도 없다**(_session_until 이 0.0,
+    # 모든 액션이 _be_down). 1단 로컬 판정까지는 돌지만 명령은 아무것도 실행되지 않으므로
+    # 데모·리허설을 SIA_NO_BE 로 잡으면 안 된다. 없거나 SIA_NO_BE 면
     # link=None 으로 오늘처럼 로컬 단독 동작. 실행/세션은 연결됐을 때만 BE 로 넘어간다.
     link = None
     if not os.environ.get("SIA_NO_BE"):
@@ -243,19 +247,19 @@ def main():
             from be_link import AgentLink
             from voice_bridge import VoiceProfileSync
 
-            voice_sync = VoiceProfileSync(speaker, HERE / "models" / "speaker.npz") if speaker else None
+            voice_sync = VoiceProfileSync(speaker, data_path("models", "speaker.npz")) if speaker else None
             link = AgentLink(voice_sync=voice_sync, wake_store=wake_store)
             print("BE 연결 계층 켜짐" + ("" if link.rt else " (runtime.json 없음 → 로컬 폴백)"))
             from calib_bridge import CalibSession
 
-            link.calib = CalibSession(screen, face, link, HERE / "models" / "calib.npz")
+            link.calib = CalibSession(screen, face, link, data_path("models", "calib.npz"))
             from voice_bridge import WakeEnroll
 
             link.wake = WakeEnroll(link, speaker, wake_store)  # 온보딩 이름 불러보기(206) — 5회 녹음으로 개인화 템플릿을 만든다
             if speaker is not None:
                 from voice_bridge import VoiceSession
 
-                link.voice = VoiceSession(link, speaker, HERE / "models" / "speaker.npz")
+                link.voice = VoiceSession(link, speaker, data_path("models", "speaker.npz"))
         except Exception as e:
             print(f"BE 연결 계층 비활성: {e}")
 
@@ -263,6 +267,8 @@ def main():
                   wake_template=wake_store)
     if link and link.wake:
         link.wake.wake_model = brain.wake  # 등록의 발음 확인도 실행과 같은 고정 모델로
+    if link and link.voice:
+        link.voice.stt = brain.ensure_router  # 낭독이 화면의 문장인지 확인할 받아쓰기 — 1단 라우터와 같은 모델을 나눠 쓴다
     brain.start()
     brain.warm_stt_async()  # STT 모델 예열 — 첫 명령이 로드 1.4~5s(+torch import) 를 떠안지 않게(팀원 실측 9/16)
 
@@ -289,9 +295,9 @@ def main():
     pyautogui.FAILSAFE = False  # 커서를 안 쓰는 모드 — 킬스위치는 ESC
     pyautogui.PAUSE = 0
 
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     pose = None
-    pose_path = HERE / "models" / "pose_landmarker_full.task"
+    pose_path = asset_path("models", "pose_landmarker_full.task")
     if not args.no_pose:
         try:
             pose = BodyPoseEngine(pose_path, max_fps=POSE_MAX_FPS, max_width=POSE_MAX_WIDTH)
@@ -310,12 +316,12 @@ def main():
     palm_scroll = PalmScrollDetector()
     pinch_volume = PinchVolumeDetector()
     two_hand_motion = TwoHandSpreadDetector()
-    custom = CustomGestureStore(HERE / "custom_gestures.npz")
+    custom = CustomGestureStore(data_path("custom_gestures.npz"))
     active_custom = custom
     disabled_gestures = set()
     # BE가 연결되면 사용자별 커스텀 제스처 템플릿을 이 캐시에 동기화한다.
     # 연결 전에는 위의 로컬 템플릿을 그대로 사용한다.
-    remote_cache = GestureTemplateCache(HERE / ".gesture_cache", HERE / "be_custom_gestures.npz")
+    remote_cache = GestureTemplateCache(data_path(".gesture_cache"), data_path("be_custom_gestures.npz"))
     registration = GestureRegistration(link, remote_cache, active_custom) if link else None
     gesture_preview = GesturePreview(link) if link else None
     from voice_bridge import MicPreview
@@ -428,7 +434,7 @@ def main():
                     elif event_type == "model_load":
                         model_name = data.get("name", "")
                         model_path = Path(data.get("path", ""))
-                        if model_path.is_file() or (HERE / "models" / model_path.name).is_file():
+                        if model_path.is_file() or asset_path("models", model_path.name).is_file():
                             link.send_event("model_loaded", {"name": model_name})
                         else:
                             link.send_event("model_load_failed", {"name": model_name,
