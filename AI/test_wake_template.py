@@ -582,6 +582,45 @@ def test_wake_enroll_idle_expires():
     assert w._samples == [] and not w.expired()
 
 
+def test_wakeword_enroll_cancel_reaches_main_loop():
+    """BE 의 호출어 등록 취소가 메인 루프까지 온다 (-315 수신부).
+
+    BE 가 -315 로 이 이벤트를 만들기 전에는 보내는 쪽이 없어 수신부를 두지 않았다(죽은 코드).
+    이제 받는다. 중계 목록에서 빠지면 취소가 조용히 사라지고, 등록이 안 접혀서 그 뒤 모든
+    발화가 샘플로 먹힌다 — 음성 명령이 통째로 죽는 그 증상이 그대로 돌아온다.
+
+    WS 워커가 아니라 메인 루프에서 처리하는 게 핵심이다. cancel() 은 active·_samples·epoch 를
+    락 없이 갈아치우고 메인 루프가 같은 상태를 on_utter 로 쓴다 — 형제 이벤트
+    voice_reg_cancel 도 같은 이유로 큐를 거친다.
+    """
+    import json
+    import threading
+
+    from be_link import AgentLink
+
+    ln = AgentLink.__new__(AgentLink)
+    ln._events, ln._event_lock = [], threading.Lock()
+    ln._session_condition, ln.be_session_id, ln.session_until_mono = threading.Condition(), None, 0.0
+    ln.gesture_ready = False
+    for attr in ("voice_sync", "calib", "wake", "wake_store"):
+        setattr(ln, attr, None)
+
+    ln._on_event(json.dumps({"type": "wakeword_enroll_cancel", "data": {}}))
+    assert ln.take_events() == [("wakeword_enroll_cancel", {})]
+
+    # wake 가 붙어 있어도 WS 스레드에서 직접 접지 않는다 — 큐로만 넘긴다.
+    class Wake:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    ln.wake = Wake()
+    ln._on_event(json.dumps({"type": "wakeword_enroll_cancel", "data": {}}))
+    assert not ln.wake.cancelled, "WS 워커가 직접 cancel 하면 메인 루프와 경합한다"
+    assert ln.take_events() == [("wakeword_enroll_cancel", {})]
+
+
 if __name__ == "__main__":
     import sys
     try:
