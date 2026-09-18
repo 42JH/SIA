@@ -28,9 +28,10 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).parent
-CASES = HERE / "eval" / "cases"
-HISTORY = HERE / "eval" / "history.jsonl"
+from paths import DATA_DIR
+
+CASES = DATA_DIR / "eval" / "cases"
+HISTORY = DATA_DIR / "eval" / "history.jsonl"
 
 
 BOX_IOU_MIN = 0.5   # 영역 일치 하한. 물체 검출의 통상 기준이고, 9/3 기준선과 이만큼도
