@@ -18,6 +18,13 @@ from hands import GestureEngine
 HERE = Path(__file__).resolve().parent
 
 
+def json_default(value):
+    """Serialize NumPy scalar diagnostics while rejecting unsupported objects."""
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f'{type(value).__name__} is not JSON serializable')
+
+
 class LocalLink:
     def __init__(self):
         self.events = []
@@ -101,7 +108,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     report = evaluate(args.assets, args.logs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    # MediaPipe/NumPy diagnostics can contain scalar np.float32/np.int64 values.
+    # Convert only NumPy scalars here so the evaluator always produces its
+    # report without changing the values exercised by the registration path.
+    args.output.write_text(json.dumps(
+        report, ensure_ascii=False, indent=2,
+        default=json_default,
+    ), encoding='utf-8')
     for row in report['photos']:
         print(row['source'], row['result']['event'], ascii(row['result'].get('reason')), row['labels'])
     for row in report['recordings']:

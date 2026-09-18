@@ -74,10 +74,19 @@ class OcclusionTests(unittest.TestCase):
         self.assertEqual(link.sent[-1][0], 'reg_rejected', link.sent[-1])
         reason = link.sent[-1][1]['reason']
         self.assertNotIn('손 개수가 바뀌었습니다', reason)
-        self.assertIn('오래 가려졌', reason)
+        self.assertIn('오래 놓쳤습니다', reason)
+
+    def test_edge_occlusion_now_tolerated_as_hands_meeting_at_start_or_end(self):
+        """맨 앞(또는 끝) 한 프레임만 손이 하나로 잡히는 건, 이제 "손을 맞댄 채
+        시작(또는 종료)"으로 보고 허용해야 한다 — 손을 맞대는 동작(박수 등)은
+        시작·끝에 두 손이 뚜렷이 분리돼 있어야 한다는 예전 전제와 안 맞았다."""
+        for bad in ({0}, {30}):
+            with self.subTest(bad=bad):
+                link = self.register(bad)
+                self.assertEqual(link.sent[-1][0], 'reg_captured', link.sent[-1])
 
     def test_long_edge_and_frequent_occlusion_rejected(self):
-        for bad in ({0}, {30}, set(range(12, 18)), set(range(2, 29, 3))):
+        for bad in (set(range(12, 18)), set(range(2, 29, 3))):
             with self.subTest(bad=bad):
                 link = self.register(bad)
                 self.assertEqual(link.sent[-1][0], 'reg_rejected')

@@ -136,6 +136,47 @@ class MotionTests(unittest.TestCase):
         self.assertIn("화면 밖", payload["reason"])
 
     @staticmethod
+    def sized_hand(x=0.3, side="Left", size=0.1):
+        """전체 손을 비례로 축소/확대한다 — 모양(정규화 후 특징)은 그대로 두고
+        크기만 바꿔야 MIN_PALM_SIZE 검사만 독립적으로 테스트할 수 있다."""
+        pts = np.array([[i % 4 * 0.02, -(i // 4) * 0.025] for i in range(21)], dtype=float)
+        pts[0] = 0
+        pts[9] = [0, -0.1]
+        pts *= size / 0.1
+        pts += [x, 0.6]
+        return dict(landmarks=pts, handedness=side, gesture=None)
+
+    def test_static_registration_tolerates_brief_small_hand_glitch(self):
+        """기도처럼 두 손이 맞닿는 순간 손목-중지MCP 벡터가 잠깐 짧게 잡히는
+        경우가 실측으로 확인됐다(실제 등록 시도 303프레임 중 11프레임만 순간
+        작게 잡히고 나머지는 정상 크기). 절대 최솟값 하나로 거부하면 이런
+        정상 등록도 '손이 너무 작게'로 잘못 걸린다."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(25):
+            size = 0.03 if i in (10, 11) else 0.1  # 25프레임 중 2프레임만 순간적으로 작게
+            reg._collect([self.sized_hand(size=size)], i * 0.05)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
+    def test_static_registration_rejects_sustained_small_hand(self):
+        """대부분의 프레임에서 손이 계속 작게 잡히면(카메라에서 실제로 멀리
+        있는 경우) 여전히 거부해야 한다 — 백분위수 완화가 진짜 문제를
+        가려서는 안 된다."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(25):
+            reg._collect([self.sized_hand(size=0.03)], i * 0.05)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("손이 너무 작게", payload["reason"])
+
+    @staticmethod
     def tilted_hand(x, angle_deg, side="Left"):
         """스와이프처럼 팔을 휘두르며 손목이 자연스럽게 기우는 상황을 흉내낸다."""
         pts = np.array([[i % 4 * 0.02, -(i // 4) * 0.025] for i in range(21)], dtype=float)
@@ -207,6 +248,32 @@ class MotionTests(unittest.TestCase):
         # 거리 ÷ 기준 거리로 유사도를 근사한다 — 0보다 크고 1 이하여야 한다.
         self.assertGreater(payload["similarity"], 0)
         self.assertLessEqual(payload["similarity"], 1)
+
+    def test_builtin_collision_reported_even_when_other_takes_are_inconsistent(self):
+        """회차끼리 서로 다르더라도(일관성 미달), 그중 한 회차가 내장 스와이프와
+        겹치면 그 사유를 먼저 알려줘야 한다 — 순서가 반대(일관성 검사 먼저)면
+        애초에 중복이라 등록될 수 없는 동작인데도 사용자에게 회차 일관성부터
+        맞추라는 헛수고를 시킨다(실제 사용자 피드백으로 발견)."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=3, takeDurationSec=1), now=0)
+        reg.take = 1
+        # 실제 스와이프와 똑같이 움직이는 회차.
+        for i, t in enumerate(np.linspace(0, 1, 21)):
+            reg._collect([hand(0.3 + t * 0.2)], i * 0.05)
+        reg.take = 2
+        # 완전히 다른 동작(제자리에서 손모양만 크게 바뀜) — 1회차와 전혀 다르다.
+        for i, t in enumerate(np.linspace(0, 1, 21)):
+            reg._collect([hand(0.3, shape=t * 0.3)], i * 0.05)
+        reg.take = 3
+        for i, t in enumerate(np.linspace(0, 1, 21)):
+            reg._collect([hand(0.3, shape=-t * 0.3)], i * 0.05)
+        reg.hand_counts = [1] * 63
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("스와이프", payload["reason"])
+        self.assertNotIn("회차", payload["reason"])
 
     def test_one_hand_dynamic_swipe_collision_scales_with_camera_distance(self):
         """카메라에서 멀리 있어서 손이 작게 잡히는 사람이 화면 비율로는 작게(하지만
@@ -327,7 +394,10 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(event, "reg_captured", self.link.sent[-1])
 
     def test_hand_count_change_mid_take_gives_clean_rejection(self):
-        """회차 도중 손 개수가 바뀌면(가려짐 등) raw numpy 예외가 아니라 안내 문구로 거부돼야 한다."""
+        """회차 도중 손 개수가 (한 번이 아니라 오가며) 바뀌면 raw numpy 예외가
+        아니라 안내 문구로 거부돼야 한다 — 맨 앞이나 끝에서 한 번만 합쳐지는
+        경우(손을 맞댄 채 시작·종료)는 이제 정상으로 허용되므로, 여기서는
+        중간에 다시 두 손으로 돌아오는 진짜로 애매한 경우를 쓴다."""
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
         reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, countdownSec=0), now=0)
         reg.take = 1
@@ -336,7 +406,9 @@ class MotionTests(unittest.TestCase):
             reg._collect(pair(i * 0.1), i * 0.1)
         for i in range(5, 10):  # 오른손을 놓친 것처럼 한 손만 남김
             reg._collect([hand()], i * 0.1)
-        reg.hand_counts = [2] * 5 + [1] * 5
+        for i in range(10, 15):  # 다시 두 손으로 돌아옴 — 맨 끝 병합이 아니라 오간 것
+            reg._collect(pair(i * 0.1), i * 0.1)
+        reg.hand_counts = [2] * 5 + [1] * 5 + [2] * 5
         reg.phase = "WAIT_FINISH"
         reg.finish()
         event, payload = self.link.sent[-1]
@@ -355,8 +427,13 @@ class MotionTests(unittest.TestCase):
         reg = GestureRegistration(self.link, self.cache, store)
         reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
         reg.take = 1
+        # 손모양을 기준 자세 주변에서 살짝 흔든다(빵야처럼 손은 거의 고정한
+        # 채 엄지만 까딱여 PREFIX_MIN_MOTION을 넘긴 경우를 흉내낸다) — 왕복이라
+        # 평균은 기준 자세에 가깝게 남고, 움직임은 CROSS_BOUNDARY_MOTION_MAX
+        # 미만으로 유지된다. 한쪽으로만 계속 커지는 변화라면 평균 자세 자체가
+        # 기준과 달라져 "거의 같은 자세"라고 볼 수 없다.
         for i in range(20):
-            h = dict(hand(0.3, "Left", shape=i * 0.01), gesture=None)
+            h = dict(hand(0.3, "Left", shape=0.04 * np.sin(i * np.pi / 4)), gesture=None)
             reg._collect([h], i * 0.05)
         reg.hand_counts = [1] * 20
         reg.phase = "WAIT_FINISH"
@@ -369,8 +446,11 @@ class MotionTests(unittest.TestCase):
     def test_static_registration_collides_with_existing_dynamic_pose(self):
         """반대 방향도 마찬가지다 — 같은 손모양이 동적으로 이미 등록돼 있으면
         정적으로 다시 등록해도 '너무 유사합니다'로 걸려야 한다."""
+        # CROSS_BOUNDARY_MOTION_MAX 미만으로 유지 — 이 저장된 "동적" 시퀀스가
+        # 거의 안 움직여야 정적 자세와 비교 대상이 된다("원 그리기"처럼 실제로
+        # 크게 움직이는 동작은 비교하지 않는다).
         times = np.linspace(0, 1, 20)
-        points = [ordered_landmarks([dict(hand(0.3, "Left", shape=t * 0.15), gesture=None)])
+        points = [ordered_landmarks([dict(hand(0.3, "Left", shape=t * 0.06), gesture=None)])
                   for t in times]
         seq = encode_sequence(times, points)
         store = CustomGestureStore(self.root / "missing.npz")
@@ -392,13 +472,42 @@ class MotionTests(unittest.TestCase):
         self.assertIn("너무 유사합니다", payload["reason"])
         self.assertEqual(payload.get("similarTo"), "기존동적")
 
+    def test_genuinely_moving_dynamic_pose_does_not_false_positive_against_static(self):
+        """"원 그리기"처럼 실제로 크게 움직이는 동적 제스처는, 그 궤적 중 한
+        순간의 손모양이 새로 등록하는 정적 자세와 우연히 같아도 걸리면 안
+        된다 — 손모양은 고정하고 위치만 원을 그리듯 크게 움직인 저장 동작을
+        만들어, 그 시작 지점과 완전히 같은 정적 자세를 등록해도 통과해야
+        한다(실사용 중 실제로 이 오탐이 재현됨)."""
+        times = np.linspace(0, 1, 20)
+        points = [ordered_landmarks([dict(hand(0.3 + 0.15 * np.cos(2 * np.pi * t), "Left", shape=0),
+                                          gesture=None)])
+                  for t in times]
+        seq = encode_sequence(times, points)
+        store = CustomGestureStore(self.root / "missing.npz")
+        store.data.update(sequences=np.array([seq]), sequence_names=np.array(["원 그리기"]),
+                          motions=np.array(["DYNAMIC"]), hand_counts=np.array([1], dtype=np.int32),
+                          durations=np.array([1.0]))
+
+        reg = GestureRegistration(self.link, self.cache, store)
+        reg.start(dict(tempId="t1", motion="STATIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(20):
+            # 원 그리기의 t=0 지점(shape=0, x=0.3+0.15)과 같은 정적 자세.
+            h = dict(hand(0.3 + 0.15, "Left", shape=0), gesture=None)
+            reg._collect([h], i * 0.05)
+        reg.hand_counts = [1] * 20
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
     def test_two_hand_static_registration_collides_with_existing_two_hand_dynamic(self):
         """2손도 마찬가지다 — 같은 두 손 모양이 동적으로 이미 등록돼 있으면
         정적으로 다시 등록해도 걸려야 한다(둘 다 self.data에 있지만 motion이
         다르면 sequence_comparisons가 원래 서로 못 본다)."""
+        # CROSS_BOUNDARY_MOTION_MAX 미만으로 유지(위 1손 테스트와 같은 이유).
         times = np.linspace(0, 1, 20)
-        pair = lambda t: [dict(hand(0.3, "Left", shape=t * 0.1), gesture=None),
-                          dict(hand(0.65, "Right", shape=t * 0.1), gesture=None)]
+        pair = lambda t: [dict(hand(0.3, "Left", shape=t * 0.06), gesture=None),
+                          dict(hand(0.65, "Right", shape=t * 0.06), gesture=None)]
         points = [ordered_landmarks(pair(t)) for t in times]
         seq = encode_sequence(times, points)
         store = CustomGestureStore(self.root / "missing.npz")
@@ -434,6 +543,27 @@ class MotionTests(unittest.TestCase):
         reg.finish()
         event, payload = self.link.sent[-1]
         self.assertEqual(event, "reg_rejected")
+        self.assertIn("놓쳤습니다", payload["reason"])
+
+    def test_leading_missing_hand_gap_is_rejected_with_accurate_reason(self):
+        """회차 시작 부분에서 손이 전혀 안 잡히면(카메라 준비 전 등), 그 구간이
+        길이·중간 공백 검사 어디에도 안 걸리고 조용히 잘려나가 동작의 앞부분이
+        없는 채로 남는다 — 실제 재현된 문제: 다른 회차와 궤적이 통째로 달라
+        보여 "회차가 다르다"는 엉뚱한 사유로 거부됐다. 정확한 사유(어느 회차,
+        시작에서 손을 놓침)로 거부해야 한다."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=2), now=0)
+        reg.take = 1
+        for i in range(21):  # 회차 시작 ~0.7초 동안 손이 전혀 안 잡힘
+            reg._collect([], i * 0.033)
+        for i in range(21, 54):
+            reg._collect([hand(0.3 + (i - 21) * 0.01)], i * 0.033)
+        reg.hand_counts = [0] * 21 + [1] * 33
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("1회차", payload["reason"])
         self.assertIn("놓쳤습니다", payload["reason"])
 
     def test_static_capture_collects_several_frames_per_take(self):
@@ -497,6 +627,26 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
         self.assertEqual(self.link.sent[-1][1]["hands"], 2)
 
+    def test_two_hand_static_registration_recovers_from_duplicate_handedness_label(self):
+        """기도처럼 두 손을 맞대는 대칭 동작은 MediaPipe가 두 손 모두 같은 쪽
+        (예: 'Left','Left')으로 잘못 분류하는 경우가 실제로 있다(실측 진단
+        로그: 한 회차 전체가 그랬다). 예전에는 그 회차의 모든 프레임을
+        ordered_landmarks가 버려 두 손 판정 자체가 무너지고, 결국 남은 한손
+        프레임만으로 오판돼 엉뚱한 회차를 "손 개수가 달라졌다"고 거부했다.
+        이제는 손목 x좌표로 순서를 고정해 정상적인 두 손 정적 등록으로
+        살아야 한다."""
+        pair = lambda: [hand(0.3, "Left"), hand(0.6, "Left")]
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=3, countdownSec=0), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for i in range(20):
+                reg._collect(pair(), take * 3 + i * 0.02)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+        self.assertEqual(self.link.sent[-1][1]["hands"], 2)
+
     def test_two_hand_dynamic_tracks_second_hand(self):
         pair = lambda t: [hand(), hand(0.6 + t * 0.2, "Right")]
         store = self.register("DYNAMIC", pair)
@@ -516,6 +666,19 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(any(d == "renamed" for _, d, _, _ in self.feed(store, lambda t: [hand(0.3 + t * 0.2)], duration=0.3)))
         self.cache._rebuild({"2": {"name": "old"}})
         self.assertEqual(CustomGestureStore(self.cache.combined_path).class_names(), ["old"])
+
+    def test_classify_with_distance_ignores_disabled_names(self):
+        """꺼진 커스텀 제스처는 kNN 후보에서 완전히 빼야 한다 — 거리로 라벨을
+        고른 뒤 호출측(assistant.py)이 나중에 꺼짐 여부로 걸러내면, 그
+        시점엔 이미 raw_gesture(내장 라벨)가 덮어써져 있어 내장 인식이
+        그 프레임만큼 굶는다. v2 시퀀스 저장소(update)는 이미 이렇게
+        동작하므로 legacy kNN도 같이 맞춘다."""
+        store = CustomGestureStore(self.root / "missing.npz")
+        store.legacy.X = np.array([normalize_landmarks(hand()["landmarks"])])
+        store.legacy.names = ["old"]
+        self.assertEqual(store.classify_with_distance(hand()["landmarks"])[0], "old")
+        self.assertEqual(store.classify_with_distance(hand()["landmarks"], disabled={"old"}),
+                         (None, float("inf")))
 
     def test_gap_cannot_complete_motion(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
@@ -540,7 +703,12 @@ class MotionTests(unittest.TestCase):
         a = encode_sequence(times, points)
         b = encode_sequence(times, points[::-1])
         self.assertGreater(distance(a, b, 1), 1)
-        self.assertIsNone(ordered_landmarks([hand(side="Unknown"), hand(0.6, "Unknown")]))
+        # 핸디드니스가 둘 다 같아 좌우를 구분할 수 없어도(실측: 기도처럼 손을
+        # 맞대는 동작에서 MediaPipe가 실제로 이렇게 낸다) 프레임을 버리지 않고
+        # 손목 x좌표로 순서를 고정해 살린다.
+        ordered = ordered_landmarks([hand(side="Unknown"), hand(0.6, "Unknown")])
+        self.assertIsNotNone(ordered)
+        self.assertEqual(ordered.shape, (2, 21, 2))
 
     @staticmethod
     def two_hand_tilt_pose(spread=0.3, global_tilt_deg=0.0, relative_tilt_deg=0.0, center=(0.5, 0.6)):
@@ -641,9 +809,16 @@ class MotionTests(unittest.TestCase):
 
     def test_tracking_glitch_bridges_when_matching_gesture_is_in_progress(self):
         """등록된 2손 동적 제스처(박수)를 추적하는 도중 핸디드니스가 한 프레임
-        오판돼도, claimed가 끊기지 않고 결국 동작이 완성돼야 한다 — 안 그러면
-        그 찰나에 커스텀 동작이 새어나간 raw 판정(내장 스와이프 등)으로 잘못
-        해석될 수 있고, 누적 중이던 궤적도 지워져 인식 자체가 실패할 수 있다."""
+        오판돼도(둘 다 같은 쪽으로 잡히는 경우), claimed가 끊기지 않고 결국
+        동작이 완성돼야 한다 — 안 그러면 그 찰나에 커스텀 동작이 새어나간
+        raw 판정(내장 스와이프 등)으로 잘못 해석될 수 있고, 누적 중이던
+        궤적도 지워져 인식 자체가 실패할 수 있다.
+
+        ordered_landmarks는 이런 핸디드니스 중복을 손목 x좌표로 복구하지만
+        (별개 회귀 수정), update()의 추적 연속성 판단(identity)이 여전히
+        원본 핸디드니스 라벨만 보면 복구된 프레임을 "손이 바뀐 것"으로
+        오인해 이력을 지워버린다 — hand_identity가 이 경우도 정상 케이스와
+        같은 값으로 취급해야 이력이 끊기지 않는다."""
         store = CustomGestureStore(self.root / "missing.npz")
         times = np.linspace(0, 1, 30)
         points = [ordered_landmarks(self.clap_hands(i, n=30)) for i in range(30)]

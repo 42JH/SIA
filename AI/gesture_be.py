@@ -506,9 +506,14 @@ class GestureRegistration:
         # 손이 너무 멀리/작게 잡혀도 못 걸러낸다. 크기 변화(MAX_SIZE_CV)는 뺐다 —
         # 저장 형식(normalize_landmarks·encode_sequence) 둘 다 스케일을 지우고
         # 저장하므로, 등록 중 카메라와의 거리가 바뀌어도 최종 결과엔 영향이 없다.
-        if min(self.sizes) < self.MIN_PALM_SIZE:
+        # 절대 최솟값이 아니라 하위 10번째 백분위수를 본다 — 기도처럼 두 손을
+        # 맞대는 동작은 손이 겹치는 순간 손목-중지MCP 벡터가 잠깐 짧게 잡히는
+        # 경우가 실측으로 확인됐다(실제 등록 시도 303프레임 중 11프레임만 순간적으로
+        # 작게 잡히고 나머지는 정상). 손이 정말 멀리 있으면 대부분의 프레임이
+        # 작게 잡혀 이 기준도 넘지 못하지만, 가끔의 순간적 튐은 통과시킨다.
+        if np.percentile(self.sizes, 10) < self.MIN_PALM_SIZE:
             raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
-        if self.sizes2 and min(self.sizes2) < self.MIN_PALM_SIZE:
+        if self.sizes2 and np.percentile(self.sizes2, 10) < self.MIN_PALM_SIZE:
             raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
         # 순간 좌표 튐 대신 회차별 지속 시간/빈도로 화면 이탈을 판정한다.
         self._validate_frame_bounds()
@@ -556,13 +561,7 @@ class GestureRegistration:
                 raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
             poses.append(np.mean(features, axis=0))
             aligned_features.extend(features)
-        self._validate_take_consistency(
-            poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE
-        )
         feats = np.asarray(aligned_features, dtype=np.float32)
-        spread = float(weighted_distance(feats - feats.mean(axis=0)).mean())
-        if spread > self.MAX_SPREAD:
-            raise ValueError("샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요")
         ranked_hits = sorted(self.builtin_hits.items(), key=lambda item: (-item[1], item[0]))
         if ranked_hits and ranked_hits[0][1] >= len(feats) * self.BUILTIN_OVERLAP:
             label, count = ranked_hits[0]
@@ -615,6 +614,15 @@ class GestureRegistration:
                         similar_to=cross_name,
                         similarity=similarity,
                     )
+        # 기존/내장 제스처와 겹치지 않는다는 걸 먼저 확인한 뒤에야 회차 간
+        # 일관성·표본 분산을 본다 — 애초에 중복이라 거부될 동작이면 일관성부터
+        # 맞추라고 헛수고를 시키지 않는다.
+        self._validate_take_consistency(
+            poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE
+        )
+        spread = float(weighted_distance(feats - feats.mean(axis=0)).mean())
+        if spread > self.MAX_SPREAD:
+            raise ValueError("샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요")
         payload = self.cache.template_bytes("__pending__", feats)
         self.link.put_gesture_npz(self.temp_id, payload)
 
@@ -750,8 +758,14 @@ class GestureRegistration:
 
         박수처럼 두 손이 맞닿는 동작은 그 순간 감지기가 한 손으로 잘못 세는
         경우가 흔하다. 정상 두 손 프레임으로 둘러싸인 TRACKING_GRACE_S 이내의
-        짧은 구간은 가려짐으로 보고 허용하되, 시작·끝이 두 손으로 확인되지
-        않거나 유효 비율이 낮으면 인정하지 않는다.
+        짧은 구간은 가려짐으로 보고 허용한다.
+
+        손을 맞댄 채로 시작하거나(벌어지는 동작) 맞댄 채로 끝나는(모이는
+        동작) 경우도 있다 — 두 손이 하나로 보이는 자연스러운 시작·끝 자세라
+        그 구간이 아무리 길어도 허용한다. 대신 "두 손이 처음 확인된 지점"부터
+        "마지막으로 확인된 지점"까지(실제 두 손 동작이 있었던 구간) 안에서는
+        여전히 대부분(80%) 두 손이어야 한다 — 그 안에서 손을 놓치는 건
+        자연스러운 시작·끝이 아니라 추적 실패다.
 
         반환: (이 회차가 '두 손 촬영'으로 인정되는지, 그 경우 쓸 유효 2손
         프레임 목록 — 두 손을 한 번도 확인 못 했으면 빈 리스트).
@@ -759,13 +773,14 @@ class GestureRegistration:
         frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
         if not frames:
             return False, []
-        valid = [(t, pts) for t, pts in frames if pts is not None and len(pts) == 2]
-        if not valid:
+        two_idxs = [i for i, (_, pts) in enumerate(frames) if pts is not None and len(pts) == 2]
+        if not two_idxs:
             return False, []
+        valid = [frames[i] for i in two_idxs]
+        inner = frames[two_idxs[0]:two_idxs[-1] + 1]
         gaps = [b - a for (a, _), (b, _) in zip(valid, valid[1:])]
-        ok = not (valid[0][0] != frames[0][0] or valid[-1][0] != frames[-1][0]
-                  or len(valid) < len(frames) * 0.8
-                  or (len(valid) < len(frames) and max(gaps, default=0) >= TRACKING_GRACE_S))
+        ok = not (len(valid) < len(inner) * 0.8
+                  or (len(valid) < len(inner) and max(gaps, default=0) >= TRACKING_GRACE_S))
         return ok, valid
 
     def _infer_hand_count(self):
@@ -782,11 +797,20 @@ class GestureRegistration:
         짧은 구간은 "2손이 잠깐 가려졌을 뿐"으로 보고 2손으로 채워 넣은 뒤
         비율을 계산한다 — 이후 실제 검증(_two_hand_take_frames)이 받아줄
         정도의 가려짐이라면, 판정 단계에서도 같은 기준으로 봐야 한다.
+
+        손을 맞댄 채로 시작·종료하는 회차(_two_hand_take_frames가 인정하는
+        경우)는 그 회차 전체를 2손으로 센다 — 안 그러면 맞댄 구간이 길 때
+        똑같이 비율을 깎아 전체 판정을 한 손으로 뒤집어 버린다.
         """
         total = two_hand = 0
         for take in range(1, self.takes + 1):
-            frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
-            total += len(frames)
+            raw = self.take_frames.get(take, [])
+            total += len(raw)
+            ok, valid = self._two_hand_take_frames(take)
+            if ok:
+                two_hand += len(raw)
+                continue
+            frames = [(t, ordered_landmarks(hands)) for t, hands in raw]
             two_idxs = [i for i, (_, pts) in enumerate(frames) if pts is not None and len(pts) == 2]
             two_hand += len(two_idxs)
             for a, b in zip(two_idxs, two_idxs[1:]):
@@ -807,20 +831,34 @@ class GestureRegistration:
         sequences = []
         durations = []
         for take in range(1, self.takes + 1):
-            frames = [(t, ordered_landmarks(hands)) for t, hands in self.take_frames.get(take, [])]
+            raw = self.take_frames.get(take, [])
+            frames = [(t, ordered_landmarks(hands)) for t, hands in raw]
             if hand_count == 2 and frames:
                 ok, valid = self._two_hand_take_frames(take)
                 if not valid:
                     raise ValueError(f"{take}회차에서 두 손을 확인하지 못했습니다. 손 개수를 유지하고 두 손을 보여주세요")
                 if not ok:
                     raise ValueError(
-                        f"{take}회차에서 두 손이 오래 가려졌거나 촬영 시작·끝에 확인되지 않았습니다. "
-                        "손 개수를 유지하고, 두 손을 다시 벌려 보여준 뒤 촬영을 마쳐주세요"
+                        f"{take}회차에서 두 손을 오래 놓쳤습니다. 손을 맞댄 채로 시작·종료하는 건 "
+                        "괜찮지만, 두 손이 벌어져 있는 동안은 계속 두 손을 보여주세요"
                     )
                 frames = valid
             frames = [(t, pts) for t, pts in frames if pts is not None]
             if len(frames) < 2:
                 raise ValueError(f"{take}회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요")
+            # 손을 놓친 구간이 촬영 맨 앞이나 끝에 걸리면, 놓친 프레임이 그냥
+            # 통째로 사라져 위 길이·아래 중간 공백 검사 어디에도 안 걸린다 —
+            # 동작의 앞부분(또는 뒷부분)이 잘려나간 채로 조용히 넘어가, 다른
+            # 회차와는 궤적이 통째로 달라 보여 "회차가 다르다"는 엉뚱한 사유로
+            # 거부된다. 실제 원인(손을 놓친 시점)을 바로 알려준다. 2손은 손을
+            # 맞댄 채 시작·종료하는 게 정상이라(_two_hand_take_frames가 이미
+            # 확인) 여기서는 보지 않는다 — 1손에서만 의미가 있다.
+            if hand_count == 1 and raw and (frames[0][0] - raw[0][0] >= TRACKING_GRACE_S
+                       or raw[-1][0] - frames[-1][0] >= TRACKING_GRACE_S):
+                raise ValueError(
+                    f"{take}회차 촬영 시작 또는 끝에서 손을 놓쳤습니다. "
+                    "촬영이 시작되기 전에 손을 화면에 먼저 보여주세요"
+                )
             # 2손 정적은 모은 프레임을 평균내 떨림을 지우는 방식이라(아래), 딱 2장으론
             # 평균의 의미가 없다 — encode_sequence가 요구하는 수학적 최소(2)와는 별개로,
             # 노이즈를 실제로 줄이려면 이만큼은 있어야 한다.
@@ -864,9 +902,6 @@ class GestureRegistration:
             sequences.append(seq)
             durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
         compare = motion_matching_distance if self.motion == self.DYNAMIC else matching_distance
-        self._validate_take_consistency(
-            sequences, lambda a, b: compare(a, b, hand_count), self.TAKE_SEQUENCE_DISTANCE
-        )
         matches = []
         for take, seq in enumerate(sequences, 1):
             candidates = self.custom_store.sequence_comparisons(seq, self.motion, hand_count)
@@ -916,6 +951,14 @@ class GestureRegistration:
                 similar_to=near,
                 similarity=similarity,
             )
+        # 기존/내장 제스처와 겹치지 않는다는 걸 먼저 확인한 뒤에야 회차 간
+        # 일관성을 본다 — 애초에 중복이라 거부될 동작이면 일관성부터 맞추라고
+        # 헛수고를 시키지 않는다. 위 두 검사 모두 회차 전체를 이미 다 보므로
+        # (내장 충돌은 모든 회차를 순회, 중복검사는 회차별로 비교) 순서를
+        # 바꿔도 검사 자체의 정확도는 그대로다.
+        self._validate_take_consistency(
+            sequences, lambda a, b: compare(a, b, hand_count), self.TAKE_SEQUENCE_DISTANCE
+        )
         data = dict(
             X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
             sequences=np.stack(sequences), sequence_names=np.array(["__pending__"] * len(sequences)),
