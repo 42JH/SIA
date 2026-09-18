@@ -363,7 +363,7 @@ UNIQUE `(kind, context, name)`.
 |---|---|:-:|---|---|
 | `gesture_id` | INTEGER | N | — | FK → `gesture.id` (`ON DELETE CASCADE`) |
 | `tool_name` | TEXT | N | — | FK → `tool.name`. C 도구는 서비스 계층이 거절한다 |
-| `step_no` | INTEGER | N | — | 1부터. 이 순서로 실행한다. `CHECK (step_no >= 1)`. 최대 5단계 (서비스 계층 강제) |
+| `step_no` | INTEGER | N | — | 1부터. 이 순서로 실행한다. `CHECK (step_no >= 1)`. 단계 수 상한은 없다 |
 | `args_json` | TEXT | N | `'{}'` | 이 단계에 고정된 인자 (예: `{"dir":"up"}`, `{"path":"C:\\..."}`) |
 | `delay_ms` | INTEGER | Y | — | 이 단계 실행 전 대기(ms) |
 
@@ -463,7 +463,7 @@ SQLite 의 UNIQUE 는 NULL 값끼리 충돌하지 않는다. `gesture (kind, con
 |---|---|
 | 프로필 종류별 최대 4개, 활성 최대 1개 | `voice_profile` · `calib_profile` |
 | 사용 중 프로필과 마지막 1개는 삭제 불가 | `voice_profile` · `calib_profile` |
-| 매크로 단계 최대 5개, C 도구 금지 | `gesture_step` |
+| 매크로 단계에 C 도구 금지 (단계 수 상한은 없다) | `gesture_step` |
 | 기본 제공 제스처(`custom = 0`)는 켜기/끄기와 기능(`steps` · `repeatable`) 지정만 허용. 삭제 · 이름 · 라벨 · 설명 변경은 불가하고, 같은 이름으로 커스텀을 만들 수 없다 | `gesture` |
 | 기능 해제(빈 `steps`)는 기본 제공 제스처만 허용. 커스텀은 최소 한 단계가 있어야 한다 | `gesture_step` |
 | 커스텀 제스처는 `kind = 'HAND'` 고정 | `gesture` |
@@ -710,7 +710,7 @@ CREATE TABLE `gesture` (
 CREATE TABLE `gesture_step` (
 	`gesture_id`	BIGINT	NOT NULL,
 	`tool_name`	VARCHAR(64)	NOT NULL	COMMENT 'tool.name. C 도구 금지',
-	`step_no`	INT	NOT NULL	COMMENT '1부터. 실행 순서. 최대 5단계',
+	`step_no`	INT	NOT NULL	COMMENT '1부터. 실행 순서',
 	`args_json`	VARCHAR(500)	NOT NULL	DEFAULT '{}'	COMMENT '이 단계에 고정된 인자',
 	`delay_ms`	INT	NULL	COMMENT '이 단계 실행 전 대기(ms)'
 );
