@@ -8,6 +8,7 @@ use tauri::{
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     AppHandle, Listener, Manager, WindowEvent,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
@@ -41,8 +42,14 @@ struct SidecarChildren {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        // 컴퓨터 시작 시 자동 실행. 실제 on/off는 항상 Rust 쪽에서 apply_autostart로만
+        // 건드린다 (FE는 "설정값"만 알고, OS 등록은 여기서 한다) — 인자 없음(None)은
+        // 자동 실행 시 추가 커맨드라인 인자를 넘기지 않는다는 뜻.
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(SidecarChildren::default())
         .manage(notify_bridge::LastSessionState::default())
+        .invoke_handler(tauri::generate_handler![set_autostart])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -304,6 +311,82 @@ fn parse_onboarding_done(body: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// `GET /api/settings` 전체 응답 바디를 읽어온다. `fetch_status_body`와 동일한 방식 —
+/// 로컬 헬스체크/설정조회 하나하나에 reqwest 를 새로 얹지 않는다.
+fn fetch_settings_body(port: u16) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_secs(2))).ok()?;
+
+    let request = format!(
+        "GET /api/settings HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let (_head, body) = text.split_once("\r\n\r\n")?;
+    Some(body.to_string())
+}
+
+/// `GET /api/settings` 응답(`{..., settings: {autoStart, ...}}`)에서 `autoStart`만 뽑는다.
+/// 미지의/누락된 키·타입 오류는 전부 `None` — SettingsSchema(BE)가 이미 타입을 보증하지만,
+/// 여기선 방어적으로 한 번 더 확인한다(응답이 깨졌을 때 잘못된 값으로 OS 상태를 바꾸지 않기 위해).
+fn parse_auto_start(body: &str) -> Option<bool> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("settings")?
+        .get("autoStart")?
+        .as_bool()
+}
+
+/// OS 자동 실행 등록을 `enabled`에 맞춘다. 이미 그 상태면 아무 것도 안 한다(불필요한
+/// 레지스트리 쓰기 방지). 플러그인 API가 실패해도(권한 문제 등) 앱 자체는 계속 돈다 —
+/// 자동 실행은 부가 기능이라 이것 때문에 앱을 막을 이유가 없다.
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    let manager = app.autolaunch();
+    if let Ok(current) = manager.is_enabled() {
+        if current == enabled {
+            return;
+        }
+    }
+    let result = if enabled { manager.enable() } else { manager.disable() };
+    match result {
+        Ok(()) => log::info!("[autostart] {} 완료", if enabled { "활성화" } else { "비활성화" }),
+        Err(err) => log::error!("[autostart] {} 실패: {err}", if enabled { "활성화" } else { "비활성화" }),
+    }
+}
+
+/// 부팅 시 1회 — BE 의 저장된 설정을 읽어 OS 자동 실행 상태를 맞춘다.
+async fn sync_autostart_from_backend(app: &AppHandle, port: u16) {
+    let Some(body) = tokio::task::spawn_blocking(move || fetch_settings_body(port))
+        .await
+        .ok()
+        .flatten()
+    else {
+        log::warn!("[autostart] /api/settings 조회 실패 — 동기화 생략(기존 OS 상태 유지)");
+        return;
+    };
+    let Some(enabled) = parse_auto_start(&body) else {
+        log::warn!("[autostart] 응답에서 autoStart 를 읽지 못함 — 동기화 생략");
+        return;
+    };
+    apply_autostart(app, enabled);
+}
+
+/// FE 의 자동 실행 토글에서 직접 호출한다. BE PUT(/api/settings)이 SQLite 에 값을
+/// 저장한 "직후"에 FE 가 이걸 불러 OS 등록을 즉시 맞춘다 — BE 는 값을 들고 있을 뿐,
+/// 실제 OS 등록/해제는 데스크톱 셸(Tauri) 만 할 수 있어서 이렇게 나뉜다.
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) {
+    apply_autostart(&app, enabled);
+}
+
 /// BE가 준비됐는지 한 번 확인한다: runtime.json 읽기 + PID 대조 + `/api/status` 200 확인.
 /// 셋 다 만족하면 포트를 반환한다. TcpStream은 블로킹이라 spawn_blocking으로 돌린다.
 async fn probe_backend_ready(expected_pid: u32) -> Option<u16> {
@@ -367,6 +450,12 @@ fn spawn_sidecars(app: AppHandle) {
             return;
         };
         log::info!("Backend 준비 완료 (port {port}) — AI 실행");
+
+        // --- BE(SQLite app_settings.autoStart)와 OS 자동 실행 등록 상태 동기화 ---
+        // FE 토글이 바뀔 때는 set_autostart 커맨드가 즉시 반영하지만, 그 둘이
+        // 어긋날 수 있는 경우(레지스트리 키를 수동으로 지웠다거나, 이 기능이 없던
+        // 옛 빌드로 켠 채 저장된 DB 등)를 매 부팅마다 여기서 교정한다.
+        sync_autostart_from_backend(&app, port).await;
 
         // --- 온보딩 필요 여부에 따라 메인 창 생성 여부 결정 ---
         // 이미 온보딩을 마쳤으면(activeVoiceId/activeCalibId 둘 다 있으면) 메인 창을
@@ -460,6 +549,20 @@ mod tests {
         assert_eq!(parse_status_code("HTTP/1.1 404 Not Found"), Some(404));
         assert_eq!(parse_status_code(""), None);
         assert_eq!(parse_status_code("garbage"), None);
+    }
+
+    #[test]
+    fn parses_auto_start_from_settings_response() {
+        let body = r#"{"version":3,"settings":{"autoStart":true,"wakeWord":"시아야"}}"#;
+        assert_eq!(parse_auto_start(body), Some(true));
+    }
+
+    #[test]
+    fn parse_auto_start_handles_missing_or_malformed() {
+        assert_eq!(parse_auto_start(r#"{"settings":{}}"#), None); // 키 없음
+        assert_eq!(parse_auto_start(r#"{"settings":{"autoStart":"yes"}}"#), None); // 타입 오류
+        assert_eq!(parse_auto_start(r#"{}"#), None); // settings 자체가 없음
+        assert_eq!(parse_auto_start("not json"), None);
     }
 
     #[test]
