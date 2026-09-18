@@ -1044,6 +1044,24 @@ class Brain(threading.Thread):
         self._wake_notified = None
         return True, "ok", sim, clip_t0, clip_t1
 
+    def ensure_router(self):
+        """1단 라우터(로컬 STT)를 만들어 돌려준다 — 만들 수 없으면 None 이고 다시 시도하지 않는다.
+        예열·1단 판정·화자 등록의 문장 확인이 이 하나를 나눠 쓴다 — 받아쓰기 모델을 두 벌 올리지 않으려고."""
+        if self._router_dead:
+            return None
+        if self.router is None:
+            try:
+                from router import Router
+
+                with self._router_lock:
+                    if self.router is None:
+                        self.router = Router(WAKE_WORD)
+            except Exception as e:
+                self._router_dead = True
+                print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
+                return None
+        return self.router
+
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
         라우터가 이미 있거나(테스트의 대역 포함) STT_WARM=0 이면 건너뛴다. Gemini 키가 없어도 1단 로컬 명령은 도니 예열한다."""
@@ -1094,8 +1112,10 @@ class Brain(threading.Thread):
         무제한으로 늘면 GPU·쿼터가 먼저 무너진다.
         """
         t_utter = args[3]
-        if self._pending_for(t_utter) or len(self._alive()) >= MAX_INFLIGHT:
-            self._drain()
+        if self._pending_for(t_utter):
+            self._drain()                     # 확인 답변은 혼자 처리한다
+        elif len(self._alive()) >= MAX_INFLIGHT:
+            self._wait_slot()                 # 상한은 슬롯 하나만 기다린다(전원 대기는 큐 지연의 부활)
         t = threading.Thread(target=self._handle, args=args, daemon=True)
         self._workers.append(t)
         t.start()
@@ -1103,6 +1123,15 @@ class Brain(threading.Thread):
     def _alive(self):
         self._workers = [t for t in self._workers if t.is_alive()]
         return self._workers
+
+    def _wait_slot(self):
+        """동시 실행 상한에 걸렸을 때 **한 자리**가 빌 때까지만 기다린다.
+
+        여기서 _drain() 을 부르면 안 된다. 가장 느린 LLM 왕복(실측 12~29 s)이 끝날 때까지
+        run() 이 통째로 멈춰, -320 이 지운 큐 대기(23.57 s)가 그대로 되살아난다.
+        """
+        while len(self._alive()) >= MAX_INFLIGHT:
+            self._workers[0].join(0.05)
 
     def _drain(self, timeout=None):
         """진행 중인 발화 처리가 끝날 때까지 기다린다 (테스트·확인 대기 직렬화용)."""
@@ -1276,6 +1305,12 @@ class Brain(threading.Thread):
                           **audio_stats(audio))
             with self._audio_lock:
                 stale = generation != self._audio_generation
+            if self.paused:
+                # 등록 버튼을 누르기 **직전**에 말한 명령이 LLM 왕복(12~29 s) 뒤 촬영 한복판에서
+                # 실행되는 걸 막는다. submit()·pop 단계의 paused 검사는 이미 떠 있는 스레드를
+                # 못 막는다 — 발화마다 스레드가 도는 구조에서는 여기서 한 번 더 본다.
+                print("[발화 무시] 판정은 끝났지만 일시정지 중 (제스처 등록·카메라 미리보기)")
+                stale = True
             # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
             if not stale:
                 be = self._be()
@@ -1302,7 +1337,7 @@ class Brain(threading.Thread):
 
         이미 시작된 이전 액션이 뒤늦게 만든 확인 대기는 새 화자에게 넘기지 않는다. 단
         **내가 만든 것만** 거둔다 — 발화마다 스레드가 도는 지금 옆 스레드가 방금 연 확인
-        대기까지 지우면, 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+        대기까지 지우면, 사용자가 제때 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
         """
         with self._audio_lock:
             p = self._pending
