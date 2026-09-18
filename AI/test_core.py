@@ -2336,7 +2336,8 @@ def test_head_stream_warmup():
     assert not settled(), "무작위 초기 버퍼가 그대로면 창이 달라져야 함"
 
 
-def _custom_wake_run(word="철수야", head=True, lp=-2.0, speaker=True, audio=None, t_end=1.2, session=False):
+def _custom_wake_run(word="철수야", head=True, lp=-2.0, last=-1.0, speaker=True, audio=None, t_end=1.2,
+                     session=False):
     """사용자 지정 호출어 한 발화를 실제 run() 으로 돌린다. 헤드 채점·단어 확률·목소리 임베딩만 대역이다.
     → (마지막 로그 필드, wakeword_detected 수, score_utterance 대역, wake_score_of 대역, brain, 안내 문구들)"""
     import tempfile
@@ -2363,7 +2364,7 @@ def _custom_wake_run(word="철수야", head=True, lp=-2.0, speaker=True, audio=N
             brain._wake_ok = Brain._wake_ok.__get__(brain)
             if speaker:
                 brain.speaker.embed = lambda _: emb
-            brain.word_logprob = Mock(return_value=lp)
+            brain.word_logprob = Mock(return_value=(lp, last) if lp is not None else (None, None))
             brain._head_features = Mock()
             link.session_until_mono = 100.0 if session else 0.0   # utter() 의 t_utter=10.0 기준
             with patch("brain.score_utterance", return_value=(0.97, t_end)) as score, \
@@ -2404,6 +2405,11 @@ def test_custom_wake_gate():
     assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "head_missing", 0), log
     assert not score.called and not brain.word_logprob.called, "헤드가 없으면 채점하지 않아야 함"
     assert "호출어를 다시 등록해 주세요" in toasts
+
+    # 끝음절이 안 들린 발화(예: "철수야" 를 "철수" 로)는 평균이 통과해도 막는다 — 끝 조각 점수로 가른다
+    log, wakes, *_ = _custom_wake_run(lp=-2.0, last=-6.0)
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "word_mismatch", 0), log
+    assert log["wake_word_last"] == -6.0 and log["wake_word_lp"] == -2.0   # 평균은 통과했고 끝 조각에서 걸렸다
 
     log, wakes, *_, toasts = _custom_wake_run(lp=None)
     assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "stt_unavailable", 0), log

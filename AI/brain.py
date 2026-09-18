@@ -88,6 +88,10 @@ WAKE_CLIP_TAIL_S = 0.15   # i_max(호출어가 끝난 지점) 뒤로 더 보는 
 WAKE_TEMPLATE_MIN_SIM = 0.35  # NOTE(튜닝): 호출어 구간의 화자 유사도 하한 (세션 개시 기준). 아직 안 잰 초기값이다.
                           # 문장 화자인증보다 입력이 짧아 별도 임계값을 쓴다. 등록자·타인 녹음으로 조정한다.
 WAKE_WORD_LOGPROB_MIN = -4.0  # NOTE(튜닝): "시아야" 가 아닌 호출어의 단어 확률 하한 (router.Router.word_logprob).
+WAKE_WORD_LAST_MIN = -5.0     # NOTE(튜닝): 단어의 마지막 글자 조각 하한. 단어 확률은 조각들의 평균이라 끝음절이 빠진 말
+                       # ("철수야" 를 "철수" 로 부른 것)이 앞 조각 덕에 통과한다 — 실측 [-0.12, -0.00, -0.07, -11.27], 평균 -2.87.
+                       # 녹음 40건(진짜 호출 24 · 함정 16, 유튜브 배경 포함)에서 이 조건을 더하니 진짜 호출은 20/24 그대로이고
+                       # 함정 통과가 5 → 3 으로 줄었다. -4.0 까지 조이면 함정 2 인 대신 진짜 호출이 18 로 준다.
                               # 실측 중앙값 — 실제 호출 −2.2, 한 글자 다른 단어 −3.8, 다른 호출어 −4.9, 다른 말 −5.7.
                               # 놓친 본인 호출은 −4.1~−5.0 이었다. 올리면 본인 호출을 더 놓치고 내리면 다른 말이 통과한다.
 WAKE_WORD_BEFORE_S, WAKE_WORD_AFTER_S = 2.0, 0.5  # NOTE(튜닝): 단어 확률은 호출어 끝 앞 2 s·뒤 0.5 s 만 본다.
@@ -790,6 +794,7 @@ class Brain(threading.Thread):
     _head_feats = None     # 사용자 지정 호출어 헤드용 특징 추출기 — 첫 사용 때 만든다
     _head_top = None       # 이번 발화의 헤드 최고점 (콘솔 확인 줄용)
     _wake_word_lp = None   # 이번 발화의 호출어 단어 확률 — 확인하지 않았으면 None (로그용)
+    _wake_word_last = None   # 그 단어의 마지막 글자 조각 점수 (로그용)
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -1123,18 +1128,23 @@ class Brain(threading.Thread):
         end = i_max * WAKE_FRAME_S - WAKE_PAD_S   # 호출어가 끝난 시각 (wake_clip 과 같은 환산)
         lo = max(0, int((end - WAKE_WORD_BEFORE_S) * 16000))
         hi = min(len(audio), int((end + WAKE_WORD_AFTER_S) * 16000))
-        lp = self.word_logprob(audio[lo:hi], word.strip())
+        lp, last = self.word_logprob(audio[lo:hi], word.strip(), detail=True)
         self._wake_word_lp = None if lp is None else round(lp, 3)
+        self._wake_word_last = None if last is None else round(last, 3)
 
         def num(v):
             return "-" if v is None else f"{v:.2f}"
 
         print(f'[호출어 확인] "{word}" 헤드 {num(self._head_top)} · 단어 확률 {num(lp)} (기준 {WAKE_WORD_LOGPROB_MIN})'
+              f" · 끝 조각 {num(last)} (기준 {WAKE_WORD_LAST_MIN})"
               f" · 목소리 {num(sim) if self.speaker is not None else '확인 안 함'}")
         if lp is None:
             self._wake_notice("stt_unavailable", "받아쓰기 모델을 쓸 수 없어 호출어를 확인하지 못했습니다")
             return False, "stt_unavailable", sim, clip_t0, clip_t1
         if lp < WAKE_WORD_LOGPROB_MIN:
+            return False, "word_mismatch", sim, clip_t0, clip_t1
+        if last < WAKE_WORD_LAST_MIN:
+            # 단어의 끝이 안 들렸다 — "철수야" 를 "철수" 로 부른 쪽이다. 사유는 같고, 로그의 wake_word_last 로 갈라 본다.
             return False, "word_mismatch", sim, clip_t0, clip_t1
         if not store.still_current(generation):
             print("[호출어 판정 폐기] 판정 도중 템플릿이 바뀌었습니다 — 세션을 열지 않습니다")
@@ -1173,16 +1183,18 @@ class Brain(threading.Thread):
             self.router.set_wake(word)
         return self.router
 
-    def word_logprob(self, audio, word):
-        """받아쓰기 모델로 본 word 의 단어 확률 (router.Router.word_logprob). 라우터를 못 쓰거나 실패하면 None."""
+    def word_logprob(self, audio, word, detail=False):
+        """받아쓰기 모델로 본 word 의 단어 확률 (router.Router.word_logprob). 라우터를 못 쓰거나 실패하면 None.
+        detail=True 면 (평균, 마지막 조각) 이고 실패하면 (None, None) 이다."""
+        fail = (None, None) if detail else None
         router = self.ensure_router()
         if router is None:
-            return None
+            return fail
         try:
-            return router.word_logprob(audio, word)
+            return router.word_logprob(audio, word, detail=detail)
         except Exception as e:
             print(f"[호출어 단어 확률 실패] {type(e).__name__}: {e}")
-            return None
+            return fail
 
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
@@ -1282,7 +1294,7 @@ class Brain(threading.Thread):
             # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
             wake_score, i_max, lead, oww_pass = None, None, 0, False
             wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
-            self._head_top = self._wake_word_lp = None
+            self._head_top = self._wake_word_lp = self._wake_word_last = None
             store = self.wake_template
             word, template, _ = store.snapshot() if store is not None else (WAKE_MODEL_WORD, None, None)
             if word != WAKE_MODEL_WORD:
@@ -1337,7 +1349,7 @@ class Brain(threading.Thread):
                         self._say("네, 듣고 있어요")
                         log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                       wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                      wake_word_lp=self._wake_word_lp,
+                                      wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
                                       wake_live=live_score, wake_cut=live_cut,
                                       seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
                         return  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
@@ -1346,7 +1358,7 @@ class Brain(threading.Thread):
                           + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
                     log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
                                   wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                  wake_word_lp=self._wake_word_lp,
+                                  wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
                                   wake_live=live_score, wake_cut=live_cut,
                                   seg_t0=seg_t0, seg_t1=seg_t1,
                                   session=in_session, **audio_stats(audio))
@@ -1410,7 +1422,7 @@ class Brain(threading.Thread):
                 # 호출어 판정을 다시 하지는 않는다 (게이트는 위 화자 인증 하나다).
                 self._say("네, 듣고 있어요")
                 log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
-                              wake_sim=None, wake_word_lp=self._wake_word_lp,
+                              wake_sim=None, wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
                               wake_live=live_score, wake_cut=live_cut,
                               speaker_sim=round(sim, 3) if sim is not None else None,
                               seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
