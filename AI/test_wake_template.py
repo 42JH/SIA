@@ -426,6 +426,7 @@ def test_wake_template_word_change_needs_reenrollment():
         store.put = lambda url, body, ctype: sent.append(body)
         try:
             assert store.on_settings({"wakeWord": "시아야"})
+            assert not store.on_settings({"wakeWord": " 시아야 "}), "공백만 다른 값은 같은 호출어다"
             assert store.commit(template(), "등록 확정")
 
             out = io.StringIO()
@@ -440,6 +441,9 @@ def test_wake_template_word_change_needs_reenrollment():
                 assert store.on_settings({"wakeWord": "시아야"})
             assert "다시 등록" in out.getvalue(), "되돌려도 복원하지 않는다"
             assert store.current.wake_text == "철수야" and not store.current.matches_setting("시아야")
+
+            # 받는 자리에서 다듬으므로 공백이 붙은 새 호출어도 다듬어진 값으로 남는다
+            assert store.on_settings({"wakeWord": " 철수야 "}) and store.wake_word() == "철수야"
 
             files = sorted(p.relative_to(directory).as_posix() for p in Path(directory).rglob("*") if p.is_file())
             assert files == ["wake.npz"], files

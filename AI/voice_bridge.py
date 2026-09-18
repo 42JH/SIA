@@ -737,7 +737,14 @@ class WakeTemplateStore:
         if not isinstance(settings, dict) or "wakeWord" not in settings:
             return False
         word = settings["wakeWord"]
-        if not isinstance(word, str) or not word.strip() or word == self.setting_word:
+        if not isinstance(word, str):
+            return False
+        # 받는 자리에서 한 번만 다듬는다 — 저장·비교·로그·matches_setting 이 모두 이 값을 쓴다.
+        # 소비처(assistant.pick_wake_stream · WakeEnroll._custom)가 "시아야" 와 원본을 그대로 견주므로,
+        # 공백이 하나 붙으면 고정 호출어가 사용자 지정으로 분류돼 등록본이 없다는 이유로 모든 호출이 기각된다.
+        # 다듬기를 아래 검사보다 뒤에 두면 같은 설정이 다시 올 때마다 바뀐 것으로 보고 generation 을 올린다.
+        word = word.strip()
+        if not word or word == self.setting_word:
             return False
         with self._lock:
             self.setting_word = word
