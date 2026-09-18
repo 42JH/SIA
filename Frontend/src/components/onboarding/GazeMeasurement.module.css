@@ -13,11 +13,11 @@
 .targetGroup img { position: absolute; z-index: 3; top: 50%; left: 50%; width: var(--mole-size); height: auto; transform: translate(calc(var(--nose-x) * -100%), calc(var(--nose-y) * -100%)); }
 .targetGroup .hitMole { transform: translate(calc(var(--nose-x) * -100%), calc(var(--hit-nose-y) * -100%)); }
 .noseAnchor { position: absolute; z-index: 4; top: 50%; left: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); }
-.scope { position: absolute; z-index: 1; inset: 0; pointer-events: none; }
+.scope { position: absolute; z-index: 6; inset: 0; pointer-events: none; }
 .scope::before { position: absolute; top: 50%; left: 50%; width: min(42%, 176px); height: min(42%, 176px); border: 3px dashed #2bc9f3; border-radius: 50%; box-shadow: 0 0 0 3px rgb(43 201 243 / 35%); transform: translate(-50%, -50%); content: ""; }
-.scope::after { position: absolute; top: 50%; left: 4%; width: 92%; height: 2px; background: linear-gradient(90deg, #2bc9f3 0 46%, transparent 46% 54%, #2bc9f3 54%); transform: translateY(-50%); content: ""; }
-.scope i { position: absolute; top: 6%; left: 50%; width: 2px; height: 88%; background: linear-gradient(#2bc9f3 0 46%, transparent 46% 54%, #2bc9f3 54%); transform: translateX(-50%); }
-.scope b { position: absolute; z-index: 4; top: calc(50% - min(21%, 88px) - 22px); left: 50%; color: #2bc9f3; font-size: 17px; font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
+.scope::after { position: absolute; top: 50%; left: 50%; width: calc(var(--mole-size) * 0.86); height: 2px; background: linear-gradient(90deg, #2bc9f3 0 38%, transparent 38% 62%, #2bc9f3 62%); transform: translate(-50%, -50%); content: ""; }
+.scope i { position: absolute; top: calc(50% - min(21%, 88px) - 40px); left: 50%; width: 2px; height: calc(min(21%, 88px) + 40px + var(--mole-size) * 0.42 + 16px); background: linear-gradient(#2bc9f3 0 38%, transparent 38% 62%, #2bc9f3 62%); transform: translateX(-50%); }
+.scope b { position: absolute; z-index: 7; top: calc(50% - min(21%, 88px) - 22px); left: 50%; color: #2bc9f3; font-size: 17px; font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
 .hitGroup .scope::before { border-color: #efc84d; box-shadow: 0 0 0 3px rgb(239 200 77 / 40%); }
 .hitGroup .scope::after { background: linear-gradient(90deg, #efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }
 .hitGroup .scope i { background: linear-gradient(#efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }

@@ -1,18 +1,18 @@
 .voicePage, .registrationPage { --voice-navy: #142853; --voice-deep: #0f2047; --voice-blue: #3f70d8; --voice-line: #4f7ee1; --voice-soft: #d5e1f5; position: relative; color: var(--voice-navy); }
-.voicePage { display: grid; min-height: calc(100vh - 112px); gap: 20px; margin-top: -34px; }
-.registrationPage { min-height: calc(100vh - 96px); margin-top: -34px; }
-.voiceHero { position: relative; display: grid; height: 154px; grid-template-columns: minmax(410px, 38%) 1fr 136px; align-items: center; }
-.voiceHero h1 { margin: 0; color: var(--voice-navy); font-size: 34px; font-weight: 900; line-height: 1.05; letter-spacing: -.055em; }
+.voicePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; }
+.registrationPage { min-height: calc(100vh - 164px); }
+.voiceHero { position: relative; display: grid; min-height: 52px; height: 52px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; }
+.voiceHero h1 { margin: 0; color: var(--voice-navy); font-size: 34px; font-weight: 800; letter-spacing: -.055em; }
 .heroTitle { display: flex; align-items: center; gap: 12px; }
 .heroTitle button { width: 38px; padding: 0; border: 0; background: transparent; color: var(--voice-navy); font-size: 38px; font-weight: 300; line-height: 1; cursor: pointer; }
 .voiceHero p { margin: 12px 0 0 50px; color: var(--voice-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
-.circuit { width: 100%; height: 116px; overflow: visible; fill: var(--voice-navy); stroke: var(--voice-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit { width: 100%; height: 52px; overflow: visible; fill: var(--voice-navy); stroke: var(--voice-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--voice-blue); }
 .circuit > circle { fill: white; stroke-width: 2.4; }
-.signalSeal { display: grid; width: 124px; height: 124px; place-items: center; justify-self: end; border: 2px solid var(--voice-navy); border-radius: 50%; box-shadow: inset 0 0 0 11px white, inset 0 0 0 12px var(--voice-line); }
-.miniWave { display: flex; height: 58px; align-items: center; gap: 5px; }
-.miniWave i { width: 7px; border-radius: 8px; background: var(--voice-navy); }
+.signalSeal { display: grid; width: 52px; height: 52px; place-items: center; justify-self: end; border: 2px solid var(--voice-navy); border-radius: 50%; box-shadow: inset 0 0 0 6px white, inset 0 0 0 7px var(--voice-line); }
+.miniWave { display: flex; height: 22px; align-items: center; gap: 3px; }
+.miniWave i { width: 4px; border-radius: 8px; background: var(--voice-navy); }
 .frame { position: relative; border: 2px solid var(--voice-line); clip-path: polygon(18px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 22px), calc(100% - 22px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .frameLine { position: absolute; top: 8px; left: 28px; width: 120px; height: 2px; background: var(--voice-line); }
 .voiceGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: 55% 45%; gap: 20px; }
@@ -54,8 +54,9 @@ button:disabled { cursor: default; opacity: .45; }
 .voiceInfo { display: grid; min-width: 0; gap: 6px; color: var(--voice-navy); text-align: left; }
 .nameRow { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .nameRow strong { min-width: 0; }
-.editButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
-.editButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.editButton, .activeEditButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.activeEditButton { color: white; }
+.editButton svg, .activeEditButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .voiceInfo strong { overflow: hidden; font-size: clamp(13px, 1.2vw, 18px); text-overflow: ellipsis; white-space: nowrap; }
 .voiceInfo small { min-width: 0; color: var(--voice-blue); font-size: clamp(11px, 0.95vw, 14px); line-height: 1.35; overflow-wrap: anywhere; }
 .pillButton { grid-row: 1; grid-column: 3; align-self: start; min-width: 0; min-height: 42px; margin-top: 8px; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
@@ -121,9 +122,6 @@ button:disabled { cursor: default; opacity: .45; }
 .waveActive i { animation: wavePlayback .62s ease-in-out var(--wave-delay) infinite; transform-origin: center; }
 @media (min-width: 1001px) and (max-height: 800px) {
   .voicePage { gap: 12px; }
-  .voiceHero { height: 120px; grid-template-columns: minmax(380px, 38%) 1fr 104px; }
-  .signalSeal { width: 92px; height: 92px; }
-  .miniWave { height: 44px; }
   .voiceGrid { min-height: calc(100vh - 330px); }
   .activePanel { padding-top: 26px; padding-bottom: 20px; }
   .activeVisual { min-height: 190px; }
@@ -134,5 +132,5 @@ button:disabled { cursor: default; opacity: .45; }
   .largeWave { height: 90px; }
   .bottomBar { min-height: 62px; }
 }
-@media (max-width: 1050px) { .voiceHero { grid-template-columns: 1fr 1fr 104px; } .signalSeal { width: 96px; height: 96px; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .registrationGrid { grid-template-columns: 38% 62%; } .largeWave { gap: 4px; } }
-@media (max-width: 760px) { .voicePage, .registrationPage { margin-top: 0; } .voiceHero { height: 128px; grid-template-columns: 1fr 84px; } .voiceHero h1 { font-size: 34px; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .signalSeal { width: 74px; height: 74px; } .miniWave { height: 38px; gap: 3px; } .miniWave i { width: 4px; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) max-content; gap: 6px; } .cardAudio { min-width: 0; } .wave { min-width: 72px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 54px 24px 32px; } .actionRow { flex-wrap: wrap; } }
+@media (max-width: 1050px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr 52px; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .registrationGrid { grid-template-columns: 38% 62%; } .largeWave { gap: 4px; } }
+@media (max-width: 760px) { .voiceHero { grid-template-columns: minmax(0, auto) 52px; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) max-content; gap: 6px; } .cardAudio { min-width: 0; } .wave { min-width: 72px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 54px 24px 32px; } .actionRow { flex-wrap: wrap; } }
