@@ -1217,11 +1217,12 @@ def test_save_crop_paths():
         b = Brain.__new__(Brain)
         b.overlay, b._pending, b._apps = Mock(), None, None
         b.act, b._be = True, (lambda: None)
-        b._audio_lock, b._audio_generation, b.session_until = threading.Lock(), 0, 0.0
-        b._last_be_payload = {"path": r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"}
-        b._last_be_error = None
+        b._audio_lock, b._audio_generation = threading.Lock(), 0
         b.calls, b.said = [], []
-        b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
+        # BE 결과는 반환값으로 받는다(-320) — self 에 얹으면 병렬 실행 시 서로 덮어쓴다.
+        saved_path = r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"
+        b._be_call = lambda tool, args=None: (
+            b.calls.append((tool, args)) or (True, {"path": saved_path}, None))
         b._say = lambda msg, *a, **k: b.said.append(msg)
         b._session_until = lambda: 0.0
         import brain as _b
@@ -1266,6 +1267,48 @@ def test_save_crop_paths():
     assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
 
 
+def test_be_results_do_not_leak_between_threads():
+    """BE 호출 결과를 self 에 얹지 않는다 — 병렬 실행의 선행 조건 (-320).
+
+    예전엔 _be_ok 가 결과를 self._last_be_payload 에 얹고 호출측이 나중에 읽었다. 명령마다
+    스레드가 도는 구조에서는 스레드 A 의 files.save 결과를 B 의 capture_region 이 덮어써서
+    A 가 B 의 저장 경로를 말한다 — 9/17 에 하루 종일 잡은 경로 안내 버그와 같은 모양이다.
+    """
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    # self 에 얹는 구조가 남아 있으면 다음 사람이 또 쓴다 — 아예 없어야 한다.
+    assert not hasattr(Brain, "_last_be_payload"), "BE 결과를 self 에 얹는 통로가 다시 생겼다"
+    assert not hasattr(Brain, "_be_ok"), "_be_ok(bool + self 통로)가 다시 생겼다"
+
+    class FakeBE:            # 도구마다 다른 답을 느리게 돌려줘 호출이 겹치게 한다
+        connected = True
+
+        def call(self, tool, args):
+            time.sleep(0.03)
+            return True, {"path": f"/out/{tool}.bin"}
+
+    b = Brain.__new__(Brain)
+    b.link, b.overlay = FakeBE(), Mock()
+    got, tools = {}, ("files.save", "screen.capture_region", "app.launch", "volume.set")
+
+    def worker(tool):
+        ok, payload, err = b._be_call(tool)
+        got[tool] = (ok, payload["path"], err)
+
+    ts = [threading.Thread(target=worker, args=(t,)) for t in tools]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    for tool in tools:        # 각 스레드가 '자기' 결과를 받아야 한다
+        assert got[tool] == (True, f"/out/{tool}.bin", None), got
+
+
 def test_session_is_be_owned():
     """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
 
@@ -1306,13 +1349,12 @@ def test_media_seek():
     def run(key, ref, ok=True):
         b = Brain.__new__(Brain)
         b.overlay, b.calls, b.said = Mock(), [], []
-        b._last_be_payload, b._last_be_error = None, None
         b._win_ref = lambda hwnd: ref
         b._say = lambda msg, *a, **k: b.said.append(msg)
 
         def try_be(tool, args, say):
             b.calls.append((tool, args))
-            return ok
+            return (True, None, None) if ok else (False, None, {"message": "거절"})
         b._try_be = try_be
         return b, b._media(key, "이동했습니다", hwnd=1234)
 
@@ -1541,8 +1583,9 @@ if __name__ == "__main__":
     test_mcp_delegation()
     test_llm_retry()
     test_session_is_be_owned()
+    test_be_results_do_not_leak_between_threads()
     test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 32/32 통과")
+    print("OK - 33/33 통과")

@@ -721,8 +721,6 @@ class Brain(threading.Thread):
     # [지연] 출력·log_utterance·submit 이 AttributeError 없이 읽는다.
     _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
     _router_fails = 0
-    _last_be_payload = None  # 마지막 _be_ok 성공 payload
-    _last_be_error = None    # 마지막 _be_ok 실패 시 BE 가 준 {code, message}
     _apps = None             # BE 앱 레지스트리 캐시 (app.list, 세션 불요)
     # BE 미연결이면 세션이 없어 모든 발화가 호출어 게이트를 탄다 — 그 경로가 읽는 필드도 기본값이 필요하다.
     _wake_notified = None
@@ -796,22 +794,23 @@ class Brain(threading.Thread):
         LLM 왕복 사이에 만료됐으면 연장이 아니라 개시로 보내야 한다."""
         return time.monotonic() < self._session_until()
 
-    def _be_ok(self, tool, args=None):
-        """BE MCP 도구 호출 → 실행됐으면 True, 결과는 _last_be_payload. 토스트 없음(중간 단계용).
-        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
+    def _be_call(self, tool, args=None):
+        """BE MCP 도구 호출 → (성공?, payload, 실패사유). 토스트 없음(중간 단계용).
+
+        결과를 self 에 얹지 않는다. 명령마다 스레드가 도는 구조에서 self 에 얹으면 서로
+        덮어쓴다 — 스레드 A 의 files.save 결과를 B 의 capture_region 이 지워서 A 가 B 의
+        저장 경로를 말하는 사고가 난다(9/17 경로 안내 버그와 같은 모양).
+        """
         be = self._be()
-        self._last_be_payload = None
         if not be:
-            return False
+            return False, None, None
         ok, payload = be.call(tool, args or {})
-        self._last_be_error = None
         if ok is True:
-            self._last_be_payload = payload
-            return True
-        if ok is False and isinstance(payload, dict):
-            self._last_be_error = payload   # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
-            print(f"[BE {tool} 거절] {payload.get('code')}: {payload.get('message')}")
-        return False
+            return True, payload, None
+        err = payload if (ok is False and isinstance(payload, dict)) else None
+        if err:  # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
+            print(f"[BE {tool} 거절] {err.get('code')}: {err.get('message')}")
+        return False, None, err
 
     def _win_ref(self, hwnd):
         """발화 시점 창(hwnd) → BE winRef("win:N"). BE 는 hwnd 를 내주지 않고 win:N 은 스냅샷
@@ -826,9 +825,9 @@ class Brain(threading.Thread):
         title = window_title_of(hwnd)
         if not title or title == HUD_TITLE:  # 우리 HUD 창은 BE 목록에도 뜬다 — 대상으로 삼지 않는다
             return None
-        if not self._be_ok("context.get"):
+        ok, ctx, _ = self._be_call("context.get")
+        if not ok:
             return None
-        ctx = self._last_be_payload
         if not isinstance(ctx, dict):
             return None
         hits = [w.get("ref") for w in (ctx.get("windows") or []) if w.get("title") == title]
@@ -842,11 +841,10 @@ class Brain(threading.Thread):
         print(f"[BE 창 참조 실패] 제목 {title!r} 후보 {len(hits)}개 — 대상을 특정하지 못했다")
         return None
 
-    def _be_down(self, what):
+    def _be_down(self, what, err=None):
         """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다.
         BE 가 이유를 말해 줬으면 그 이유를, 아예 못 닿았으면 연결 문제를 알린다 —
         둘을 뭉뚱그리면 사용자도 우리도 원인을 못 찾는다(실측: 앱 미등록을 '연결 안 됨'으로 안내)."""
-        err = getattr(self, "_last_be_error", None)
         reason = (err or {}).get("message") or "백엔드에 연결되지 않아 실행하지 못했습니다"
         self._say(f"{what} — {reason}")
         return None
@@ -859,7 +857,8 @@ class Brain(threading.Thread):
         그대로 보내지 않고 목록에서 찾는다. app.list 는 세션이 필요 없는 읽기 도구다.
         """
         if self._apps is None:
-            self._apps = self._be_ok("app.list") and (self._last_be_payload or {}).get("apps") or []
+            ok, payload, _ = self._be_call("app.list")
+            self._apps = ((payload or {}).get("apps") or []) if ok else []
         want = f"app:{key}"
         for a in self._apps:                      # ① ref 완전 일치
             if a.get("ref") == want:
@@ -876,9 +875,9 @@ class Brain(threading.Thread):
     def _explorer_items(self):
         """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
         BE 가 못 주면 빈 목록이다. 로컬 win32com 으로 셸을 직접 읽지 않는다."""
-        if not self._be_ok("explorer.items"):
+        ok, data, _ = self._be_call("explorer.items")
+        if not ok:
             return []
-        data = self._last_be_payload
         return (data.get("items") or []) if isinstance(data, dict) else []
 
     def _explorer_selection(self):
@@ -887,14 +886,13 @@ class Brain(threading.Thread):
                 if it.get("selected") and it.get("path")]
 
     def _try_be(self, tool, args, ok_say):
-        """BE MCP 도구 시도 → 실제로 실행됐으면(ok True) 토스트 후 True.
-        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
-        if not self._be_ok(tool, args):
-            return False
-        payload = self._last_be_payload
+        """BE MCP 도구 시도 → (실행됐나, payload, 실패사유). 성공하면 안내까지 띄운다."""
+        ok, payload, err = self._be_call(tool, args)
+        if not ok:
+            return False, None, err
         msg = payload.get("message") if isinstance(payload, dict) else ""
         self._say(ok_say or msg or "완료")
-        return True
+        return True, payload, None
 
     def session_left(self):
         return max(0.0, self._session_until() - time.monotonic())
@@ -1367,15 +1365,18 @@ class Brain(threading.Thread):
                 if kind == "window_close":
                     # 확인은 AI 가 이미 받았다 — BE 는 재확인 없이 닫는다(API명세 §3.8).
                     ref = self._win_ref(target)
-                    if ref and self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다"):
+                    closed, _, err = self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다") if ref else (False, None, None)
+                    if closed:
                         return completed
-                    return self._be_down("창 닫기")
+                    return self._be_down("창 닫기", err)
                 elif kind == "delete_file":
                     # 확인은 AI 가 이미 받았고 BE 는 재확인 없이 실행한다(§1).
-                    if self._try_be("files.delete", {"paths": list(target)},
-                                    f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
+                    deleted, _, err = self._try_be(
+                        "files.delete", {"paths": list(target)},
+                        f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                    if deleted:
                         return completed
-                    return self._be_down("파일 삭제")
+                    return self._be_down("파일 삭제", err)
             else:
                 self._say("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
@@ -1394,14 +1395,16 @@ class Brain(threading.Thread):
                 if not ref:
                     self._say(f"{app} — 백엔드에 등록된 앱이 아닙니다")
                     return None
-                if not self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행"):
-                    return self._be_down(f"{app} 실행")
+                launched, _, err = self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행")
+                if not launched:
+                    return self._be_down(f"{app} 실행", err)
             return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
-            if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
-                return self._be_down(f"'{q}' 검색")
+            searched, _, err = self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색") if q else (True, None, None)
+            if not searched:
+                return self._be_down(f"'{q}' 검색", err)
             if q:
                 return completed
         elif action == "find_file":
@@ -1427,24 +1430,26 @@ class Brain(threading.Thread):
             elif op in ("maximize", "minimize"):
                 msg = say or ("창 최대화" if op == "maximize" else "창 최소화")
                 ref = self._win_ref(hwnd)
-                if ref and self._try_be(f"window.{op}", {"winRef": ref}, msg):
+                done_, _, err = self._try_be(f"window.{op}", {"winRef": ref}, msg) if ref else (False, None, None)
+                if done_:
                     return completed
-                return self._be_down(msg)
+                return self._be_down(msg, err)
             elif op in ("scroll_down", "scroll_up"):
                 direction = "down" if op == "scroll_down" else "up"
                 ref = self._win_ref(hwnd)
                 # scroll.step 의 대상은 '포커스된 창'이라 말하던 그 창을 BE 로 먼저 잡는다 —
                 # 발화 뒤 사용자가 창을 옮겨도 의도한 창이 스크롤되게(로컬 경로와 같은 보장).
                 if ref:
-                    self._be_ok("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
+                    self._be_call("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
                 # NOTE(한계): scroll.step 은 좌표 없는 휠 한 발이라(SendInputService.fillWheel)
                 # 실제 대상은 '커서 아래 창'이다 — window.focus 로도 보장되지 않는다.
                 # scroll.step 에 winRef 가 생겨야 '발화 시점 창' 보장이 돌아온다(-295).
-                if self._be_ok("scroll.step", {"dir": direction, "amount": SCROLL_AMOUNT}):
+                scrolled, _, err = self._be_call("scroll.step", {"dir": direction, "amount": SCROLL_AMOUNT})
+                if scrolled:
                     if say:
                         self._say(say)
                     return completed
-                return self._be_down("스크롤")
+                return self._be_down("스크롤", err)
         elif action == "delete_file":
             # 대상 결정: ① 말했거나 응시한 파일명(query) → 폴더에서 해석,
             # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
@@ -1476,13 +1481,13 @@ class Brain(threading.Thread):
                 name = f"저장_{ts}.txt"
                 # 저장 위치는 BE 가 정한다(~/Documents/SIA). 이름이 겹치면 BE 가 " (1)" 을 붙이므로
                 # 우리가 지어 보낸 이름이 아니라 BE 가 실제로 쓴 경로를 그대로 말한다.
-                ok = self._be_ok("files.save", {"name": name, "content": text})
-                log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
+                ok, payload, err = self._be_call("files.save", {"name": name, "content": text})
+                log_save(t_utter, "text", result, ok=ok, payload=payload)
                 if ok:
-                    saved = (self._last_be_payload or {}).get("path") or name
+                    saved = (payload or {}).get("path") or name
                     self._say(where(say or "글로 저장했습니다", saved))
                     return completed
-                return self._be_down("글 저장")
+                return self._be_down("글 저장", err)
             if box:
                 # 9/16 이관 뒤 크롭 이미지는 쓰이지 않는다 — 좌표만 BE 로 가고 캡처는 BE 가 한다.
                 # (로컬 저장 시절의 full_img.crop(box) 잔재를 제거. 저장마다 전체 이미지 복사 1회였다)
@@ -1501,10 +1506,10 @@ class Brain(threading.Thread):
                 # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
                 # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
                 off = virtual_screen_offset(full_img.size) or (0, 0)
-                ok = self._be_ok("screen.capture_region",
+                ok, p, err = self._be_call("screen.capture_region",
                                  {"x1": box[0] + off[0], "y1": box[1] + off[1],
                                   "x2": box[2] + off[0], "y2": box[3] + off[1]})
-                p = self._last_be_payload or {}
+                p = p or {}
                 log_save(t_utter, "region", result, box=box, screen=full_img.size,
                          ok=ok, payload=p)
                 if ok:
@@ -1512,7 +1517,7 @@ class Brain(threading.Thread):
                     # 가려졌고, 저장물은 눈에 안 띄는 폴더로 간다 (9/17 라이브에서 오해 발생).
                     self._say(where(say or "화면을 저장했습니다", p.get("path")))
                     return completed
-                return self._be_down("화면 저장")
+                return self._be_down("화면 저장", err)
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
                 print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
                 log_save(t_utter, "none", result, screen=full_img.size if full_img else None)
@@ -1529,7 +1534,7 @@ class Brain(threading.Thread):
 
     def _media(self, key, say="", hwnd=0, level=None):
         if key == "volset":  # 절대값은 BE 전용(volume.set) — 로컬 키 입력으론 현재 값을 모른다
-            if level is not None and self._try_be("volume.set", {"level": int(level)}, say):
+            if level is not None and self._try_be("volume.set", {"level": int(level)}, say)[0]:
                 return True
             self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
             return False
@@ -1542,12 +1547,14 @@ class Brain(threading.Thread):
             ref = self._win_ref(hwnd) if hwnd else None
             if ref:
                 args["winRef"] = ref
-            if self._try_be("media.seek", args, say):
+            seeked, _, err = self._try_be("media.seek", args, say)
+            if seeked:
                 return True
-            return bool(self._be_down("영상 이동"))
+            return bool(self._be_down("영상 이동", err))
         # 미디어/볼륨은 MCP 도구로 나간다 (유튜브 여부는 BE 가 포그라운드로 판별).
         tool = MEDIA_MCP.get(key)
-        if tool and self._try_be(tool[0], tool[1], say):
+        played, _, err = self._try_be(tool[0], tool[1], say) if tool else (False, None, None)
+        if played:
             return True
-        self._be_down("미디어 제어")
+        self._be_down("미디어 제어", err)
         return False

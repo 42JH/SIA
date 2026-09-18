@@ -44,6 +44,9 @@ class McpClient:
         self.caller = caller
         self.session_id = None
         self._rpc_id = 0
+        # _send(WS)에 _send_lock 이 있듯 MCP 도 직렬화한다 — 명령마다 스레드가 도는 구조에서
+        # 두 호출이 같은 id 를 쓰면 응답이 뒤바뀐다.
+        self._rpc_lock = threading.Lock()
 
     def _post(self, body):
         """JSON-RPC 한 건 전송 → (응답 객체 또는 None, 응답 헤더)."""
@@ -70,9 +73,10 @@ class McpClient:
         return json.loads(raw), headers
 
     def _rpc(self, method, params=None):
-        self._rpc_id += 1
-        body = {"jsonrpc": "2.0", "id": self._rpc_id, "method": method, "params": params or {}}
-        obj, headers = self._post(body)
+        with self._rpc_lock:
+            self._rpc_id += 1
+            body = {"jsonrpc": "2.0", "id": self._rpc_id, "method": method, "params": params or {}}
+            obj, headers = self._post(body)
         if headers.get("Mcp-Session-Id"):
             self.session_id = headers["Mcp-Session-Id"]
         if obj and "error" in obj:
