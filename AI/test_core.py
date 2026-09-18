@@ -2401,6 +2401,13 @@ def test_custom_wake_gate():
     assert (log["gate"], log["wake_why"]) != ("wake_reject", "word_mismatch"), f"세션 안 명령을 버렸다: {log}"
     assert log["wake_why"] == "in_session" and wakes == 0, log
 
+    # 헤드가 호출어를 못 찾으면 끝 시각 자리에 None 이 온다. 세션 안 명령에는 호출어가 없으니 늘 이쪽이다.
+    # 위 검사들은 score_utterance 를 항상 (0.97, 1.2) 로 대역해 None 경로를 한 번도 지나지 않았고,
+    # 그래서 세션 안 명령이 로그 직전에 죽던 버그를 놓쳤다.
+    log, wakes, *_ = _custom_wake_run(lp=-5.0, session=True, t_end=None)
+    assert log["wake_why"] == "in_session" and log["gate"] in ("router", "llm"), log
+    assert log["queue_s"] < 60, log   # 발화 종료 시각 기준이라 대기 시간은 작아야 한다
+
     log, wakes, score, _, brain, toasts = _custom_wake_run(head=False)
     assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "head_missing", 0), log
     assert not score.called and not brain.word_logprob.called, "헤드가 없으면 채점하지 않아야 함"

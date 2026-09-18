@@ -1307,13 +1307,15 @@ class Brain(threading.Thread):
                 # (명령이 버려지는 반대 방향은 생기지 않는다).
                 if template is not None and template.has_head:
                     try:
-                        top, t_end = score_utterance(self._head_features(), template.head, audio)
+                        # head_end 는 오디오 안에서 호출어가 끝난 상대 초다 — 위 t_end(발화가 끝난 절대 시각)와
+                        # 이름이 겹치면 아래 지연 계산이 상대 초를 빼서 죽거나 엉뚱한 값을 찍는다.
+                        top, head_end = score_utterance(self._head_features(), template.head, audio)
                     except Exception as e:
                         print(f"[호출어 헤드 채점 실패] {type(e).__name__}: {e}")
-                        top, t_end = 0.0, None
+                        top, head_end = 0.0, None
                     wake_score = self._head_top = round(top, 3)
-                    if t_end is not None:
-                        i_max = round((t_end + WAKE_PAD_S) / WAKE_FRAME_S)
+                    if head_end is not None:
+                        i_max = round((head_end + WAKE_PAD_S) / WAKE_FRAME_S)
                     oww_pass = i_max is not None
             elif self.wake is not None:
                 with self._wake_lock:      # 모델 하나를 여러 발화가 나눠 쓴다 — 직렬 + 버퍼 비우고 시작
