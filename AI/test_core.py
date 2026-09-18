@@ -900,6 +900,45 @@ def test_voice_bridge():
     finalize("empty")
     assert not link.sent and not uploads and not vs.active
 
+    # 화면의 문장이 아니라 다른 말을 읽으면 MISMATCH 로 무른다 — 받아쓰기(1단 라우터)를 빌려 쓴다
+    class FakeRouter:                                          # transcribe 만 흉내 내는 대역 — 진짜 받아쓰기는 돌리지 않는다
+        def __init__(self): self.text, self.last_logprob = "", -0.3
+        def warm(self): pass
+        def transcribe(self, audio): return self.text, 0.1
+
+    heard = FakeRouter()
+    vs.stt = lambda: heard
+    link.sent.clear()
+    spk.embeds = 0
+    vs.on_start("t11", 5)
+    vs.on_collect("t11", 1)
+    heard.text = "창문을 열자 찬 공기가 스며 나갔다"              # 읽다가 틀렸다 — 사유를 보내고 같은 문장을 다시 기다린다
+    utter(loud(7))
+    assert link.sent[-1][0] == "voice_sentence_rejected" and link.sent[-1][1]["code"] == "MISMATCH"
+    assert spk.embeds == 0 and vs._n == 1 and vs._mismatch == 1  # 무른 문장은 임베딩도 안 뽑고 순번도 그대로다
+    heard.text = SENTENCES[2].replace(" ", "")                 # 화면에 뜨는 문장은 FE 가 정한다 — 5개 중 하나면 띄어쓰기가 달라도 받는다
+    utter(loud(7))
+    assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "양호" and spk.embeds == 1
+    # 낭독으로 보기 어려운 것(주변 말소리·받아쓰기 실패)은 조용히 버린다 — 거절도 안 보내고 예산도 안 쓴다.
+    # 받아쓰기 신뢰도가 낮다고 봐주지는 않는다 — 봐주면 whisper 가 못 알아들은 엉뚱한 발화까지 통과한다
+    link.sent.clear()
+    vs.on_collect("t11", 2)
+    heard.text, heard.last_logprob = "골프.", -1.7
+    utter(loud(7))
+    utter(loud(7))
+    assert link.sent == [] and vs._mismatch == 1 and spk.embeds == 1 and vs._n == 2   # 앞서 쓴 예산 1회 그대로
+    # 읽다가 틀린 정도면 사유를 보내고 다시 기다린다. 예산(2회)이 떨어지면 받되 판독은 낮음 — 등록에 갇히지 않게
+    heard.text, heard.last_logprob = "여름이 지나자 배짱이가 울었다", -0.3   # 마이크 실측에서 0.65 로 나온 갈래
+    utter(loud(7))
+    assert [d.get("code") for t, d in link.sent] == ["MISMATCH"] and vs._mismatch == 2
+    utter(loud(7))
+    assert link.sent[-1][0] == "voice_captured" and link.sent[-1][1]["quality"] == "낮음" and spk.embeds == 2
+    vs.stt = lambda: (_ for _ in ()).throw(RuntimeError("faster-whisper 없음"))
+    vs.on_collect("t11", 3)
+    utter(loud(7))
+    assert link.sent[-1][0] == "voice_captured" and spk.embeds == 3   # 받아쓰기를 못 써도 등록은 막지 않는다
+    vs.stt = None
+
 def test_wake_enroll():
     """온보딩 이름 불러보기(206) — 기준을 모두 넘긴 발화 WAKE_TOTAL(5)개 → wakeword_sample 5건 →
     개인화 템플릿 npz PUT → wakeword_done. 기준을 못 넘은 발화는 사유만 보내고 세지 않으며,

@@ -1044,6 +1044,24 @@ class Brain(threading.Thread):
         self._wake_notified = None
         return True, "ok", sim, clip_t0, clip_t1
 
+    def ensure_router(self):
+        """1단 라우터(로컬 STT)를 만들어 돌려준다 — 만들 수 없으면 None 이고 다시 시도하지 않는다.
+        예열·1단 판정·화자 등록의 문장 확인이 이 하나를 나눠 쓴다 — 받아쓰기 모델을 두 벌 올리지 않으려고."""
+        if self._router_dead:
+            return None
+        if self.router is None:
+            try:
+                from router import Router
+
+                with self._router_lock:
+                    if self.router is None:
+                        self.router = Router(WAKE_WORD)
+            except Exception as e:
+                self._router_dead = True
+                print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
+                return None
+        return self.router
+
     def _warm_stt(self):
         """시작 직후 STT 모델을 미리 올린다 — 첫 명령이 로드 1.4s(+torch import)를 떠안지 않게(팀원 실측 9/16).
         라우터가 이미 있거나(테스트의 대역 포함) STT_WARM=0 이면 건너뛴다. Gemini 키가 없어도 1단 로컬 명령은 도니 예열한다."""

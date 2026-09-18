@@ -263,6 +263,8 @@ def main():
                   wake_template=wake_store)
     if link and link.wake:
         link.wake.wake_model = brain.wake  # 등록의 발음 확인도 실행과 같은 고정 모델로
+    if link and link.voice:
+        link.voice.stt = brain.ensure_router  # 낭독이 화면의 문장인지 확인할 받아쓰기 — 1단 라우터와 같은 모델을 나눠 쓴다
     brain.start()
     brain.warm_stt_async()  # STT 모델 예열 — 첫 명령이 로드 1.4~5s(+torch import) 를 떠안지 않게(팀원 실측 9/16)
 
