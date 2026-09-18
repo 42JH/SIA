@@ -1853,8 +1853,12 @@ def test_mic_preview():
 
 
 def test_llm_retry():
-    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
-    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 백오프 후.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다.
+
+    즉시 한 번만 재시도하면 같은 과부하 구간에 그대로 부딪힌다(9/18 실측: 503 두 번 연속으로
+    명령 소실). 회귀 지점은 셋 — 백오프가 실제로 들어가는가, 키 전환 뒤에도 재시도 기회가
+    남는가, 예산을 넘기면 멈추는가."""
     from unittest.mock import patch
 
     import brain
@@ -1888,17 +1892,51 @@ def test_llm_retry():
         resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
         assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
-        c0.errors = [Exception("503 UNAVAILABLE")]
-        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
-        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+        with patch("brain.time.sleep") as slept:               # 503 → 같은 키로 백오프 후 재시도
+            c0 = FakeClient([Exception("503 UNAVAILABLE")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+            # 즉시 재시도는 같은 과부하에 그대로 부딪힌다 — 실제로 쉬어야 한다.
+            assert slept.call_args_list[0][0][0] == brain.TRANSIENT_BACKOFF_S[0], slept.call_args_list
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
-        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
-            brain.llm_generate(c0, ["p"], ["k1"], 0)
-            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
-        except Exception as e:
-            assert "503" in str(e)
+        with patch("brain.time.sleep") as slept:                # 백오프는 점점 길어진다
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 3)
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            waits = [a[0][0] for a in slept.call_args_list]
+            assert resp == "OK" and tries == 4, (tries, waits)
+            assert waits == list(brain.TRANSIENT_BACKOFF_S), waits
+
+        with patch("brain.time.sleep"):                         # 횟수를 다 쓰면 올린다 (무한 재시도 금지)
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 9)
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("재시도 한도를 넘긴 일시 장애는 올라와야 한다")
+            except Exception as e:
+                assert "503" in str(e)
+            assert c0.calls == len(brain.TRANSIENT_BACKOFF_S) + 1, c0.calls
+
+        # 키 전환 뒤 처음 만난 503 도 재시도 대상 — 예전엔 플래그가 남아 그대로 실패했다.
+        with patch("brain.time.sleep"):
+            plan = [[Exception("503 UNAVAILABLE")]]             # k2 클라이언트가 503 한 번
+            c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+            assert resp == "OK" and ki == 1 and tries == 3, (ki, tries)
+
+        # 예산을 넘기면 남은 횟수가 있어도 멈춘다 (타임아웃이 15초씩 먹는 경우).
+        with patch("brain.time.sleep"), patch.object(brain, "TRANSIENT_BUDGET_S", 0.1):
+            c0 = FakeClient([Exception("504 DEADLINE_EXCEEDED")])
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("예산을 넘기면 재시도하지 않는다")
+            except Exception as e:
+                assert "504" in str(e)
+            assert c0.calls == 1, c0.calls
+
+    # 사용자에게는 서버 원문 대신 행동 지침을 준다 — 데모 화면에 JSON 이 뜨면 안 된다.
+    msg = brain.friendly_error(Exception("503 UNAVAILABLE. {'error': {'code': 503}}"))
+    assert "503" not in msg and "혼잡" in msg, msg
+    assert "가득" in brain.friendly_error(Exception("429 RESOURCE_EXHAUSTED"))
+    assert "400" in brain.friendly_error(Exception("400 INVALID_ARGUMENT"))   # 모르는 건 원문 그대로
 
     assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
     assert brain.is_transient_error(Exception("Read timed out"))

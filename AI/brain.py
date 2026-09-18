@@ -606,10 +606,27 @@ def is_quota_error(e):
 
 
 def is_transient_error(e):
-    """키를 바꿔도 소용없는 일시 장애 — 같은 키로 한 번 더 시도할 값어치가 있다."""
+    """키를 바꿔도 소용없는 일시 장애 — 같은 키로 잠시 뒤 다시 시도할 값어치가 있다."""
     s = str(e).lower()
     return ("503" in s or "unavailable" in s or "overloaded" in s
             or "timeout" in s or "timed out" in s or "deadline" in s)
+
+
+def friendly_error(e):
+    """사용자에게 보일 한 줄. 서버 원문("503 UNAVAILABLE. {'error': ...}")을 그대로 띄우면
+    발표·데모 화면에 JSON 이 그대로 뜬다 — 원문은 콘솔에만 남기고 화면엔 행동 지침을 준다."""
+    if is_quota_error(e):
+        return "사용량이 가득 찼어요. 잠시 후 다시 시도해 주세요"
+    if is_transient_error(e):
+        return "지금 서버가 혼잡해요. 잠시 후 다시 말씀해 주세요"
+    return f"오류: {e}"
+
+
+# NOTE(튜닝): 일시 장애 재시도 — 사용자가 기다리는 시간이라 횟수가 아니라 예산으로 끊는다.
+# 503 은 즉시 튕겨 나와 대기가 거의 백오프뿐이지만, 타임아웃은 한 번에 LLM_TIMEOUT_MS 를 먹는다.
+# 명령이 사라지는 일이 잦으면 예산을 올리고, 느리다는 불만이 나오면 내린다.
+TRANSIENT_BACKOFF_S = (0.5, 1.5, 3.0)
+TRANSIENT_BUDGET_S = float(os.environ.get("LLM_TRANSIENT_BUDGET_S") or 20)
 
 
 LLM_TIMEOUT_MS = int(os.environ.get("LLM_TIMEOUT_MS") or 15000)
@@ -642,14 +659,16 @@ def llm_config():
 def llm_generate(client, parts, keys, key_i):
     """도구 호출 한 번 + 재시도. (응답, 새 key_i, 시도 횟수) 를 돌려준다.
 
-    재시도 사유는 둘 — 쿼터 소진(429)은 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번 더.
-    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 사라진다."""
+    재시도 사유는 둘 — 쿼터 소진(429)은 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 잠시 뒤.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 사라진다. 즉시 재시도는 같은
+    과부하 구간에 그대로 부딪히므로 점점 길게 쉬고, 총 대기는 TRANSIENT_BUDGET_S 로 끊는다."""
     from google.genai import types
 
     cfg = llm_config()
-    retried_transient = False
+    t0 = time.monotonic()
+    transient_n = 0
     tries = 0
-    for _ in range(max(1, len(keys)) + 1):
+    for _ in range(max(1, len(keys)) + len(TRANSIENT_BACKOFF_S) + 1):
         tries += 1
         try:
             return client.models.generate_content(
@@ -661,10 +680,15 @@ def llm_generate(client, parts, keys, key_i):
                 client = llm_client(keys[key_i])
                 print(f"쿼터 소진 → 키 {key_i + 1}/{len(keys)}로 전환")
                 continue
-            if is_transient_error(e) and not retried_transient:
-                retried_transient = True
-                print(f"일시 장애 → 한 번 더: {str(e)[:80]}")
-                continue
+            # 키를 바꾼 뒤 처음 만난 일시 장애도 재시도 대상이다 — 남은 횟수·예산만 본다.
+            if is_transient_error(e) and transient_n < len(TRANSIENT_BACKOFF_S):
+                wait = TRANSIENT_BACKOFF_S[transient_n]
+                if time.monotonic() - t0 + wait < TRANSIENT_BUDGET_S:
+                    transient_n += 1
+                    print(f"일시 장애 → {wait}s 뒤 재시도 "
+                          f"{transient_n}/{len(TRANSIENT_BACKOFF_S)}: {str(e)[:80]}")
+                    time.sleep(wait)
+                    continue
             raise
     raise RuntimeError("LLM 재시도 한도 초과")
 
@@ -1329,7 +1353,7 @@ class Brain(threading.Thread):
                     latency_ms = int((finished - started) * 1000)
                     be.queue_usage("command", **fields, latencyMs=latency_ms)
         except Exception as e:
-            self._say(f"오류: {e}")
+            self._say(friendly_error(e))
             print(f"[brain 오류] {e}")
         finally:
             self._retire(generation)
