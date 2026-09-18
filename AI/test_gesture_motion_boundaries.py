@@ -75,8 +75,9 @@ class RegistrationBoundaryTests(MotionTests):
         for t in np.linspace(0, 1, 61):
             reg._collect([dict(hand(0.3 + 0.3 * np.clip((t - 0.5) / 0.3, 0, 1)), size=0.12)], t)
         with contextlib.redirect_stdout(io.StringIO()) as log:
-            _, event = reg._builtin_dynamic_collision()
+            _, event, similarity = reg._builtin_dynamic_collision()
         self.assertEqual(event, "Swipe_Right")
+        self.assertGreater(similarity, 0)
         for field in ("tempId=log", "take=1", "elapsed=", "direction=Swipe_Right"):
             self.assertIn(field, log.getvalue())
 

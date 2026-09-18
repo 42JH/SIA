@@ -14,6 +14,8 @@ def save_registration_diagnostic(registration, outcome, reason):
     folder = Path(cache_dir).parent / 'logs' / 'gesture_registration'
     folder.mkdir(parents=True, exist_ok=True)
     frame_rows, points, labels = [], [], []
+    gestures, scores = [], []
+    model_gestures, model_scores, verifications, world_points = [], [], [], []
     for take, frames in registration.take_frames.items():
         start = frames[0][0] if frames else 0
         for index, (t, hands) in enumerate(frames):
@@ -22,14 +24,32 @@ def save_registration_diagnostic(registration, outcome, reason):
             for hand in hands:
                 points.append(np.asarray(hand['landmarks'], dtype=np.float32))
                 labels.append(str(hand.get('handedness', 'Unknown')))
-    metadata = dict(version=1, created_at=datetime.now(timezone.utc).isoformat(),
+                gestures.append(str(hand.get('gesture') or 'None'))
+                score = hand.get('score')
+                scores.append(float(score) if score is not None else np.nan)
+                model_gestures.append(str(hand.get('model_gesture', hand.get('gesture')) or 'None'))
+                model_score = hand.get('model_score', score)
+                model_scores.append(float(model_score) if model_score is not None else np.nan)
+                verifications.append(hand.get('pose_verification', 'model'))
+                world = hand.get('world_landmarks')
+                world_points.append(world if world is not None else np.full((21, 3), np.nan))
+    metadata = dict(version=3, created_at=datetime.now(timezone.utc).isoformat(),
                     tempId=registration.temp_id, motion=registration.motion,
                     outcome=outcome, reason=reason, threshold=registration.COLLISION_DIST,
-                    comparisons=registration.comparison_diagnostics)
+                    comparisons=registration.comparison_diagnostics,
+                    builtin_hits=registration.builtin_hits,
+                    builtin_uncertain=getattr(registration, 'builtin_uncertain', 0),
+                    sample_count=len(registration.samples))
     arrays = dict(metadata=np.array(json.dumps(metadata, ensure_ascii=False)),
                   frames=np.asarray(frame_rows, dtype=np.float64).reshape(-1, 4),
                   landmarks=np.asarray(points, dtype=np.float32).reshape(-1, 21, 2),
-                  handedness=np.asarray(labels, dtype='U16'))
+                  handedness=np.asarray(labels, dtype='U16'),
+                  gestures=np.asarray(gestures, dtype='U32'),
+                  gesture_scores=np.asarray(scores, dtype=np.float32),
+                  model_gestures=np.asarray(model_gestures, dtype='U32'),
+                  model_scores=np.asarray(model_scores, dtype=np.float32),
+                  pose_verifications=np.asarray(verifications, dtype='U32'),
+                  world_landmarks=np.asarray(world_points, dtype=np.float32).reshape(-1, 21, 3))
     for key, value in getattr(registration.custom_store, 'data', {}).items():
         arrays['reference_' + key] = value
     path = folder / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '_' + uuid.uuid4().hex[:12] + '.npz')

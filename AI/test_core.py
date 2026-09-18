@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """카메라 없이 도는 핵심 로직 스모크 테스트:  python test_core.py"""
+import threading
+
 import numpy as np
 from types import SimpleNamespace
 
@@ -1141,6 +1143,25 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+
+def test_confirm_window_is_not_longer_than_what_the_user_sees():
+    """확인 수용 시간이 FE 표시보다 길면 안 된다 (-324).
+
+    FE 는 확인창 카운트다운을 자기 상수 10초로 고정하고 우리가 보내는 timeoutSec 을
+    보지 않는다(notificationStore.js, Tauri overlay/index.html). 우리가 더 길게 받으면
+    화면에서 질문이 사라진 뒤에 말한 "응" 이 먹혀 창이 닫히고 파일이 지워진다.
+    되돌릴 수 없는 동작이라, 어긋날 바엔 짧은 쪽이 맞다(늦은 승인은 거절될 뿐이다).
+    """
+    from brain import CONFIRM_TIMEOUT_S
+
+    FE_CONFIRM_SEC = 10   # Frontend/src/store/notificationStore.js · Integration/overlay/index.html
+    assert CONFIRM_TIMEOUT_S <= FE_CONFIRM_SEC, (
+        f"AI 가 {CONFIRM_TIMEOUT_S}초까지 받는데 화면은 {FE_CONFIRM_SEC}초만 보여 준다 — "
+        "안 보이는 확인이 실행된다")
+    # 정수로 내려가는 값이라 소수점이 잘려도 더 길어지지 않아야 한다
+    assert int(CONFIRM_TIMEOUT_S) <= FE_CONFIRM_SEC
+
+
 def test_app_ref_resolution():
     """앱 ref 는 BE 레지스트리에서 찾는다 — 슬러그가 기계마다 다르다.
 
@@ -1217,11 +1238,12 @@ def test_save_crop_paths():
         b = Brain.__new__(Brain)
         b.overlay, b._pending, b._apps = Mock(), None, None
         b.act, b._be = True, (lambda: None)
-        b._audio_lock, b._audio_generation, b.session_until = threading.Lock(), 0, 0.0
-        b._last_be_payload = {"path": r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"}
-        b._last_be_error = None
+        b._audio_lock, b._audio_generation = threading.Lock(), 0
         b.calls, b.said = [], []
-        b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
+        # BE 결과는 반환값으로 받는다(-320) — self 에 얹으면 병렬 실행 시 서로 덮어쓴다.
+        saved_path = r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"
+        b._be_call = lambda tool, args=None: (
+            b.calls.append((tool, args)) or (True, {"path": saved_path}, None))
         b._say = lambda msg, *a, **k: b.said.append(msg)
         b._session_until = lambda: 0.0
         import brain as _b
@@ -1266,6 +1288,323 @@ def test_save_crop_paths():
     assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
 
 
+def test_be_results_do_not_leak_between_threads():
+    """BE 호출 결과를 self 에 얹지 않는다 — 병렬 실행의 선행 조건 (-320).
+
+    예전엔 _be_ok 가 결과를 self._last_be_payload 에 얹고 호출측이 나중에 읽었다. 명령마다
+    스레드가 도는 구조에서는 스레드 A 의 files.save 결과를 B 의 capture_region 이 덮어써서
+    A 가 B 의 저장 경로를 말한다 — 9/17 에 하루 종일 잡은 경로 안내 버그와 같은 모양이다.
+    """
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    # self 에 얹는 구조가 남아 있으면 다음 사람이 또 쓴다 — 아예 없어야 한다.
+    assert not hasattr(Brain, "_last_be_payload"), "BE 결과를 self 에 얹는 통로가 다시 생겼다"
+    assert not hasattr(Brain, "_be_ok"), "_be_ok(bool + self 통로)가 다시 생겼다"
+
+    class FakeBE:            # 도구마다 다른 답을 느리게 돌려줘 호출이 겹치게 한다
+        connected = True
+
+        def call(self, tool, args):
+            time.sleep(0.03)
+            return True, {"path": f"/out/{tool}.bin"}
+
+    b = Brain.__new__(Brain)
+    b.link, b.overlay = FakeBE(), Mock()
+    got, tools = {}, ("files.save", "screen.capture_region", "app.launch", "volume.set")
+
+    def worker(tool):
+        ok, payload, err = b._be_call(tool)
+        got[tool] = (ok, payload["path"], err)
+
+    ts = [threading.Thread(target=worker, args=(t,)) for t in tools]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    for tool in tools:        # 각 스레드가 '자기' 결과를 받아야 한다
+        assert got[tool] == (True, f"/out/{tool}.bin", None), got
+
+
+def test_tier1_does_not_queue_behind_llm():
+    """1단 적중이 앞선 LLM 왕복 뒤에서 기다리지 않는다 (-320).
+
+    9/18 라이브: 0.42초에 판정을 끝낸 1단 명령이 대기 23.57초를 먹었다. 워커가 하나라
+    큐가 곧 지연이었다. 지금은 발화마다 스레드라 느린 발화가 뒤를 막지 않는다.
+    """
+    import threading
+    import time
+    from unittest.mock import patch
+
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from brain import Brain, SpeakerAccum
+
+    class Done(BaseException):
+        pass
+
+    brain = Brain.__new__(Brain)
+    brain._audio_lock = threading.RLock()
+    brain._audio_generation, brain._audio_since, brain.busy = 0, 0, 0
+    brain.queue, brain._workers = [], []
+    brain._client = object()
+    brain._pending = brain.speaker = brain.wake = brain.link = brain.wake_template = None
+    brain._accum = SpeakerAccum()
+    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4)
+
+    slow_in, hold = threading.Event(), threading.Event()
+    order = []
+
+    def router(audio, t_utter, lat=None):
+        if audio[0] == 1:          # 느린 발화 — 2단 승격
+            return "느린 발화"
+        return {"action": "test", "fast": True}
+
+    def ask(*a, **k):              # LLM 왕복을 재현한다. time.sleep 은 못 쓴다 —
+        slow_in.set()             # run() 을 멈추려고 brain.time.sleep 을 패치하면 전역이 바뀐다
+        hold.wait(3)
+        return {"action": "test", "fast": False}
+
+    def execute(result, *a):
+        order.append("느림" if not result.get("fast") else "빠름")
+        return None
+
+    brain._try_router, brain._ask, brain._execute = router, ask, execute
+
+    slow = np.ones(16000, dtype=np.int16)
+    fast = np.zeros(16000, dtype=np.int16)
+    with patch("brain.log_utterance"), patch("brain.EVAL_CAPTURE", False), \
+            patch("brain.be_dom_text", lambda *_: None):
+        brain.submit(slow, None, None)
+        # run() 을 한 번 돌려 느린 발화를 스레드로 띄운다.
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
+        assert slow_in.wait(2), "느린 발화가 시작되지 않았다"
+        t0 = time.monotonic()
+        brain.submit(fast, None, None)
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
+        # 1단 발화는 LLM 왕복이 아직 안 끝났는데도 먼저 실행된다
+        done = threading.Event()
+        for _ in range(300):
+            if order:
+                break
+            done.wait(0.01)
+        waited = time.monotonic() - t0
+        assert order and order[0] == "빠름", order
+        assert waited < 1.0, f"1단 명령이 LLM 뒤에서 {waited:.2f}s 기다렸다"
+        hold.set()                 # 이제 느린 발화를 풀어 준다
+        assert brain._drain(5)
+        assert order == ["빠름", "느림"], order
+        assert brain.busy == 0
+
+
+def test_answer_never_lands_on_an_unheard_question():
+    """확인 대기 답변은 '그 질문보다 나중에 시작된 발화' 만 받는다 (-320 검수 blocker).
+
+    발화마다 스레드가 도는 구조에서는 사용자가 "응, 삭제" 를 말한 **뒤에** 다른 스레드가
+    LLM 왕복(12~29 s)을 끝내고 창 닫기 확인 대기를 열 수 있다. 만료 시각만 보면 그 승인이
+    아직 듣지도 않은 창 질문에 붙어 창이 닫힌다 — 되돌릴 수 없는 동작이다.
+    """
+    import time
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    now = time.monotonic()
+
+    # 사용자는 t=10 에 답했다. 질문이 t=8 에 떴으면 그 답이 맞다.
+    b._pending = Pending("2개 파일을 삭제할까요?", "delete_file", now + 20, ["a"], (0.0, {}), now + 8, 0)
+    assert b._pending_for(now + 10).kind == "delete_file"
+
+    # 같은 답변인데 질문이 t=25 에 떴다면 — 사용자는 그 질문을 들은 적이 없다.
+    b._pending = Pending("창을 닫을까요?", "window_close", now + 37, 1234, (0.0, {}), now + 25, 0)
+    assert b._pending_for(now + 10) is None, "안 들은 질문에 답이 붙었다"
+    assert b._pending_for(now + 30).kind == "window_close"   # 그 뒤 발화는 정상적으로 답할 수 있다
+
+    # 만료된 것은 여전히 안 받는다
+    b._pending = Pending("만료", "delete_file", now + 5, ["a"], (0.0, {}), now, 0)
+    assert b._pending_for(now + 6) is None
+
+
+def test_second_confirm_does_not_clobber_the_first():
+    """답 안 한 확인 질문이 살아 있으면 새 확인 대기를 열지 않는다 (-320 검수 blocker).
+
+    질문 둘이 동시에 떠 있으면 "응" 이 어느 쪽에 붙는지 사용자도 우리도 모른다.
+    """
+    import time
+    from unittest.mock import Mock
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    b._audio_lock, b.overlay, b.link = threading.RLock(), Mock(), None
+    said = []
+    b._say = lambda msg, *a, **k: said.append(msg)
+
+    b._pending = None
+    b._open_confirm("파일을 삭제할까요?", " — 응/취소", "delete_file", ["a"], (0.0, {}), 0)
+    first = b._pending
+    assert first.kind == "delete_file" and said[-1].startswith("파일을 삭제할까요?")
+
+    b._open_confirm("창을 닫을까요?", " — 응/취소", "window_close", 1234, (0.0, {}), 0)
+    assert b._pending is first, "먼저 뜬 확인 질문이 덮였다"
+    assert "먼저 물어본 것에 답해" in said[-1]
+
+    # 먼저 것이 만료되면 새 질문은 정상적으로 열린다
+    b._pending = first._replace(expire=time.monotonic() - 1)
+    b._open_confirm("창을 닫을까요?", " — 응/취소", "window_close", 1234, (0.0, {}), 0)
+    assert b._pending.kind == "window_close"
+
+
+def test_stale_worker_only_clears_its_own_confirmation():
+    """폐기된 스레드의 뒷정리가 옆 스레드가 방금 연 확인 대기를 지우지 않는다 (-320 검수).
+
+    지우면 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+    """
+    import time
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    b._audio_lock = threading.RLock()
+    b._audio_generation, b.busy = 1, 1
+    stale_gen, now = 0, time.monotonic()
+
+    # 살아 있는 세대(1)의 워커가 연 확인 대기를, 폐기된 세대(0)의 워커가 거두면 안 된다.
+    b._pending = Pending("삭제할까요?", "delete_file", now + 12, ["a"], (0.0, {}), now, 1)
+    b._retire(stale_gen)
+    assert b._pending is not None, "옆 스레드의 확인 대기가 지워졌다"
+
+    # 자기가 만든 것(세대 0)은 거둔다 — 새 화자에게 넘기지 않는다.
+    b.busy = 1
+    b._pending = Pending("삭제할까요?", "delete_file", now + 12, ["a"], (0.0, {}), now, stale_gen)
+    b._retire(stale_gen)
+    assert b._pending is None and b.busy == 0
+
+
+def test_wake_scoring_is_serialized_and_reset():
+    """호출어 채점은 직렬이고 매번 버퍼를 비운다 (-320 검수 blocker).
+
+    openwakeword Model 은 발화마다 독립이 아니다 — predict_clip 이 내부적으로 predict() 를
+    청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
+    돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려가고, 사용자는 불러도 무반응을 본다.
+    """
+    import inspect
+    import time
+
+    import brain as B
+
+    src = inspect.getsource(B.Brain._handle)
+    assert "self._wake_lock" in src, "호출어 채점이 직렬화되지 않는다"
+    assert "self.wake.reset()" in src, "채점 전에 버퍼를 비우지 않는다"
+
+    # 실제로 겹치지 않는지 — 두 스레드가 동시에 채점을 시도한다.
+    overlap, inside, lock = [], [], threading.Lock()
+
+    class FakeModel:
+        def reset(self):
+            pass
+
+        def predict_clip(self, audio):
+            with lock:
+                inside.append(1)
+                overlap.append(len(inside))
+            time.sleep(0.02)
+            with lock:
+                inside.pop()
+            return [{B.WAKE_MODEL.stem: 0.0}]
+
+    model, wl = FakeModel(), B.Brain._wake_lock
+
+    def score():
+        with wl:
+            model.reset()
+            B.wake_score_of(model, np.zeros(16000, dtype=np.int16))
+
+    ts = [threading.Thread(target=score) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert max(overlap) == 1, f"호출어 채점이 겹쳤다 (동시 {max(overlap)}건)"
+
+
+def test_mcp_roundtrip_is_not_serialized():
+    """_rpc 의 락은 id 증가만 감싼다 — 왕복까지 감싸면 도구 호출이 전부 직렬이 된다.
+
+    응답은 요청마다 새로 여는 커넥션으로 짝지어지므로 id 는 겹치지만 않으면 된다.
+    왕복(urlopen timeout=15)을 락에 넣으면 -320 으로 없앤 큐 대기가 락으로 되살아난다.
+    """
+    import time
+
+    from be_link import McpClient
+
+    c = McpClient.__new__(McpClient)
+    c._rpc_id, c._rpc_lock, c.session_id = 0, threading.Lock(), None
+    inside, peak, lock = [], [], threading.Lock()
+    ids = []
+
+    def fake_post(body):
+        with lock:
+            inside.append(1)
+            peak.append(len(inside))
+            ids.append(body["id"])
+        time.sleep(0.05)                      # 느린 BE 왕복
+        with lock:
+            inside.pop()
+        return {"result": {}}, {}
+
+    c._post = fake_post
+    ts = [threading.Thread(target=lambda: c._rpc("tools/call", {})) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert max(peak) > 1, "MCP 왕복이 직렬로 묶였다 — 락이 _post 까지 감싸고 있다"
+    assert sorted(ids) == [1, 2, 3, 4], f"JSON-RPC id 가 겹쳤다: {ids}"
+
+
+def test_session_is_be_owned():
+    """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
+
+    9/18 라이브에서 발화 19건 중 실행 0건이 나왔다. AI 가 SESSION_S=90 을 들고 있었는데
+    BE 기본은 15초였고, 개시/연장 판정을 t_utter(사용자가 말한 시각)로 해서 LLM 왕복
+    12~29초 뒤 호출 시점엔 이미 닫힌 세션에 extend 를 보냈다. BE 의 renew 는 만료된 세션을
+    못 살리므로(active==null → SESSION_REQUIRED) 명령이 통째로 버려졌다.
+    """
+    import brain as b
+
+    # 자기 시계가 남아 있으면 BE 설정과 어긋나 같은 사고가 반복된다.
+    assert not hasattr(b, "SESSION_S"), "AI 에 세션 길이 상수가 다시 생겼다"
+    assert "session_until" not in b.Brain.__init__.__code__.co_names, "로컬 세션 미러가 다시 생겼다"
+
+    br = b.Brain.__new__(b.Brain)
+
+    br.link = None                                   # BE 미연결 → 세션 없음
+    assert br._session_until() == 0.0 and not br._session_live()
+
+    now = __import__("time").monotonic()
+    br.link = type("L", (), {"connected": True, "session_until_mono": now + 30})()
+    assert br._session_until() == now + 30 and br._session_live()   # BE 값을 그대로 쓴다
+
+    br.link.session_until_mono = now - 1             # BE 기준 이미 만료
+    assert not br._session_live(), "만료 판정은 호출 시점 기준이어야 한다"
+
+
 def test_media_seek():
     """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
 
@@ -1279,13 +1618,12 @@ def test_media_seek():
     def run(key, ref, ok=True):
         b = Brain.__new__(Brain)
         b.overlay, b.calls, b.said = Mock(), [], []
-        b._last_be_payload, b._last_be_error = None, None
         b._win_ref = lambda hwnd: ref
         b._say = lambda msg, *a, **k: b.said.append(msg)
 
         def try_be(tool, args, say):
             b.calls.append((tool, args))
-            return ok
+            return (True, None, None) if ok else (False, None, {"message": "거절"})
         b._try_be = try_be
         return b, b._media(key, "이동했습니다", hwnd=1234)
 
@@ -1513,8 +1851,17 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_session_is_be_owned()
+    test_be_results_do_not_leak_between_threads()
+    test_tier1_does_not_queue_behind_llm()
+    test_answer_never_lands_on_an_unheard_question()
+    test_second_confirm_does_not_clobber_the_first()
+    test_stale_worker_only_clears_its_own_confirmation()
+    test_wake_scoring_is_serialized_and_reset()
+    test_mcp_roundtrip_is_not_serialized()
     test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 31/31 통과")
+    test_confirm_window_is_not_longer_than_what_the_user_sees()
+    print("OK - 40/40 통과")

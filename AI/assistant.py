@@ -6,7 +6,8 @@
   [상시] 마이크 대기 → 발화 감지 순간, 그때 응시하던 화면 영역을 캡처
   발화가 끝나면 오디오+전체화면+응시크롭을 Gemini 한 콜로 → 명령 판단·해석·실행
   호출어("시아야")로 명령이 한 번 통하면 90초 활성 세션 — 그동안은 호출어 없이 명령
-  손 제스처 = 커맨드 단축키 (정적/커스텀은 BE 매핑, 동적은 dynamic_gesture_fallbacks.json;
+  손 제스처 = 커맨드 단축키 (정적/커스텀은 BE 매핑으로 실행; BE 매핑이 없는 동적
+  제스처는 감지·HUD 표시만 하고 실행하지 않는다 — 로컬 폴백은 없다;
   컨텍스트 의존: 유튜브 활성 시 미디어 제어)
   파괴적 동작(창 닫기)은 되물은 뒤 "응/취소" 음성으로 확정
 
@@ -76,11 +77,12 @@ WEBEX_TITLE_TOKENS = ("webex",)
 # BE 기본 제스처 테이블과의 계약. ``youtube``는 AI 내부 컨텍스트이고,
 # BE는 영상 공통 기능을 ``video`` 컨텍스트로 등록해 두었다. 여기 없는
 # 이벤트(Screen_Next/Prev 등)는 의미가 다른 BE 도구로 억지 변환하지 않고
-# dynamic_gesture_fallbacks.json의 로컬 fallback으로 실행한다.
+# be_gesture_target이 None을 반환해 그대로 감지·HUD 표시만 하고 실행하지
+# 않는다 — 로컬 fallback 파일이나 단축키 실행 경로는 없다.
 # 실행 매핑의 기준은 Backend/DefaultMappings.java와 BE DB다. 아래 집합은
 # 단축키/도구를 정의하지 않고, AI 컨텍스트를 BE 컨텍스트로 번역하기만 한다.
 # Full gesture mode. Static/custom gestures with a BE mapping are delegated to
-# BE; dynamic gestures use the local context fallback until BE owns them too.
+# BE; dynamic gestures without one are detected but never executed locally.
 AI_ENABLED_GESTURES = {
     "Closed_Fist", "Open_Palm", "Pointing_Up", "Thumb_Up", "Thumb_Down",
     "Victory", "ILoveYou",
@@ -628,7 +630,7 @@ def main():
                 # A close kNN match therefore takes precedence over a weak
                 # built-in guess; otherwise Promise is never evaluated when
                 # MediaPipe assigns a borderline built-in label first.
-                custom_label, dist = active_custom.classify_with_distance(hand["landmarks"])
+                custom_label, dist = active_custom.classify_with_distance(hand["landmarks"], disabled=disabled_gestures)
                 if custom_label:
                     raw_gesture = custom_label
                     raw_score = round(float(math.exp(-dist)), 3)
