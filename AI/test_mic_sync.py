@@ -389,6 +389,7 @@ def test_inflight_audio_is_not_executed_after_switch():
                 brain.run()
             except Done:
                 pass
+        assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"   # run() 은 띄우기만 한다(-320)
         assert len(executed) == int(not switch) and brain.busy == 0
 
 
@@ -418,13 +419,14 @@ def test_slow_execution_does_not_block_audio():
         started.set()
         release.wait(3)  # 느린 MCP·파일 작업을 재현한다.
         brain._pending = ("이전 액션의 확인 질문",)  # 입력 전환 뒤 늦게 도착한 결과도 재사용하면 안 된다.
-        raise Done
 
     def run():
-        try:
-            brain.run()
-        except Done:
-            pass
+        # -320 이후 run() 은 발화를 스레드에 넘기고 곧장 돌아온다. 큐가 비면 sleep 에서 Done.
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
 
     def receive():
         try:
@@ -455,6 +457,7 @@ def test_slow_execution_does_not_block_audio():
             if receiver.ident is not None:
                 receiver.join(3)
         assert not worker.is_alive() and not receiver.is_alive()
+        assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"
         assert brain._pending is None
 
 

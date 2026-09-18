@@ -1309,6 +1309,88 @@ def test_be_results_do_not_leak_between_threads():
         assert got[tool] == (True, f"/out/{tool}.bin", None), got
 
 
+def test_tier1_does_not_queue_behind_llm():
+    """1단 적중이 앞선 LLM 왕복 뒤에서 기다리지 않는다 (-320).
+
+    9/18 라이브: 0.42초에 판정을 끝낸 1단 명령이 대기 23.57초를 먹었다. 워커가 하나라
+    큐가 곧 지연이었다. 지금은 발화마다 스레드라 느린 발화가 뒤를 막지 않는다.
+    """
+    import threading
+    import time
+    from unittest.mock import patch
+
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from brain import Brain, SpeakerAccum
+
+    class Done(BaseException):
+        pass
+
+    brain = Brain.__new__(Brain)
+    brain._audio_lock = threading.RLock()
+    brain._audio_generation, brain._audio_since, brain.busy = 0, 0, 0
+    brain.queue, brain._workers = [], []
+    brain._client = object()
+    brain._pending = brain.speaker = brain.wake = brain.link = brain.wake_template = None
+    brain._accum = SpeakerAccum()
+    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4)
+
+    slow_in, hold = threading.Event(), threading.Event()
+    order = []
+
+    def router(audio, t_utter, lat=None):
+        if audio[0] == 1:          # 느린 발화 — 2단 승격
+            return "느린 발화"
+        return {"action": "test", "fast": True}
+
+    def ask(*a, **k):              # LLM 왕복을 재현한다. time.sleep 은 못 쓴다 —
+        slow_in.set()             # run() 을 멈추려고 brain.time.sleep 을 패치하면 전역이 바뀐다
+        hold.wait(3)
+        return {"action": "test", "fast": False}
+
+    def execute(result, *a):
+        order.append("느림" if not result.get("fast") else "빠름")
+        return None
+
+    brain._try_router, brain._ask, brain._execute = router, ask, execute
+
+    slow = np.ones(16000, dtype=np.int16)
+    fast = np.zeros(16000, dtype=np.int16)
+    with patch("brain.log_utterance"), patch("brain.EVAL_CAPTURE", False), \
+            patch("brain.be_dom_text", lambda *_: None):
+        brain.submit(slow, None, None)
+        # run() 을 한 번 돌려 느린 발화를 스레드로 띄운다.
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
+        assert slow_in.wait(2), "느린 발화가 시작되지 않았다"
+        t0 = time.monotonic()
+        brain.submit(fast, None, None)
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
+        # 1단 발화는 LLM 왕복이 아직 안 끝났는데도 먼저 실행된다
+        done = threading.Event()
+        for _ in range(300):
+            if order:
+                break
+            done.wait(0.01)
+        waited = time.monotonic() - t0
+        assert order and order[0] == "빠름", order
+        assert waited < 1.0, f"1단 명령이 LLM 뒤에서 {waited:.2f}s 기다렸다"
+        hold.set()                 # 이제 느린 발화를 풀어 준다
+        assert brain._drain(5)
+        assert order == ["빠름", "느림"], order
+        assert brain.busy == 0
+
+
 def test_session_is_be_owned():
     """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
 
@@ -1584,8 +1666,9 @@ if __name__ == "__main__":
     test_llm_retry()
     test_session_is_be_owned()
     test_be_results_do_not_leak_between_threads()
+    test_tier1_does_not_queue_behind_llm()
     test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 33/33 통과")
+    print("OK - 34/34 통과")

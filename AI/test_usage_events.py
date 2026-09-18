@@ -85,6 +85,7 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
             brain.run()
         except Done:
             pass
+    assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"   # run() 은 띄우기만 한다(-320)
     assert brain.busy == 0
     assert fails == any(str(call.args[0]).startswith("오류:") for call in brain.overlay.toast.call_args_list)
 
