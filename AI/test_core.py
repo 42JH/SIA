@@ -187,11 +187,16 @@ def test_click_recal(tmp_dir=None):
 
 
 def test_vad_segmenter():
+    import voice
     from voice import BLOCK, VadSegmenter
 
     seg = VadSegmenter()
     quiet = np.full(BLOCK, 120, dtype=np.int16)
     loud = np.full(BLOCK, 4000, dtype=np.int16)
+    # floor 를 안 주면 MIC_FLOOR 로 시작한다. 윈도우 볼륨을 올려도 임계에 못 닿는 장치가 있어
+    # (블루투스 헤드셋) 환경변수로 내릴 수 있어야 한다 — noise 도 같이 따라가야 threshold 가 안 터진다.
+    assert seg.floor == seg.noise == voice.MIC_FLOOR
+    assert VadSegmenter(floor=120.0).floor == 120.0   # 명시 인자가 환경변수보다 우선
     t = 0.0
     events = []
 
@@ -442,7 +447,7 @@ def test_wake_first_frame():
     from types import SimpleNamespace
     from brain import WAKE_MODEL, WAKE_THRESHOLD, wake_score_of
 
-    plateau = [0.0, 0.0, 0.6, 0.999, 0.999, 0.999, 0.2]
+    plateau = [0.0, 0.0, round(WAKE_THRESHOLD + 0.01, 3), 0.999, 0.999, 0.999, 0.2]  # 셋째 프레임이 임계를 처음 넘는다
     model = SimpleNamespace(predict_clip=lambda audio: [{WAKE_MODEL.stem: s} for s in plateau])
     top, i_first, lead = wake_score_of(model, np.zeros(16000, np.int16))
     assert top == 0.999 and i_first == 2 and lead == 0
@@ -460,6 +465,25 @@ def test_speech_s():
     assert speech_s(quiet) == 0.0
     assert speech_s(np.zeros(0, np.int16)) == 0.0
     assert speech_s(loud[:int(0.7 * 16000)]) < SPEAKER_JUDGE_SPEECH_S   # 단독 "시아야" 길이 → 이벤트 안 감
+
+
+def test_speaker_input_lead():
+    """3 s 크롭을 못 하는 발화는 말소리 앞 여유를 SPEAKER_LEAD_S 로 줄이고 뒤 꼬리는 둔다.
+    앞 여유가 이미 짧거나 배경이 계속 커서 말 시작을 못 가리면 원본 그대로."""
+    from brain import SPEAKER_LEAD_S, speaker_input
+    rng = np.random.default_rng(0)
+    loud = (rng.standard_normal(16000) * 2000).astype(np.int16)   # 말소리 1 s (rms ≈ 2000 > 350)
+    audio = np.concatenate([np.zeros(int(1.9 * 16000), np.int16), loud, np.zeros(int(0.54 * 16000), np.int16)])
+    out, t0, t1 = speaker_input(audio, None)
+    assert abs(len(out) / 16000 - (SPEAKER_LEAD_S + 1.54)) < 0.05   # 앞 1.9 → 0.5 s, 말 1 s + 꼬리 0.54 s 는 그대로
+    assert abs(t0 - (1.9 - SPEAKER_LEAD_S)) < 0.05 and t1 == round(len(audio) / 16000, 2)
+    assert np.array_equal(out, audio[-len(out):])
+    short = audio[int(1.6 * 16000):]                                # 앞 여유 0.3 s — 자를 것 없음
+    assert speaker_input(short, None)[0] is short
+    noisy = (rng.standard_normal(3 * 16000) * 2000).astype(np.int16)  # 배경이 처음부터 큼 — 말 시작을 못 가림
+    out, t0, _ = speaker_input(noisy, None)
+    assert out is noisy and t0 is None
+    assert speaker_input(np.zeros(16000, np.int16), None)[1] is None  # 말소리 없음
 
 
 def test_speaker_accum():
@@ -1117,6 +1141,284 @@ def test_mcp_delegation():
     assert virtual_screen_offset((size[0] - 1, size[1])) is None
 
 
+def test_app_ref_resolution():
+    """앱 ref 는 BE 레지스트리에서 찾는다 — 슬러그가 기계마다 다르다.
+
+    실측(9/17): AI 는 app:chrome 을 보냈지만 이 PC 의 BE 엔 app:google-chrome 만 있었고
+    탐색기·그림판은 등록 자체가 없어 "크롬 열어줘"가 매번 APP_NOT_REGISTERED 로 떨어졌다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    b = Brain.__new__(Brain)
+    b.overlay = Mock()
+    apps = [{"ref": "app:calc", "name": "계산기"},
+            {"ref": "app:google-chrome", "name": "Google Chrome"},
+            {"ref": "app:notepad", "name": "메모장"}]
+    b._be = lambda: Mock(call=Mock(return_value=(True, {"apps": apps})))
+    b._apps = None
+    assert b._app_ref("calc", "계산기") == "app:calc"              # ref 완전 일치
+    assert b._app_ref("chrome", "크롬") == "app:google-chrome"      # 슬러그 조각 일치
+    assert b._app_ref("paint", "그림판") is None                    # 등록 없음 → 안내하고 멈춘다
+    b._apps = apps + [{"ref": "app:mspaint-x", "name": "그림판"}]
+    assert b._app_ref("paint", "그림판") == "app:mspaint-x"         # 표시 이름 일치
+
+    b2 = Brain.__new__(Brain)                                      # BE 미접속이면 빈 목록
+    b2.overlay, b2._be, b2._apps = Mock(), (lambda: None), None
+    assert b2._app_ref("calc", "계산기") is None
+
+
+def test_save_crop_paths():
+    """저장이 "원하는 부분"을 담는지 — 9/16 BE 이관 후 실사용 0회라 테스트가 유일한 방어선.
+
+    9/3 실측(로그 17건 ↔ 파일 33개 1:1, 오버레이 14장)으로 bbox 선택 품질은 확인됐지만,
+    그 뒤 이관하면서 (a) 짧은 줄글이 통째로 버려지고 (b) 작은 대상에 여백이 과하게 붙고
+    (c) DOM 이 JSON 중간에서 끊기고 (d) 시선이 없는데 있다고 프롬프트가 선언하는 퇴화가 생겼다.
+    """
+    import json
+    import threading
+    import time
+    from unittest.mock import Mock
+
+    from brain import Brain, DOM_TEXT_MAX, bbox_to_box, build_prompt, dom_context_part
+
+    # ── 여백: 화면 기준이 아니라 '상자의 15% 를 넘지 않게'. 큰 상자는 예전 그대로여야 한다.
+    screen = (2880, 1800)
+    big = bbox_to_box(screen, [200, 200, 800, 800])
+    assert big == (518, 324, 2361, 1476), big      # 9/3 에 잘 나오던 크기 — 바뀌면 안 된다
+    small = bbox_to_box(screen, [500, 500, 515, 515])
+    assert small[2] - small[0] < 60, small         # 폭 43px 대상에 좌우 57px 씩 붙어 2.7배가 됐었다
+    assert bbox_to_box(screen, [800, 800, 200, 200]) is None   # 뒤집힘
+    assert bbox_to_box(screen, [10, 10, 990, 990]) is None     # 화면 90% 초과
+    assert bbox_to_box(screen, None) is None
+
+    # ── DOM: 직렬화 '전에' 잘라야 JSON 이 안 깨지고 truncated 가 모델에 도달한다.
+    dom = {"url": "u", "title": "t", "via": "extension", "text": "가" * 20000, "truncated": False}
+    part = dom_context_part(dom)
+    body = json.loads(part.split(":\n", 1)[1].split("\n\n")[0])   # 깨졌으면 여기서 죽는다
+    assert body["truncated"] is True and len(body["text"]) == DOM_TEXT_MAX
+    assert "잘려 있다" in part                                   # 잘린 사실을 모델에 알린다
+    assert "보고 있는 창이 아닐 수" in part                        # BE 는 백그라운드 브라우저도 읽어 준다
+    assert "접근성" not in part
+    assert "접근성" in dom_context_part({**dom, "via": "accessibility", "text": "짧음"})
+
+    # ── 시선이 없으면 크롭 파트도 없다 — 있다고 선언하면 LLM 이 없는 근거를 전제한다.
+    assert "(3) 발화 시작 순간" in build_prompt(True, None)
+    assert "응시 영역 정보는 이번엔 없다" in build_prompt(True, None, has_crop=False)
+
+    # ── 짧은 줄글: 예전엔 40자 미만이면 픽셀 경로로 갔고 bbox 가 null 이라 통째로 버려졌다.
+    class Img:
+        size = screen
+
+    logs = []
+
+    def run(result):
+        b = Brain.__new__(Brain)
+        b.overlay, b._pending, b._apps = Mock(), None, None
+        b.act, b._be = True, (lambda: None)
+        b._audio_lock, b._audio_generation, b.session_until = threading.Lock(), 0, 0.0
+        b._last_be_payload = {"path": r"C:\\Users\\u\\Documents\\SIA\\저장_1 (1).txt"}
+        b._last_be_error = None
+        b.calls, b.said = [], []
+        b._be_ok = lambda tool, args=None: (b.calls.append((tool, args)) or True)
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+        b._session_until = lambda: 0.0
+        import brain as _b
+        saved = _b.log_utterance
+        _b.log_utterance = lambda **f: logs.append(f)
+        try:
+            b._execute(result, None, t_utter=time.monotonic() - 6.0, full_img=Img(), tier=2)
+        finally:
+            _b.log_utterance = saved
+        return b
+
+    base = {"audio_is_speech": True, "is_command": True, "wake_heard": True,
+            "action": "save_crop", "say": ""}
+    b = run({**base, "save_text": "와이파이 비번 hunter2", "bbox": None})   # 20자, 박스 없음
+    assert b.calls and b.calls[0][0] == "files.save", b.calls      # 버리지 않고 글로 저장한다
+    assert "저장_1 (1).txt" in b.said[0], b.said                    # BE 가 실제로 쓴 경로를 말한다
+
+    # LLM 이 say 를 채워도 경로가 가려지면 안 된다 — 저장물은 사용자가 짐작 못 하는 폴더로 간다.
+    # (9/17 라이브: 바탕화면의 검증용 오버레이만 보고 "저장이 안 됐다"고 판단한 사고)
+    b = run({**base, "say": "선택하신 영역을 저장했습니다.",
+             "save_text": None, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region"
+    assert b.said[0].startswith("선택하신 영역을 저장했습니다.") and "저장_1 (1).txt" in b.said[0], b.said
+
+    b = run({**base, "save_text": "짧은 설명", "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "screen.capture_region", b.calls      # 박스가 있으면 이미지가 이긴다
+
+    b = run({**base, "save_text": "가" * 50, "bbox": [200, 200, 800, 800]})
+    assert b.calls[0][0] == "files.save", b.calls                 # 긴 줄글은 늘 텍스트 (기존 설계)
+
+    b = run({**base, "save_text": None, "bbox": None})
+    assert not b.calls and "찾지 못했" in b.said[0], (b.calls, b.said)   # 정말 모를 때만 포기한다
+
+    # ── 계측: 저장 1건당 줄 하나. 이게 없으면 "원한 부분을 저장했나"를 사후에 못 잰다.
+    kinds = [f["save_kind"] for f in logs if f.get("gate") == "save"]
+    assert kinds == ["text", "region", "region", "text", "none"], kinds
+    region = next(f for f in logs if f.get("save_kind") == "region")
+    assert region["bbox"] == [200, 200, 800, 800] and region["box"] == list(big)
+    assert region["screen"] == list(screen)
+    assert 5.0 < region["utter_to_save_s"] < 8.0, region   # 시점 불일치 창 — 발화마다 잰다
+    text = next(f for f in logs if f.get("save_kind") == "text")
+    assert text["save_len"] == 15 and text["save_head"].startswith("와이파이")
+
+
+def test_media_seek():
+    """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
+
+    media.* 중 유일하게 배경 재생을 제어하지 못한다(방향키는 포커스 쥔 창이 받는다).
+    그래서 발화 시점 창을 winRef 로 지목하고, 못 찾으면 인자를 빼 BE 기본 동작에 맡긴다.
+    """
+    from unittest.mock import Mock
+
+    from brain import Brain
+
+    def run(key, ref, ok=True):
+        b = Brain.__new__(Brain)
+        b.overlay, b.calls, b.said = Mock(), [], []
+        b._last_be_payload, b._last_be_error = None, None
+        b._win_ref = lambda hwnd: ref
+        b._say = lambda msg, *a, **k: b.said.append(msg)
+
+        def try_be(tool, args, say):
+            b.calls.append((tool, args))
+            return ok
+        b._try_be = try_be
+        return b, b._media(key, "이동했습니다", hwnd=1234)
+
+    b, done = run("forward", "win:3")
+    assert done and b.calls == [("media.seek", {"dir": "forward", "winRef": "win:3"})], b.calls
+
+    # back 을 그대로 보내면 BE 가 거절한다 — backward 로 바꿔야 한다.
+    b, done = run("back", "win:3")
+    assert done and b.calls[0][1]["dir"] == "backward", b.calls
+
+    # 대상 창을 못 찾으면 인자를 뺀다(BE 기본: 지금 앞에 있는 창). 빈 winRef 를 보내지 않는다.
+    b, done = run("forward", None)
+    assert done and b.calls == [("media.seek", {"dir": "forward"})], b.calls
+
+    # BE 가 못 하면 사실대로 말하고 로컬 단축키로 대신하지 않는다.
+    b, done = run("forward", "win:3", ok=False)
+    assert not done and b.said, (b.calls, b.said)
+    assert not any(t != "media.seek" for t, _ in b.calls), b.calls
+
+    # 표에 있는 키는 그대로 표대로 나간다 (seek 분기가 가로채지 않는다).
+    b, done = run("playpause", "win:3")
+    assert done and b.calls == [("media.play_pause", None)], b.calls
+
+
+def test_mic_preview():
+    """마이크 레벨 미리보기 — FE 파형의 유일한 공급원이다 (프로토콜 §5.5).
+
+    이 경로가 비어 있으면 FE 는 에러도 없이 평평한 선만 그린다(9/17 실측: AI 에 mic_preview 0건,
+    BE 중계·FE 소비는 이미 있었음). 그래서 배선이 끊기면 조용히 죽는 것부터 잡는다.
+    """
+    import json
+    import threading
+    from unittest.mock import Mock
+
+    from be_link import AgentLink
+    from voice_bridge import MIC_PREVIEW_HZ, MicPreview, mic_level
+
+    # ① 레벨 정규화 — 선형으로 나누면 말소리가 0.03 이라 막대가 안 보인다. dBFS 로 편다.
+    assert mic_level(0) == 0.0 and mic_level(-5) == 0.0     # 무음·음수 방어
+    assert mic_level(32768) == 1.0 and mic_level(10 ** 6) == 1.0   # 포화는 자른다(버리지 않는다)
+    assert 0.45 < mic_level(1000) < 0.55                    # 보통 말소리가 막대 절반쯤
+    assert mic_level(350) < mic_level(1000) < mic_level(4000)
+
+    # ② 수명 — 준비 단계가 없어 STARTING 없이 바로 READY, 끝은 STOPPED.
+    link = Mock()
+    mp = MicPreview(link)
+    mp.tick(5000, 100.0)
+    assert not link.send_event.called                       # 켜기 전엔 아무것도 안 보낸다
+
+    mp.start()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "READY"})
+
+    period = 1.0 / MIC_PREVIEW_HZ
+    mp.tick(1000, 100.0)
+    mp.tick(1000, 100.0 + period / 2)                       # 주기 안의 두 번째는 버린다
+    mp.tick(1000, 100.0 + period * 1.5)
+    levels = [c[0][1] for c in link.send_event.call_args_list if c[0][0] == "mic_preview_level"]
+    assert [x["seq"] for x in levels] == [1, 2], levels     # 한 메시지에 진폭 하나, seq 는 1부터
+    assert all(0.0 <= x["level"] <= 1.0 for x in levels)
+
+    mp.stop()
+    assert link.send_event.call_args_list[-1][0] == ("mic_preview_state", {"phase": "STOPPED"})
+    n = link.send_event.call_count
+    mp.stop()                                               # 두 번 꺼도 STOPPED 는 한 번만
+    mp.tick(9000, 200.0)                                    # 꺼진 뒤 레벨은 안 보낸다
+    assert link.send_event.call_count == n
+
+    # ③ 이 두 이벤트가 메인 루프까지 오는가 — 중계 목록에서 빠지면 위 코드가 통째로 죽는다.
+    ln = AgentLink.__new__(AgentLink)
+    ln._events, ln._event_lock = [], threading.Lock()
+    ln._session_condition, ln.be_session_id, ln.session_until_mono = threading.Condition(), None, 0.0
+    ln.gesture_ready = False
+    for attr in ("voice_sync", "calib", "wake", "wake_store"):
+        setattr(ln, attr, None)
+    ln._on_event(json.dumps({"type": "mic_preview_start", "data": {}}))
+    ln._on_event(json.dumps({"type": "mic_preview_stop", "data": {}}))
+    assert ln.take_events() == [("mic_preview_start", {}), ("mic_preview_stop", {})]
+
+
+def test_llm_retry():
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    from unittest.mock import patch
+
+    import brain
+
+    class FakeClient:
+        def __init__(self, errors):
+            self.errors, self.calls = list(errors), 0
+            self.models = self
+
+        def generate_content(self, **kw):
+            self.calls += 1
+            if self.errors:
+                raise self.errors.pop(0)
+            return "OK"
+
+    made = []
+
+    def fake_client(key):
+        c = FakeClient(plan.pop(0) if plan else [])
+        made.append(key)
+        return c
+
+    with patch("brain.llm_client", side_effect=fake_client):
+        plan = [[]]                                            # 첫 호출에 성공
+        c0 = brain.llm_client("k1")
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 0 and tries == 1
+
+        plan = [[]]                                            # 429 → 키 전환 후 성공
+        c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+        assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
+        c0.errors = [Exception("503 UNAVAILABLE")]
+        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+
+        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
+        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
+            brain.llm_generate(c0, ["p"], ["k1"], 0)
+            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
+        except Exception as e:
+            assert "503" in str(e)
+
+    assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
+    assert brain.is_transient_error(Exception("Read timed out"))
+    assert not brain.is_transient_error(Exception("400 INVALID_ARGUMENT"))
+    assert brain.is_quota_error(Exception("429")) and not brain.is_quota_error(Exception("503"))
+
+
 def test_wake_model_load():
     """시동어 모델은 Gemini 키와 따로 올라온다 — 키가 없어도 brain.wake 가 채워져야
     온보딩 이름 불러보기가 실행과 같은 모델로 발음을 확인한다(assistant.py 의 wake_model 배선).
@@ -1201,6 +1503,7 @@ if __name__ == "__main__":
     test_mouse_subpixel_accumulator()
     test_wake_first_frame()
     test_speech_s()
+    test_speaker_input_lead()
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
@@ -1209,4 +1512,9 @@ if __name__ == "__main__":
     test_notice_data()
     test_be_dom_text()
     test_mcp_delegation()
-    print("OK - 26/26 통과")
+    test_llm_retry()
+    test_media_seek()
+    test_mic_preview()
+    test_save_crop_paths()
+    test_app_ref_resolution()
+    print("OK - 31/31 통과")

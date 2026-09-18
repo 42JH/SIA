@@ -8,6 +8,7 @@ import collections
 import hashlib
 import io
 import json
+import math
 import os
 import tempfile
 import threading
@@ -38,6 +39,10 @@ VOICE_MIN_SIM = 0.40   # NOTE(튜닝): 문장 하나가 앞 문장들과 이만�
                        # 5문장 일관성 0.78 — 0.40 은 여유 있다. 다른 사람·다른 마이크는 아직 안 쟀다
 REJECT_BUDGET = 2      # 등록 1회당 거절 상한 — 목소리 불일치(INCONSISTENT)와 소음(NOISY) 을 따로 센다. 1번 문장이 잘못 녹음되면 그게
                        # 기준이 되어 뒤 문장이 전부 거절되고, 선풍기 소음은 사용자가 못 없앤다. 소진되면 받되 quality 를 "낮음" 으로 보낸다
+WAKE_ENROLL_IDLE_S = float(os.environ.get("WAKE_ENROLL_IDLE_S") or 180.0)
+# NOTE(튜닝): 마지막 샘플(또는 시작) 뒤 이만큼 조용하면 수집을 접는다. 온보딩을 중간에
+# 떠나면 취소 이벤트가 없어(BE·FE 어느 쪽도 안 보낸다) 모든 발화가 등록으로 먹히고
+# 음성 명령이 죽는다. 5개를 채우는 사람은 몇 초 간격으로 말하므로 3분이면 넉넉하다.
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
 WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
 REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
@@ -70,6 +75,60 @@ def clear_voice_cache(speaker, profile_path):
     speaker.apply_profile(None, speaker.default_threshold)
 
 
+MIC_PREVIEW_HZ = 20        # BE 권장 10~30 Hz (§5.5). 블록당 1개면 33 Hz 인데 파형이 얻는 건 없고 메시지만 는다.
+MIC_PREVIEW_FLOOR_DB = -60.0   # 이 아래는 무음(0.0). 레벨 미터의 통상적인 바닥.
+
+
+def mic_level(rms):
+    """int16 rms → 0.0~1.0. 선형으로 32768 로 나누면 보통 말소리가 0.03 언저리라 막대가 안 보인다 —
+    레벨 미터는 dBFS 로 그린다. 바닥 -60 dBFS (말소리 rms 1000 ≈ 0.49, VAD 시작 임계 350 ≈ 0.34)."""
+    if rms <= 0:
+        return 0.0
+    db = 20.0 * math.log10(min(float(rms), 32768.0) / 32768.0)
+    return max(0.0, min(1.0, (db - MIC_PREVIEW_FLOOR_DB) / -MIC_PREVIEW_FLOOR_DB))
+
+
+class MicPreview:
+    """상시 감지 루프가 이미 재 둔 입력 레벨을 BE(mic_preview_*)로 흘린다 (프로토콜 §5.5).
+
+    등록 화면에서 "내 목소리가 들어가고 있나"를 말하는 동안 보여 주는 파형이다. 등록 흐름은
+    순번만 알려줄 뿐 말하는 중엔 아무 신호가 없어서, 판독 결과가 뜰 때까지 마이크가 살았는지 모른다.
+
+    마이크를 새로 열지 않는다 — VAD 가 블록마다 계산해 둔 rms 를 읽어 보내기만 하므로 미리보기
+    중에도 호출어 감지는 그대로 돈다. 카메라 판(gesture_be.GesturePreview)과 달리 인코딩이 없어
+    워커 스레드도 큐도 없고, 준비 단계가 없어 STARTING 없이 바로 READY 다.
+    등록이 시작돼도 끊지 않는다 — 파형을 보여주려는 때가 바로 낭독 중이다 (카메라와 반대).
+    """
+
+    def __init__(self, link):
+        self.link = link
+        self.active = False
+        self._seq = 0
+        self._last_sent = 0.0
+
+    def start(self):
+        self.active = True
+        self._seq = 0
+        self._last_sent = 0.0
+        self.link.send_event("mic_preview_state", {"phase": "READY"})
+
+    def stop(self):
+        if not self.active:
+            return
+        self.active = False
+        self.link.send_event("mic_preview_state", {"phase": "STOPPED"})
+
+    def tick(self, rms, now):
+        """메인 루프에서 매 회 호출. 보낼 때가 아니면 즉시 돌아간다."""
+        if not self.active or now - self._last_sent < 1.0 / MIC_PREVIEW_HZ:
+            return
+        self._last_sent = now
+        self._seq += 1
+        # 한 메시지가 진폭 하나다 — 배열로 묶으면 묶은 만큼 파형이 늦게 움직인다 (§5.5).
+        self.link.send_event("mic_preview_level",
+                             {"seq": self._seq, "level": mic_level(rms), "tsMs": int(now * 1000)})
+
+
 class VoiceProfileSync:
     """다운로드는 워커, 적용은 메인 루프. 늦게 받은 이전 프로필은 적용 전에 버린다."""
 
@@ -84,11 +143,6 @@ class VoiceProfileSync:
         self._queued = self._busy = self._closed = False
         self._pending = None
         self._worker = None
-
-    def is_active_profile(self, profile_ref):
-        """서버가 알린 최신 활성 프로필과 인증 당시 프로필이 같은지 확인한다."""
-        with self._condition:
-            return not self._closed and self._desired == profile_ref
 
     def on_changed(self, ref):
         """전체 설정의 blobs.voice와 voice_changed가 같은 최신 요청을 갱신한다."""
@@ -905,6 +959,7 @@ class WakeEnroll:
         self.wake_model = wake_model        # 고정 시동어 모델 — 실행 때와 같은 것으로 발음을 확인한다
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
+        self.last_at = 0.0                  # 마지막 진행(시작·샘플) 시각 — 방치 판정용
         self.wake_text = WAKE_DEFAULT_WORD  # 이번 등록이 대상으로 삼은 호출어 (시작할 때 설정에서 읽는다)
         self.epoch = 0                      # 등록 회차 — 늦게 끝난 이전 회차가 확정하지 못하게 한다
         self._samples = []
@@ -923,7 +978,8 @@ class WakeEnroll:
     def on_start(self):
         log_rx("wakeword_enroll_start", {})
         self.active, self._samples, self._embs, self._scores = True, [], [], []
-        self.started_at, self._fails = time.monotonic(), 0
+        self.started_at = self.last_at = time.monotonic()
+        self._fails = 0
         self._saving, self._saved = False, None
         self.epoch += 1                     # 앞 회차가 뒤늦게 끝나도 확정하지 못한다
         # 이번 등록이 대상으로 삼는 호출어는 지금 설정값이다 — 설정만 바꾸고 옛 템플릿을 재사용하는 길을 막는다.
@@ -933,8 +989,18 @@ class WakeEnroll:
             self._preload.start()
         print(f"[호출어 수집] 시작({self.epoch}회차) — \"{self.wake_text}\" {WAKE_TOTAL}번")
 
+    def expired(self, now=None):
+        """방치된 수집인가 — 마지막 진행 뒤 WAKE_ENROLL_IDLE_S 가 지났다.
+
+        호출어 취소 이벤트가 BE·FE 어느 쪽에도 없어서(보이스는 voice_reg_cancel 이 있다)
+        온보딩을 중간에 떠나면 active 가 영원히 남는다. 그동안 모든 발화가 등록 샘플로
+        먹혀 음성 명령이 통째로 죽으므로, 스스로 접는 안전망을 둔다."""
+        if not self.active:
+            return False
+        return (time.monotonic() if now is None else now) - self.last_at > WAKE_ENROLL_IDLE_S
+
     def cancel(self):
-        """수집 중인 샘플을 지우고 기존 등록본은 유지한다. BE의 호출어 취소 이벤트는 아직 연동되지 않았다."""
+        """수집 중인 샘플을 지우고 기존 등록본은 유지한다."""
         if not self.active:
             return False
         self.active, self._saving, self._saved = False, False, None
@@ -947,6 +1013,7 @@ class WakeEnroll:
     def on_utter(self, audio_i16, t_utter=None):
         if not self.active:
             return                          # t_utter 는 안 쓴다 — 호출어 수집엔 무를 문장이 없다. 호출부를 하나로 두려고 받아만 둔다
+        self.last_at = time.monotonic()     # 진행이 있었다 — 방치 시계를 민다
         if self._saving:
             # 유효한 5개는 이미 모였고 저장만 실패한 상태다 — 여섯 번째 샘플로 받지 않고 저장을 다시 시도한다
             print("[호출어 수집] 저장 재시도 — 모은 샘플은 그대로 쓴다")

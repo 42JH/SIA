@@ -549,6 +549,39 @@ def test_wake_download_retries_after_settings_change():
                 store._worker.join(3)
 
 
+def test_wake_enroll_idle_expires():
+    """방치된 호출어 수집은 스스로 접는다 — 안 접으면 음성 명령이 통째로 죽는다.
+
+    온보딩 "이름 불러보기" 중에 이탈하면 active 가 영원히 남는다. assistant.py 의 라우팅이
+    `if enroll: ... continue` 라 그동안 **모든 발화가 등록 샘플로 먹히고 brain 에 안 간다**.
+    호출어만 취소 이벤트가 BE·FE 어느 쪽에도 없어서(보이스는 voice_reg_cancel 이 있다)
+    밖에서 접어 줄 사람이 없다.
+    """
+    import time
+
+    from voice_bridge import WAKE_ENROLL_IDLE_S, WakeEnroll
+
+    w = WakeEnroll.__new__(WakeEnroll)
+    w.active, w.last_at = False, 0.0
+    assert not w.expired()                                   # 수집 중이 아니면 만료도 없다
+
+    now = time.monotonic()
+    w.active, w.last_at = True, now
+    assert not w.expired(now)                                # 막 시작
+    assert not w.expired(now + WAKE_ENROLL_IDLE_S - 1)        # 아직 여유
+    assert w.expired(now + WAKE_ENROLL_IDLE_S + 1)           # 방치
+
+    # 샘플이 들어오면 시계가 밀린다 — 천천히 말하는 사람을 끊지 않는다.
+    w.last_at = now + WAKE_ENROLL_IDLE_S - 1
+    assert not w.expired(now + WAKE_ENROLL_IDLE_S + 1)
+
+    # 접고 나면 발화가 다시 brain 으로 간다 (assistant 는 s.active 로 라우팅한다).
+    w._saving, w._saved, w.epoch = False, None, 0
+    w._samples, w._embs, w._scores = [1], [2], [3]
+    assert w.cancel() is True and not w.active
+    assert w._samples == [] and not w.expired()
+
+
 if __name__ == "__main__":
     import sys
     try:
