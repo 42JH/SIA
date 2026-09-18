@@ -1,0 +1,194 @@
+[
+  {
+    "name": "four",
+    "motion": "STATIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'four'와 너무 유사합니다",
+      "similarTo": "four",
+      "similarity": 1.0
+    },
+    "recognized": "four"
+  },
+  {
+    "name": "grip",
+    "motion": "STATIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'grip'와 너무 유사합니다",
+      "similarTo": "grip",
+      "similarity": 1.0
+    },
+    "recognized": "grip"
+  },
+  {
+    "name": "rock",
+    "motion": "STATIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'rock'와 너무 유사합니다",
+      "similarTo": "rock",
+      "similarity": 1.0
+    },
+    "recognized": "rock"
+  },
+  {
+    "name": "pinkie",
+    "motion": "STATIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'pinkie'와 너무 유사합니다",
+      "similarTo": "pinkie",
+      "similarity": 1.0
+    },
+    "recognized": "pinkie"
+  },
+  {
+    "name": "pair_four_grip",
+    "motion": "STATIC",
+    "hands": 2,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 2
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'pair_four_grip'와 너무 유사합니다",
+      "similarTo": "pair_four_grip",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "pair_four_grip"
+    ]
+  },
+  {
+    "name": "pair_rock_pinkie",
+    "motion": "STATIC",
+    "hands": 2,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 2
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'pair_rock_pinkie'와 너무 유사합니다",
+      "similarTo": "pair_rock_pinkie",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "pair_rock_pinkie"
+    ]
+  },
+  {
+    "name": "circle",
+    "motion": "DYNAMIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'circle'와 너무 유사합니다",
+      "similarTo": "circle",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "circle"
+    ]
+  },
+  {
+    "name": "vertical_tap",
+    "motion": "DYNAMIC",
+    "hands": 1,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 1
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'vertical_tap'와 너무 유사합니다",
+      "similarTo": "vertical_tap",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "vertical_tap"
+    ]
+  },
+  {
+    "name": "close_hands",
+    "motion": "DYNAMIC",
+    "hands": 2,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 2
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'close_hands'와 너무 유사합니다",
+      "similarTo": "close_hands",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "close_hands"
+    ]
+  },
+  {
+    "name": "spread_hands",
+    "motion": "DYNAMIC",
+    "hands": 2,
+    "registration": {
+      "event": "reg_captured",
+      "tempId": "offline",
+      "hands": 2
+    },
+    "duplicate": {
+      "event": "reg_rejected",
+      "tempId": "offline",
+      "reason": "'spread_hands'와 너무 유사합니다",
+      "similarTo": "spread_hands",
+      "similarity": 1.0
+    },
+    "recognized": [
+      "spread_hands"
+    ]
+  }
+]

@@ -10,6 +10,7 @@ import math
 import time
 
 import numpy as np
+from gesture_pose import verified_finger_gesture
 
 PINCH_ON, PINCH_OFF = 0.35, 0.45  # (엄지-검지 거리 / 손 크기) 히스테리시스
 
@@ -98,22 +99,8 @@ def parse_hand(result):
 
     anchor는 중지 MCP(9): 핀치 중에도 안정적으로 움직임을 대표하는 지점.
     """
-    if not result.hand_landmarks:
-        return None
-    lm = result.hand_landmarks[0]
-    size = _dist(lm[0], lm[9]) + 1e-6
-    gesture, score = "None", None
-    if result.gestures and result.gestures[0]:
-        gesture = result.gestures[0][0].category_name
-        score = round(float(result.gestures[0][0].score), 3)
-    return {
-        "anchor": (lm[9].x, lm[9].y),
-        "pinch_ratio": _dist(lm[4], lm[8]) / size,
-        "gesture": gesture,
-        "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
-        "landmarks": [(p.x, p.y) for p in lm],  # HUD 디버그 표시용
-        "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
-    }
+    hands = parse_hands(result)
+    return hands[0] if hands else None
 
 
 def parse_hands(result):
@@ -127,6 +114,14 @@ def parse_hands(result):
         if result.gestures and len(result.gestures) > idx and result.gestures[idx]:
             gesture = result.gestures[idx][0].category_name
             score = round(float(result.gestures[idx][0].score), 3)
+        model_gesture, model_score = gesture, score
+        world = getattr(result, 'hand_world_landmarks', None)
+        world_points = ([(p.x, p.y, p.z) for p in world[idx]]
+                        if world and len(world) > idx else None)
+        gesture, pose_verification = verified_finger_gesture(gesture, world_points)
+        if gesture != model_gesture:
+            # 원래 후보의 점수를 교정한 다른 라벨의 신뢰도로 사용하지 않는다.
+            score = None
         handedness = "Unknown"
         if (getattr(result, "handedness", None) and len(result.handedness) > idx
                 and result.handedness[idx]):
@@ -135,7 +130,11 @@ def parse_hands(result):
             "anchor": (lm[9].x, lm[9].y),
             "pinch_ratio": _dist(lm[4], lm[8]) / size,
             "gesture": gesture,
-            "score": score,  # 통계용 신뢰도 — MediaPipe 원본, None이면 감지 없음
+            "score": score,  # 모델 라벨을 유지할 때만 원본 점수. 교정/보류 시 None.
+            "model_gesture": model_gesture,
+            "model_score": model_score,
+            "pose_verification": pose_verification,
+            "world_landmarks": world_points,
             "handedness": handedness,
             "landmarks": [(p.x, p.y) for p in lm],
             "size": size,  # 손목→중지MCP 거리 — 카메라 거리 보정(scale_by_hand_size)용
@@ -395,42 +394,56 @@ class CustomGestures:
         self.names = [self.names[i] for i in keep]
         self._save()
 
-    def classify_with_distance(self, lm_xy, k=5):
+    def classify_with_distance(self, lm_xy, k=5, disabled=()):
         """Return a custom label and its nearest template distance.
 
         The normal rejection threshold remains unchanged.  Callers can use a
         successful result to distinguish a confident registered pose from a
         weak built-in classifier guess.
+
+        disabled인 이름의 샘플은 kNN 자체에서 제외한다 — v2 시퀀스 저장소
+        (CustomGestureStore.update)는 이미 그렇게 하는데, 여기서 사후에
+        raw_gesture를 덮어쓴 뒤 걸러내면 그 프레임엔 이미 내장 라벨이
+        지워져 있어 꺼진 커스텀 제스처가 내장 인식을 굶긴다.
         """
         if self.n == 0:
             return None, float("inf")
+        keep = [i for i, n in enumerate(self.names) if n not in disabled]
+        if not keep:
+            return None, float("inf")
         f = normalize_landmarks(lm_xy)
-        d = pose_distances(self.X, f)
+        d = pose_distances(self.X[keep], f)
         idx = np.argsort(d)[:k]
         nearest = float(d[idx[0]])
         if nearest > self.thresh:
             return None, nearest
         weights = {}
         for i in idx:
-            weights[self.names[i]] = weights.get(self.names[i], 0.0) + 1.0 / (float(d[i]) + 1e-6)
+            name = self.names[keep[i]]
+            weights[name] = weights.get(name, 0.0) + 1.0 / (float(d[i]) + 1e-6)
         return max(weights, key=weights.get), nearest
 
-    def classify(self, lm_xy, k=5):
+    def classify(self, lm_xy, k=5, disabled=()):
         """랜드마크 → 커스텀 제스처 이름 또는 None.
 
         최근접 거리로 먼저 게이트하고(엉뚱한 손모양 기권), 거리 가중 투표로
         라벨을 정한다 — 단순 다수결은 경계에서 먼 샘플에 휘둘려 프레임마다 튄다.
+        disabled인 이름은 classify_with_distance와 같은 이유로 후보에서 뺀다.
         """
         if self.n == 0:
             return None
+        keep = [i for i, n in enumerate(self.names) if n not in disabled]
+        if not keep:
+            return None
         f = normalize_landmarks(lm_xy)
-        d = pose_distances(self.X, f)
+        d = pose_distances(self.X[keep], f)
         idx = np.argsort(d)[:k]
         if float(d[idx[0]]) > self.thresh:  # 가장 가까운 샘플조차 멀면 기권
             return None
         w = {}
         for i in idx:
-            w[self.names[i]] = w.get(self.names[i], 0.0) + 1.0 / (float(d[i]) + 1e-6)
+            name = self.names[keep[i]]
+            w[name] = w.get(name, 0.0) + 1.0 / (float(d[i]) + 1e-6)
         return max(w, key=w.get)
 
     def nearest_class(self, feats):

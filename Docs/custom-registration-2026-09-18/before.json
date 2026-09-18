@@ -1,0 +1,1050 @@
+{
+  "scope": "offline real model on public photos + saved coordinate replay, local fake upload",
+  "photos": [
+    {
+      "source": "call",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Thumb_Up'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Thumb_Up",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Thumb_Up": 45
+      },
+      "labels": {
+        "Thumb_Up": 45
+      }
+    },
+    {
+      "source": "dislike",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Thumb_Down'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Thumb_Down",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Thumb_Down": 45
+      },
+      "labels": {
+        "Thumb_Down": 45
+      }
+    },
+    {
+      "source": "fist",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Closed_Fist'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Closed_Fist",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Closed_Fist": 45
+      },
+      "labels": {
+        "Closed_Fist": 45
+      }
+    },
+    {
+      "source": "four",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "like",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Thumb_Up'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Thumb_Up",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Thumb_Up": 45
+      },
+      "labels": {
+        "Thumb_Up": 45
+      }
+    },
+    {
+      "source": "mute",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차 촬영 중 손 개수가 달라졌습니다. 모든 회차에서 손 개수를 유지해주세요"
+      },
+      "raw_labels": {
+        "Pointing_Up": 45,
+        "None": 45
+      },
+      "labels": {
+        "Pointing_Up": 45,
+        "None": 45
+      }
+    },
+    {
+      "source": "grabbing",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "grip",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "ok",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "손이 감지되지 않았습니다. 카메라에 손을 보여주세요"
+      },
+      "raw_labels": {},
+      "labels": {}
+    },
+    {
+      "source": "one",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Pointing_Up'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Pointing_Up",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Pointing_Up": 45
+      },
+      "labels": {
+        "Pointing_Up": 45
+      }
+    },
+    {
+      "source": "palm",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Open_Palm'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Open_Palm",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Open_Palm": 45
+      },
+      "labels": {
+        "Open_Palm": 45
+      }
+    },
+    {
+      "source": "peace",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Victory'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Victory",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Victory": 45
+      },
+      "labels": {
+        "Victory": 45
+      }
+    },
+    {
+      "source": "peace_inverted",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "rock",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "point",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "pinkie",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "stop",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Open_Palm'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Open_Palm",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Open_Palm": 45
+      },
+      "labels": {
+        "Open_Palm": 45
+      }
+    },
+    {
+      "source": "stop_inverted",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "기본 제스처 'Open_Palm'로 인식되었습니다. 다른 손 모양으로 등록해주세요",
+        "similarTo": "Open_Palm",
+        "similarity": null
+      },
+      "raw_labels": {
+        "Open_Palm": 45
+      },
+      "labels": {
+        "Open_Palm": 45
+      }
+    },
+    {
+      "source": "three",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "three2",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "two_up",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "two_up_inverted",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "middle_finger",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    },
+    {
+      "source": "three3",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "raw_labels": {
+        "None": 45
+      },
+      "labels": {
+        "None": 45
+      },
+      "duplicate": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "'__pending__'와 너무 유사합니다",
+        "similarTo": "__pending__",
+        "similarity": 1.0
+      }
+    }
+  ],
+  "recordings": [
+    {
+      "source": "20260916T071356_30cf04dfdb2b.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T071427_3fc3cffcff94.npz",
+      "motion": "STATIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차 촬영이 충분하지 않습니다. 손을 계속 화면에 보여주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T071443_fe5c12141c5e.npz",
+      "motion": "STATIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차 촬영 중 손 개수가 달라졌습니다. 모든 회차에서 손 개수를 유지해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T072715_708fffa8deee.npz",
+      "motion": "STATIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "샘플이 너무 흩어졌습니다. 손모양을 고정해 다시 촬영하세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차 촬영 중 손 개수가 달라졌습니다. 모든 회차에서 손 개수를 유지해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T072839_6493831ed052.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "2회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차에서 두 손이 오래 가려졌거나 촬영 시작·끝에 확인되지 않았습니다. 손 개수를 유지하고, 두 손을 다시 벌려 보여준 뒤 촬영을 마쳐주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073155_8270250edd4c.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "1회차 촬영 중 손이 화면 밖으로 벗어났습니다. 손목과 손끝이 화면 안에 들어오도록 해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차 촬영 중 손이 화면 밖으로 벗어났습니다. 손목과 손끝이 화면 안에 들어오도록 해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073218_fef3baa49437.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "3회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "3회차에서 두 손이 오래 가려졌거나 촬영 시작·끝에 확인되지 않았습니다. 손 개수를 유지하고, 두 손을 다시 벌려 보여준 뒤 촬영을 마쳐주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073335_0ff071a8ac5a.npz",
+      "motion": "STATIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 2
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073441_cd90a5831ed4.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073607_cac9b64142c2.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T073757_a878273a5703.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T074103_1c7e0e77ba96.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "1회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차에서 두 손이 오래 가려졌거나 촬영 시작·끝에 확인되지 않았습니다. 손 개수를 유지하고, 두 손을 다시 벌려 보여준 뒤 촬영을 마쳐주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T081306_b451a4d4978b.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "2회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차에서 두 손이 오래 가려졌거나 촬영 시작·끝에 확인되지 않았습니다. 손 개수를 유지하고, 두 손을 다시 벌려 보여준 뒤 촬영을 마쳐주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T081324_1a28734e5b54.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "1회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차에서 움직임이 충분하지 않습니다. 동작을 끝까지 반복하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T081342_706c2ba10610.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T081425_a3d897a72e3d.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차와 3회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T081628_a9fbf2377c87.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082148_cbb570f1f3b5.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082230_ec1c567b7f20.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082420_ec9051999e7d.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082438_2f0b37cf865a.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082546_8f2a9aba110d.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "3회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "3회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082616_b994968ef40b.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'원 그리기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082718_29af503422d9.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T082927_b8392c7c33e2.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 모으기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T083126_9da56f319d4b.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 모으기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T083521_264855d34364.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 모으기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T083906_3eac051e5968.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'손목 하나 비틀기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T083926_d0892da232c8.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'한 손 펴기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T083946_ed758a13b25d.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'손목 하나 비틀기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084004_9bf687bf4a66.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'손목 하나 비틀기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084021_61dd75a49b8c.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'손목 하나 비틀기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084039_5622e78594b6.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'손목 하나 비틀기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084057_d7c9d6362867.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'한 손 펴기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 1
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084115_39f4a4c62d93.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 모으기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_captured",
+        "tempId": "offline",
+        "hands": 2
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084133_fed595c67ca5.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 펴기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084151_c5ba08eddc5a.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084209_d4d319156bd2.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "2회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "2회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084226_d41d3d2f179e.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084245_df06bc8489c4.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "1회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차 촬영 중 손 개수가 바뀌었습니다. 손 개수를 유지해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084351_38c3dc926da7.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084447_8d5ccc40ab17.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084541_325b73c99303.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084559_0c180211b6a2.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084617_ae2a5d136b56.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084634_1636a18b1089.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "3회차 촬영 중 손이 화면 밖으로 벗어났습니다. 손목과 손끝이 화면 안에 들어오도록 해주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "3회차 촬영 중 손이 화면 밖으로 벗어났습니다. 손목과 손끝이 화면 안에 들어오도록 해주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084914_ef9b779e956b.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'두 손 찌르기'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084933_e1483251dbf3.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "'스와이프'와 너무 유사합니다",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 3회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T084950_2a5d4d9f44f2.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "rejected",
+      "previous_reason": "손이 너무 작게 감지되었습니다. 손목까지 카메라에 보여주세요",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    },
+    {
+      "source": "20260916T085007_9420bc7835f5.npz",
+      "motion": "DYNAMIC",
+      "previous_outcome": "captured",
+      "previous_reason": "",
+      "result": {
+        "event": "reg_rejected",
+        "tempId": "offline",
+        "reason": "1회차와 2회차의 손모양 또는 동작이 서로 다릅니다. 모든 회차에서 같은 손모양과 동작을 반복해 다시 촬영하세요"
+      },
+      "scope": "saved 2D coordinates; original classifier labels unavailable"
+    }
+  ]
+}
