@@ -13,7 +13,7 @@ from collections import deque
 
 import numpy as np
 
-from hands import CustomGestures, LANDMARK_WEIGHTS
+from hands import CustomGestures, LANDMARK_WEIGHTS, normalize_landmarks
 
 FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
@@ -129,6 +129,33 @@ def matching_distance(a, b, count):
     mirrored = np.array(b, copy=True)
     mirrored[:, 0, :, 0] = 2 * b[:, 0, 0:1, 0] - b[:, 0, :, 0]
     return min(direct, distance(a, mirrored, count))
+
+
+def cross_motion_pose_distance(pose, sequence, count):
+    """정적 자세 하나(pose)가 시퀀스(sequence)의 어느 한 프레임과 가장 가까운지.
+
+    같은 손모양이 정적(STATIC)으로도, 동적(DYNAMIC)으로도 등록될 수 있는데, 두
+    저장 형식의 중복검사(sequence_comparisons 등)는 손 개수(count)는 같아도
+    동작 종류(motion)가 다르면 서로 비교하지 않는다 — 그래서 이 경계를 넘는
+    중복은 놓친다. 이 함수는 동작 전체의 궤적(이동·회전)을 보지 않고, 정적
+    자세 하나가 시퀀스 안에 그 모양 그대로 머문 순간이 있는지만 본다.
+    """
+    diff = sequence[:, :count] - pose[None, :count]
+    sq = np.sum(diff ** 2, axis=-1)  # (FRAMES, count, 21)
+    weighted = np.average(sq, axis=-1, weights=LANDMARK_WEIGHTS)  # (FRAMES, count)
+    per_frame_rms = np.sqrt(np.mean(weighted, axis=-1))  # (FRAMES,)
+    return float(per_frame_rms.min())
+
+
+def cross_motion_matching_distance(pose, sequence, count):
+    """cross_motion_pose_distance의 좌우 반전 버전 — matching_distance와 같은 이유로,
+    한 손일 때만 손목 기준 좌우 반전도 같이 본다."""
+    direct = cross_motion_pose_distance(pose, sequence, count)
+    if count != 1:
+        return direct
+    mirrored = np.array(sequence, copy=True)
+    mirrored[:, 0, :, 0] = 2 * sequence[:, 0, 0:1, 0] - sequence[:, 0, :, 0]
+    return min(direct, cross_motion_pose_distance(pose, mirrored, count))
 
 
 def motion_features(sequence, count):
@@ -283,6 +310,37 @@ class CustomGestureStore:
         return ((candidates[0]['score'], candidates[0]['name']) if candidates
                 else (float('inf'), None))
 
+    def cross_boundary_matches(self, sequence, motion, count):
+        """같은 손 개수라도 동작 종류(motion)가 반대인 저장 템플릿과도 손모양
+        중복을 본다. sequence_comparisons는 motion이 같아야만 비교하므로,
+        같은 손모양을 정적으로 한 번, 동적으로 한 번 등록하면 서로 못 본다 —
+        이 함수가 그 경계를 넘는 부분만 추가로 확인한다.
+
+        호출측이 정적이면 sequence[0](대표 자세) 하나가 상대 동적 시퀀스의
+        어느 순간과 가장 가까운지 보고, 호출측이 동적이면 반대로 상대 정적
+        자세 하나가 이 시퀀스의 어느 순간과 가장 가까운지 본다. 동작 전체의
+        궤적이 아니라 "같은 손모양이 존재했는가"만 보는 약한 비교다.
+        """
+        other = 'DYNAMIC' if motion == 'STATIC' else 'STATIC'
+        candidates = []
+        for s, name, m, h in zip(*(self.data[k] for k in EXTRA_KEYS[:4])):
+            if h != count or m != other:
+                continue
+            pose, target = (sequence[0], s) if motion == 'STATIC' else (s[0], sequence)
+            candidates.append((cross_motion_matching_distance(pose, target, count), str(name)))
+        return sorted(candidates)
+
+    def cross_legacy_matches(self, sequence, count):
+        """1손 동적 시퀀스가 1손 정적(legacy kNN) 저장소의 기존 자세와 얼마나
+        가까운 순간을 지나는지 본다. 1손 정적은 self.data가 아니라 legacy에
+        저장되므로 cross_boundary_matches가 보지 못하는 경계다.
+        """
+        if count != 1 or self.legacy.n == 0:
+            return None, float('inf')
+        feats = [normalize_landmarks(pt) for pt in sequence[:, 0]
+                 if np.linalg.norm(pt[9] - pt[0]) > 1e-6]
+        return self.legacy.nearest_class(feats) if feats else (None, float('inf'))
+
     def reset_motion(self):
         self.history.clear()
         self.latched = False
@@ -302,6 +360,13 @@ class CustomGestureStore:
         if self.latched_name in disabled:
             self.reset_motion()
         points = ordered_landmarks(hands)
+        # 양손 후보를 추적하던 중 한 손만 검출되면 새 한손 동작으로 섞지 않는다.
+        two_hand_gap = (len(hands) == 1 and self.history
+                        and len(self.history[-1][1]) == 2
+                        and any(n == 2 and name not in disabled for n, name in
+                                zip(self.data['hand_counts'], self.data['sequence_names'])))
+        if two_hand_gap:
+            points = None
         if points is None:
             # ordered_landmarks는 핸디드니스가 한 프레임만 애매해도(두 손이 순간
             # 같은 쪽으로 잡히는 등, 손이 가까워지는 동작에서 흔함) None을 낸다.
@@ -314,7 +379,7 @@ class CustomGestureStore:
             # latched(완성 뒤 재무장 대기)의 0.3초 유예는 별개 개념이라 그대로 둔다.
             had_progress = self._last_claimed
             if self.missing_since is None:
-                self.missing_since = now
+                self.missing_since = self.history[-1][0] if self.history else now
             elapsed = now - self.missing_since
             if elapsed >= TRACKING_GRACE_S:
                 self.history.clear()
@@ -322,6 +387,9 @@ class CustomGestureStore:
                 self.latched = False
             claimed = self.latched or (elapsed < TRACKING_GRACE_S and had_progress)
             return None, None, claimed, None
+        if self.missing_since is not None and now - self.missing_since >= TRACKING_GRACE_S:
+            self.history.clear()
+            self._last_claimed = False
         self.missing_since = None
         if self.latched:
             self._last_claimed = True

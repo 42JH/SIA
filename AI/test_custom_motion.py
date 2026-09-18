@@ -203,9 +203,10 @@ class MotionTests(unittest.TestCase):
         # similarTo는 통칭이 아니라 BE 기본 제스처 이름과 그대로 일치하는
         # 구체적인 이벤트 이름이어야 FE가 실제 제스처를 찾아 보여줄 수 있다.
         self.assertEqual(payload["similarTo"], "Swipe_Right")
-        # 감지기는 발동 여부만 재현할 뿐 거리를 안 재므로, 유사도 숫자를
-        # 억지로 만들지 않는다 — 잘못된 숫자보다 없는 게 낫다.
-        self.assertIsNone(payload["similarity"])
+        # 감지기는 발동 여부만 볼 뿐 거리를 재는 구조가 아니라, 발동 직전 이동
+        # 거리 ÷ 기준 거리로 유사도를 근사한다 — 0보다 크고 1 이하여야 한다.
+        self.assertGreater(payload["similarity"], 0)
+        self.assertLessEqual(payload["similarity"], 1)
 
     def test_one_hand_dynamic_swipe_collision_scales_with_camera_distance(self):
         """카메라에서 멀리 있어서 손이 작게 잡히는 사람이 화면 비율로는 작게(하지만
@@ -342,6 +343,83 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(event, "reg_rejected")
         self.assertIn("손 개수", payload["reason"])
 
+    def test_dynamic_registration_collides_with_existing_static_pose(self):
+        """같은 손모양을 정적으로 이미 등록해뒀으면, 동적으로 다시 등록해도
+        '너무 유사합니다'로 걸려야 한다 — motion 종류가 다르면 정적(legacy)과
+        동적(self.data)이 완전히 분리된 저장소라 예전에는 이 경계를 못 봤다."""
+        base = hand(0.3, "Left", shape=0)
+        store = CustomGestureStore(self.root / "missing.npz")
+        store.legacy.X = np.array([normalize_landmarks(base["landmarks"])])
+        store.legacy.names = ["기존정적"]
+
+        reg = GestureRegistration(self.link, self.cache, store)
+        reg.start(dict(tempId="t1", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
+        reg.take = 1
+        for i in range(20):
+            h = dict(hand(0.3, "Left", shape=i * 0.01), gesture=None)
+            reg._collect([h], i * 0.05)
+        reg.hand_counts = [1] * 20
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("너무 유사합니다", payload["reason"])
+        self.assertEqual(payload.get("similarTo"), "기존정적")
+
+    def test_static_registration_collides_with_existing_dynamic_pose(self):
+        """반대 방향도 마찬가지다 — 같은 손모양이 동적으로 이미 등록돼 있으면
+        정적으로 다시 등록해도 '너무 유사합니다'로 걸려야 한다."""
+        times = np.linspace(0, 1, 20)
+        points = [ordered_landmarks([dict(hand(0.3, "Left", shape=t * 0.15), gesture=None)])
+                  for t in times]
+        seq = encode_sequence(times, points)
+        store = CustomGestureStore(self.root / "missing.npz")
+        store.data.update(sequences=np.array([seq]), sequence_names=np.array(["기존동적"]),
+                          motions=np.array(["DYNAMIC"]), hand_counts=np.array([1], dtype=np.int32),
+                          durations=np.array([1.0]))
+
+        reg = GestureRegistration(self.link, self.cache, store)
+        reg.start(dict(tempId="t1", motion="STATIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(20):
+            h = dict(hand(0.3, "Left", shape=0), gesture=None)
+            reg._collect([h], i * 0.05)
+        reg.hand_counts = [1] * 20
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("너무 유사합니다", payload["reason"])
+        self.assertEqual(payload.get("similarTo"), "기존동적")
+
+    def test_two_hand_static_registration_collides_with_existing_two_hand_dynamic(self):
+        """2손도 마찬가지다 — 같은 두 손 모양이 동적으로 이미 등록돼 있으면
+        정적으로 다시 등록해도 걸려야 한다(둘 다 self.data에 있지만 motion이
+        다르면 sequence_comparisons가 원래 서로 못 본다)."""
+        times = np.linspace(0, 1, 20)
+        pair = lambda t: [dict(hand(0.3, "Left", shape=t * 0.1), gesture=None),
+                          dict(hand(0.65, "Right", shape=t * 0.1), gesture=None)]
+        points = [ordered_landmarks(pair(t)) for t in times]
+        seq = encode_sequence(times, points)
+        store = CustomGestureStore(self.root / "missing.npz")
+        store.data.update(sequences=np.array([seq]), sequence_names=np.array(["기존양손동적"]),
+                          motions=np.array(["DYNAMIC"]), hand_counts=np.array([2], dtype=np.int32),
+                          durations=np.array([1.0]))
+
+        reg = GestureRegistration(self.link, self.cache, store)
+        reg.start(dict(tempId="t1", motion="STATIC", takes=1, countdownSec=0), now=0)
+        reg.take = 1
+        for i in range(20):
+            reg._collect([dict(hand(0.3, "Left", shape=0), gesture=None),
+                          dict(hand(0.65, "Right", shape=0), gesture=None)], i * 0.05)
+        reg.hand_counts = [2] * 20
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("너무 유사합니다", payload["reason"])
+        self.assertEqual(payload.get("similarTo"), "기존양손동적")
+
     def test_large_tracking_gap_is_rejected_not_interpolated(self):
         """중간을 오래 놓치면 encode_sequence가 조용히 직선 보간하지 못하게 거부해야 한다."""
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
@@ -369,6 +447,44 @@ class MotionTests(unittest.TestCase):
         self.assertGreaterEqual(len(reg.samples), GestureRegistration.MIN_STATIC_SAMPLES)
         reg.finish()
         self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
+    def test_static_registration_tolerates_stray_extra_hand_frame(self):
+        """정적 등록 중 다른 손이(배경·반대손) 잠깐 같이 잡혀도, 그 프레임만
+        건너뛰고 나머지 깨끗한 1손 프레임으로 등록에 성공해야 한다 — 실제
+        진단 로그에서 이런 촬영이 통째로 거부되던 문제를 재현한 회귀 테스트."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=3, countdownSec=0), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for i in range(20):
+                if take == 1 and i in (10, 11):
+                    hands = [dict(hand(0.3, "Left"), gesture=None), dict(hand(0.6, "Right"), gesture=None)]
+                else:
+                    hands = [dict(hand(0.3, "Left"), gesture=None)]
+                reg._collect(hands, take * 3 + i * 0.02)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
+    def test_static_registration_names_the_take_that_is_entirely_multi_hand(self):
+        """어느 회차가 통째로 2손이었는지 정확히 짚어야 한다 — 정상인 다른
+        회차를 '충분하지 않다'고 엉뚱하게 지목하면 안 된다."""
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="t1", motion="STATIC", takes=3, countdownSec=0), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for i in range(20):
+                if take == 2:
+                    hands = [dict(hand(0.3, "Left"), gesture=None), dict(hand(0.6, "Right"), gesture=None)]
+                else:
+                    hands = [dict(hand(0.3, "Left"), gesture=None)]
+                reg._collect(hands, take * 3 + i * 0.02)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("2회차", payload["reason"])
+        self.assertIn("손 개수", payload["reason"])
 
     def test_two_hand_static_capture_succeeds_via_real_tick_timing(self):
         pair = lambda: [hand(), hand(0.65, "Right", 0.08)]

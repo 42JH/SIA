@@ -33,6 +33,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.gesture_research/
 
 # Logs
 *.log

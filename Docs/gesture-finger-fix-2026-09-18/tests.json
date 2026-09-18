@@ -1,0 +1,20 @@
+{
+  "modules": [
+    "test_gesture_finger_pose",
+    "test_gesture_builtin_feedback",
+    "test_custom_motion",
+    "test_gesture_runtime",
+    "test_gesture_handedness",
+    "test_gesture_take_consistency",
+    "test_gesture_frame_bounds",
+    "test_gesture_motion_features",
+    "test_gesture_motion_boundaries",
+    "test_gesture_occlusion",
+    "test_gesture_registration_matrix",
+    "test_gesture_preview"
+  ],
+  "tests": 110,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0
+}
