@@ -16,6 +16,7 @@ import com.sia.assistant.config.DataDirs;
 import com.sia.assistant.relay.AgentSyncNotifier;
 import com.sia.assistant.ws.AgentHub;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.flywaydb.core.Flyway;
@@ -146,6 +147,29 @@ class GestureServiceTest {
         long custom = save("손가락 하트", NPZ_A);
         assertThatThrownBy(() -> service.update(custom, null, null, null, null, List.of()))
                 .isInstanceOf(ApiException.class).hasMessageContaining("최소 한 단계");
+    }
+
+    @Test
+    @DisplayName("매크로 단계 수에는 상한이 없다 — 여섯 단계 이상도 등록·수정 양쪽에서 순서대로 저장된다")
+    void stepsHaveNoUpperBound() {
+        List<GestureService.Step> many = new ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            many.add(new GestureService.Step("scroll.step", Map.of("n", i), null));
+        }
+
+        long id = service.saveCustom("계단", "라벨", null, null, false, many,
+                NPZ_A, Sha256.hex(NPZ_A), 1, "STATIC");
+        assertThat(service.getOne(id).get("steps")).asList().hasSize(12);
+        assertThat(jdbc.queryForObject("SELECT MAX(step_no) FROM gesture_step WHERE gesture_id = ?",
+                Integer.class, id)).isEqualTo(12);
+
+        // 수정 경로도 같다 — 기존 단계를 지우고 새 목록을 그대로 다시 쓴다
+        service.update(id, null, null, null, null, many.subList(0, 7));
+        assertThat(service.getOne(id).get("steps")).asList().hasSize(7);
+
+        long builtin = jdbc.queryForObject("SELECT id FROM gesture WHERE name = 'Open_Palm'", Long.class);
+        service.update(builtin, null, null, null, null, many);
+        assertThat(service.getOne(builtin).get("steps")).asList().hasSize(12);
     }
 
     @Test

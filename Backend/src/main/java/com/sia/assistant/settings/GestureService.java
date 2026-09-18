@@ -31,7 +31,7 @@ import tools.jackson.databind.ObjectMapper;
  * ★2026-09-02: 옛 blob 'gestures_custom'(전체 템플릿 한 파일)을 버렸다. AI 는 gesture_registered {id, sha256} 를
  *   받아 GET /api/agent/gestures/{id}/npz 로 내려받고, 이름 변경·삭제에는 npz 를 다시 올리지 않는다.
  * 와이어프레임 확정(2026-09-01) 반영: 켜기/끄기(enabled)·등록일(created_at)·등록 영상(video_path)·
- * 목록 페이지네이션·수정(이름/기능)·매크로 최대 5단계.
+ * 목록 페이지네이션·수정(이름/기능).
  * ★2026-09-11: 기본 제공 제스처(custom=0)는 모양(DefaultGestures 카탈로그 9종)만 갖고 스텝이 없다 —
  *   무엇을 실행할지는 사용자가 update(steps) 로 채우고, 비우면 다시 기능 없는 상태로 돌아간다.
  */
@@ -56,8 +56,6 @@ public class GestureService {
     public record Preview(Resource resource, String fileName) {
     }
 
-    /** 매크로 단계 상한 — 와이어프레임 등록 화면 "최대 5개". */
-    public static final int MAX_STEPS = 5;
     /** 템플릿 npz 크기 — blob(wakeword)·보정 npz 와 같은 1B ~ 5MB. */
     public static final int NPZ_MIN_BYTES = 1;
     public static final int NPZ_MAX_BYTES = 5 * 1024 * 1024;
@@ -514,17 +512,17 @@ public class GestureService {
         }
     }
 
-    /** allowEmpty = 기능 해제 허용 (기본 제공 제스처). 커스텀은 최소 한 단계가 있어야 한다. */
+    /**
+     * allowEmpty = 기능 해제 허용 (기본 제공 제스처). 커스텀은 최소 한 단계가 있어야 한다.
+     * ★2026-09-18: 단계 수 상한(5개)을 없앴다 — 쌓을 수 있는 단계는 무제한이고, 실질 한도는
+     *   요청 본문 크기(WS 메시지·HTTP 본문)뿐이다. 하한(커스텀 최소 1단계)과 C 도구 금지는 그대로다.
+     */
     private void validateSteps(List<Step> steps, boolean allowEmpty) {
         if (steps == null || steps.isEmpty()) {
             if (allowEmpty && steps != null) {
                 return;
             }
             throw new ApiException(ErrorCode.INVALID_REQUEST, "매크로에는 최소 한 단계가 필요합니다");
-        }
-        if (steps.size() > MAX_STEPS) {
-            throw new ApiException(ErrorCode.INVALID_REQUEST,
-                    "매크로 단계는 최대 " + MAX_STEPS + "개까지 쌓을 수 있습니다");
         }
         for (Step step : steps) {
             if (step.tool() == null || step.tool().isBlank()) {
