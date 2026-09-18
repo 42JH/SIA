@@ -59,6 +59,15 @@
 .center h2 { margin: 14px 0 6px; font-size: 28px; letter-spacing: -.045em; }
 .center p { margin: 4px 0; color: var(--onboarding-muted); font-size: 16px; line-height: 1.5; }
 .lead { align-self: flex-start; margin: 18px 0 0 !important; font-size: 17px !important; }
+.startHint {
+  align-self: flex-start;
+  max-width: 34em;
+  margin: 10px 0 0 !important;
+  color: var(--onboarding-muted);
+  font-size: 15px !important;
+  line-height: 1.55;
+  text-align: left;
+}
 .welcomeContent { display: grid; min-height: 280px; flex: 1; grid-template-columns: minmax(240px, 42%) minmax(0, 1fr); align-items: center; }
 .welcomeCopy { align-self: center; padding-left: 8px; }
 .welcomeCopy h1 { margin: 0; font-size: clamp(32px, 3.4vw, 40px); letter-spacing: -.055em; }
