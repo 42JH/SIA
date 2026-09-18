@@ -2,12 +2,18 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
-from custom_motion import (CustomGestureStore, distance, encode_sequence,
-                           ordered_landmarks, read_templates, static_execution_allowed)
-from gesture_be import GestureRegistration, GestureTemplateCache
+from custom_motion import (CustomGestureStore, distance, empty_templates,
+                           encode_sequence, encode_world_sequence, normalize_arm_pose,
+                           ordered_landmarks,
+                           read_templates, static_execution_allowed, motion_direction_8,
+                           motion_matching_distance,
+                           world_matching_distance)
+from gesture_be import (GestureRegistration, GestureRegistrationRejected,
+                        GestureTemplateCache)
 from hands import normalize_landmarks, GestureStable, HoldToggle
 
 
@@ -18,6 +24,18 @@ def hand(x=0.3, side="Left", shape=0):
     points[4] += [shape, shape]
     points += [x, 0.6]
     return dict(landmarks=points, handedness=side, gesture="Open_Palm")
+
+
+def arm_pose(offset=0.0, visibility=0.95):
+    points = [(0.0, 0.0, visibility)] * 33
+    joints = {
+        11: (0.40, 0.35), 12: (0.60, 0.35),
+        13: (0.47 + offset, 0.52), 14: (0.53 - offset, 0.52),
+        15: (0.58 + offset, 0.38), 16: (0.42 - offset, 0.38),
+    }
+    for index, (x, y) in joints.items():
+        points[index] = (x, y, visibility)
+    return points
 
 
 class Link:
@@ -71,6 +89,49 @@ class MotionTests(unittest.TestCase):
     def feed(self, store, make_hands, duration=1, offset=0):
         return [store.update(make_hands(t / duration), offset + t)
                 for t in np.linspace(0, duration, 21)]
+
+    def test_static_arm_pose_registers_and_matches_when_hands_are_occluded(self):
+        reg = GestureRegistration(self.link, self.cache,
+                                  CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="arms", motion="STATIC", takes=3,
+                       takeDurationSec=.4), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for frame in range(5):
+                reg._collect([], take + frame * .05, arm_pose(offset=.005 * take))
+        reg._validate_and_upload(2)
+        parsed = read_templates(self.link.payload, "crossed-arms")
+        self.assertTrue(parsed["pose_valid"].all())
+        self.assertIsNotNone(normalize_arm_pose(arm_pose()))
+        path = self.root / "pose.npz"
+        path.write_bytes(self.link.payload)
+        store = CustomGestureStore(path)
+        pose, event, claimed, score = store.update(
+            [], 1.0, pose_landmarks=arm_pose(offset=.01))
+        self.assertEqual(pose, "__pending__")
+        self.assertIsNone(event)
+        self.assertTrue(claimed)
+        self.assertLess(score, .28)
+        store.reset_motion()
+        self.assertEqual(store.update([], 2.0, pose_landmarks=arm_pose(visibility=.2)),
+                         (None, None, False, None))
+
+    def test_motion_direction_uses_eight_distinct_sectors(self):
+        base = hand()["landmarks"]
+        vectors = {
+            "RIGHT": (.2, 0), "DOWN_RIGHT": (.2, .2), "DOWN": (0, .2),
+            "DOWN_LEFT": (-.2, .2), "LEFT": (-.2, 0),
+            "UP_LEFT": (-.2, -.2), "UP": (0, -.2), "UP_RIGHT": (.2, -.2),
+        }
+        for expected, (dx, dy) in vectors.items():
+            sequence = encode_sequence([0, 1], [[base], [base + [dx, dy]]])
+            self.assertEqual(motion_direction_8(sequence, 1), expected)
+
+    def test_adjacent_direction_templates_do_not_match(self):
+        base = hand()["landmarks"]
+        right = encode_sequence([0, 1], [[base], [base + [.2, 0]]])
+        up_right = encode_sequence([0, 1], [[base], [base + [.2, -.2]]])
+        self.assertTrue(np.isinf(motion_matching_distance(right, up_right, 1)))
 
     def test_direction_timing_and_rearm(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
@@ -224,7 +285,7 @@ class MotionTests(unittest.TestCase):
         reg.finish()
         event, payload = self.link.sent[-1]
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
-        self.assertIn("흔들렸습니다", payload["reason"])
+        self.assertIn("손 모양이 많이 바뀌었습니다", payload["reason"])
 
     def test_one_hand_dynamic_rejects_when_it_matches_builtin_swipe(self):
         """1손 동적 등록 동작이 내장 스와이프(Swipe_Left/Right)와 똑같이 움직이면
@@ -249,11 +310,42 @@ class MotionTests(unittest.TestCase):
         self.assertGreater(payload["similarity"], 0)
         self.assertLessEqual(payload["similarity"], 1)
 
+    def test_other_take_rejection_is_reported_before_small_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="small-swipe", motion="DYNAMIC", takes=1,
+                       takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            reg._collect([self.sized_hand(x=0.3 + t * 0.2, size=0.03)], t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("너무 짧습니다", payload["reason"])
+        self.assertNotIn("손이 너무 작게", payload["reason"])
+
+    def test_diagonal_dynamic_is_not_rejected_as_builtin_horizontal_swipe(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="diagonal", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            observed = hand(0.3 + t * 0.2)
+            observed["landmarks"] = observed["landmarks"] + [0, -t * 0.1]
+            reg._collect([observed], t)
+        self.assertEqual(
+            reg._builtin_dynamic_collision(1, ["UP_RIGHT"]),
+            (None, None, None),
+        )
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_captured", self.link.sent[-1])
+
     def test_builtin_collision_reported_even_when_other_takes_are_inconsistent(self):
         """회차끼리 서로 다르더라도(일관성 미달), 그중 한 회차가 내장 스와이프와
         겹치면 그 사유를 먼저 알려줘야 한다 — 순서가 반대(일관성 검사 먼저)면
         애초에 중복이라 등록될 수 없는 동작인데도 사용자에게 회차 일관성부터
-        맞추라는 헛수고를 시킨다(실제 사용자 피드백으로 발견)."""
+        맞추라는 헛수고를 시킨다(실제 사용자 피드백으로 발견). 내장 스와이프
+        충돌은 커스텀 중복 다수결과 달리 회차 하나만 겹쳐도 실제 발동 위험이
+        있어(실행 중에도 그 동작 한 번으로 내장 기능이 발동), 다수결 없이
+        그대로 우선한다."""
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
         reg.start(dict(tempId="t1", motion="DYNAMIC", takes=3, takeDurationSec=1), now=0)
         reg.take = 1
@@ -274,6 +366,98 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("스와이프", payload["reason"])
         self.assertNotIn("회차", payload["reason"])
+
+    def test_custom_collision_requires_two_of_three_matching_takes(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.temp_id = "votes"
+        with self.assertRaises(GestureRegistrationRejected) as caught:
+            reg._validate_custom_collision_votes([
+                (0.31, "existing"), (0.44, "existing"), (0.70, "other")])
+        self.assertEqual(caught.exception.similar_to, "existing")
+        self.assertIsNotNone(caught.exception.similarity)
+
+    def test_single_custom_collision_requests_retake_without_similarity_target(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.temp_id = "votes"
+        with self.assertRaisesRegex(ValueError, "정확히 판단하기 어렵습니다") as caught:
+            reg._validate_custom_collision_votes([
+                (0.31, "existing"), (0.50, "existing"), (0.70, "other")])
+        self.assertNotIsInstance(caught.exception, GestureRegistrationRejected)
+
+    def test_three_non_colliding_takes_are_allowed(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.temp_id = "votes"
+        reg._validate_custom_collision_votes([
+            (0.45, "existing"), (0.50, "existing"), (float("inf"), None)])
+
+    def test_one_hand_take_ignores_transient_second_hand_false_positive(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.take_frames[1] = []
+        for index in range(60):
+            primary = hand(0.35 + index * 0.002, "Right")
+            hands = [primary]
+            if index < 12:  # 실측과 같은 약 20%의 촬영 시작부 추가 손 오검출
+                hands.append(hand(0.85, "Left"))
+            reg.take_frames[1].append((index / 30, hands))
+        frames = reg._one_hand_take_frames(1)
+        self.assertEqual(len(frames), 60)
+        self.assertTrue(all(points.shape == (1, 21, 2) for _, points in frames))
+        self.assertLess(float(frames[0][1][0, 0, 0]), 0.6)
+
+    def test_one_hand_take_rejects_persistent_two_hand_capture(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.take_frames[1] = []
+        for index in range(60):
+            hands = [hand(0.35, "Right")]
+            if index < 30:
+                hands.append(hand(0.75, "Left"))
+            reg.take_frames[1].append((index / 30, hands))
+        with self.assertRaisesRegex(ValueError, "손 개수가.*두 손으로 계속 감지"):
+            reg._one_hand_take_frames(1)
+
+    def test_one_hand_quality_ignores_small_transient_second_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.samples = [np.zeros(42, dtype=np.float32)]
+        reg.sizes = [0.12] * 30
+        reg.sizes2 = [0.04] * 5
+        reg.take_frames = {}
+        reg._validate_hand_size(1)
+
+    def test_two_hand_quality_still_rejects_small_second_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.samples = [np.zeros(42, dtype=np.float32)]
+        reg.sizes = [0.12] * 30
+        reg.sizes2 = [0.04] * 30
+        reg.take_frames = {}
+        with self.assertRaisesRegex(ValueError, "손이 너무 작게"):
+            reg._validate_hand_size(2)
+
+    def test_static_stability_allows_less_than_twenty_percent_outliers(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.temp_id = "stability"
+        reg._validate_static_stability(1, [0.10] * 81 + [0.30] * 19)
+
+    def test_static_stability_rejects_sustained_shape_change(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.temp_id = "stability"
+        with self.assertRaisesRegex(ValueError, "손 모양이 많이 바뀌었습니다"):
+            reg._validate_static_stability(1, [0.10] * 80 + [0.30] * 20)
+
+    def test_static_instability_is_reported_before_builtin_duplicate(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="unstable-builtin", motion="STATIC", takes=3), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for index, t in enumerate(np.linspace(0, 0.4, 31)):
+                observed = hand(shape=0.2 if index % 2 else -0.2)
+                observed["gesture"] = "Victory"
+                reg._collect([observed], take * 2 + t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected")
+        self.assertIn("손 모양이 많이 바뀌었습니다", payload["reason"])
+        self.assertNotIn("similarTo", payload)
 
     def test_one_hand_dynamic_swipe_collision_scales_with_camera_distance(self):
         """카메라에서 멀리 있어서 손이 작게 잡히는 사람이 화면 비율로는 작게(하지만
@@ -856,6 +1040,51 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(len(payload["X"]), 0)
         self.assertTrue(any(event == "reg_frame" for event, _ in self.link.sent))
 
+    def test_countdown_streams_preview_without_collecting_training_samples(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
+        reg.start(dict(tempId="countdown-preview", motion="STATIC", takes=1,
+                       countdownSec=3), now=100)
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        observed = [hand()]
+
+        for now in (100.1, 100.21, 100.32):
+            state = reg.tick(frame, observed, now=now)
+            self.assertEqual(state["phase"], "COUNTDOWN")
+
+        preview_frames = [data for event, data in self.link.sent if event == "reg_frame"]
+        self.assertEqual(len(preview_frames), 3)
+        self.assertEqual([data["seq"] for data in preview_frames], [1, 2, 3])
+        self.assertEqual(reg.samples, [])
+        self.assertEqual(reg.take_frames, {})
+
+    def test_reg_take_phases_follow_backend_protocol(self):
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        observed = [hand()]
+
+        static = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
+        static.start(dict(tempId="static-phases", motion="STATIC", takes=2,
+                          countdownSec=.1), now=0)
+        static.tick(frame, observed, now=.1)
+        static.tick(frame, observed, now=.6)
+        static.tick(frame, observed, now=.75)
+        static.tick(frame, observed, now=1.3)
+        static_phases = [(data["take"], data["phase"]) for event, data in self.link.sent
+                         if event == "reg_take" and data["tempId"] == "static-phases"]
+        self.assertEqual(static_phases, [(1, "COUNTDOWN"), (1, "DONE"),
+                                         (2, "COUNTDOWN"), (2, "DONE")])
+
+        dynamic = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
+        dynamic.start(dict(tempId="dynamic-phases", motion="DYNAMIC", takes=2,
+                           countdownSec=.1, takeDurationSec=.2), now=0)
+        dynamic.tick(frame, observed, now=.1)
+        dynamic.tick(frame, observed, now=.35)
+        dynamic.tick(frame, observed, now=.5)
+        dynamic.tick(frame, observed, now=.8)
+        dynamic_phases = [(data["take"], data["phase"]) for event, data in self.link.sent
+                          if event == "reg_take" and data["tempId"] == "dynamic-phases"]
+        self.assertEqual(dynamic_phases, [(1, "COUNTDOWN"), (1, "RECORDING"), (1, "DONE"),
+                                          (2, "COUNTDOWN"), (2, "RECORDING"), (2, "DONE")])
+
     def test_duplicate_motion_rejected_after_reload(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)], name="existing")
         self.link.payload = None
@@ -923,6 +1152,54 @@ class MotionTests(unittest.TestCase):
         self.feed(store, lambda t: [hand(0.3 + t * 0.2)])
         self.assertTrue(store.latched)
         self.assertFalse(store.update([hand(0.5)], 1.1, {"custom"})[2])
+
+
+class TwoHandWorldTests(unittest.TestCase):
+    @staticmethod
+    def poses():
+        palm = np.zeros((21, 3), np.float32)
+        for index in range(21):
+            palm[index] = [(index % 4) * .02, (index // 4) * .025,
+                           ((index % 3) - 1) * .004]
+        palm[0] = 0
+        palm[9] = [0, .1, 0]
+        roof = np.stack([palm, palm])
+        angle = np.pi / 2
+        left = np.array([[np.cos(angle), 0, np.sin(angle)], [0, 1, 0],
+                         [-np.sin(angle), 0, np.cos(angle)]], np.float32)
+        prayer = roof.copy()
+        prayer[0] = palm @ left.T
+        prayer[1] = palm @ left
+        return roof, prayer
+
+    def test_shared_3d_rotation_preserves_palm_relationship(self):
+        roof, prayer = self.poses()
+        roof_seq = encode_world_sequence([0, 1], [roof, roof])
+        prayer_seq = encode_world_sequence([0, 1], [prayer, prayer])
+        self.assertLess(world_matching_distance(prayer_seq, prayer_seq), 1e-5)
+        self.assertGreater(world_matching_distance(roof_seq, prayer_seq), .4)
+
+    def test_only_two_hand_static_comparison_uses_world_pose(self):
+        roof, prayer = self.poses()
+        world = [encode_world_sequence([0, 1], [pose, pose])
+                 for pose in (roof, prayer)]
+        store = CustomGestureStore(Path(tempfile.gettempdir()) / "missing-world-store.npz")
+        data = empty_templates()
+        # Intentionally identical 2D data: only palm orientation can separate them.
+        data.update(
+            sequences=np.zeros((2, 24, 2, 21, 2), np.float32),
+            sequence_names=np.array(["roof", "prayer"]),
+            motions=np.array(["STATIC", "STATIC"]),
+            hand_counts=np.array([2, 2], np.int32),
+            durations=np.ones(2, np.float32),
+            world_sequences=np.stack(world), world_valid=np.ones(2, dtype=bool),
+        )
+        store.data = data
+        candidates = store.sequence_comparisons(
+            data["sequences"][0], "STATIC", 2, world_sequence=world[1])
+        self.assertEqual(candidates[0]["name"], "prayer")
+        self.assertEqual(candidates[0]["score_source"], "WORLD_3D")
+        self.assertGreater(candidates[1]["score"], .45)
 
 
 if __name__ == "__main__":
