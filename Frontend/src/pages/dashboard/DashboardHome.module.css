@@ -23,7 +23,7 @@
 .view_home .intro small { display: none; }
 .view_home .intro h1 { font-size: clamp(34px, 3.1vw, 50px); }
 .view_home .intro::after { position: absolute; top: 13px; right: 0; width: 235px; height: 1px; background: linear-gradient(90deg, transparent, var(--sia-line)); content: ""; }
-.overviewGrid { display: grid; height: clamp(450px, calc(100vh - 188px), 710px); grid-template-columns: minmax(0, 1.58fr) minmax(360px, 1fr); grid-template-rows: minmax(0, 1fr) clamp(130px, 18vh, 165px); gap: 15px 17px; }
+.overviewGrid { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(360px, 1fr); grid-template-rows: minmax(340px, 48vh) minmax(210px, auto); gap: 15px 17px; }
 .dashboardCard, .largeCard, .summaryCards > span { position: relative; overflow: hidden; border: 1px solid var(--sia-line); background: rgb(255 255 255 / 88%); color: var(--sia-ink); text-align: left; clip-path: polygon(19px 0, calc(100% - 19px) 0, 100% 19px, 100% calc(100% - 19px), calc(100% - 19px) 100%, 19px 100%, 0 calc(100% - 19px), 0 19px); }
 .dashboardCard::before, .largeCard::before { position: absolute; z-index: 0; top: 0; left: 24px; width: 190px; height: 7px; border-top: 2px solid currentColor; border-left: 36px solid transparent; opacity: .5; content: ""; }
 .dashboardCard::after, .largeCard::after { position: absolute; right: 21px; bottom: 14px; width: 36px; height: 5px; background: repeating-linear-gradient(120deg, var(--sia-blue) 0 5px, transparent 5px 8px); content: ""; }
@@ -33,15 +33,15 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .usageOverview .cardLabel { position: absolute; top: clamp(22px, 2.1vw, 34px); left: clamp(24px, 2.2vw, 38px); }
 .overviewSide { display: grid; min-height: 0; grid-template-rows: 1fr 1fr; gap: 15px; }
 .accuracyOverview, .latencyOverview { min-height: 0; padding: clamp(16px, 1.6vw, 24px); }
-.appsOverview { grid-column: 1 / -1; min-height: 0; padding: 18px 28px; }
+.appsOverview { grid-column: 1 / -1; min-height: 210px; padding: 18px 28px; }
 .cardLabel { position: relative; z-index: 1; }
 .cardLabel small { display: flex; align-items: center; gap: 10px; color: var(--sia-steel); font-size: 9px; font-weight: 800; letter-spacing: .3em; }
 .cardLabel small::after { width: 44px; height: 1px; background: currentColor; content: ""; }
 .cardLabel strong { display: block; margin-top: 7px; font-size: clamp(17px, 1.45vw, 23px); }
 .cardLabel p { margin: 6px 0 0; color: var(--sia-pale); font-size: 12px; }
-.overviewBars { position: absolute; right: 38px; bottom: 28px; left: 38px; display: flex; height: calc(100% - 134px); min-height: 92px; align-items: flex-end; gap: clamp(12px, 2.1vw, 36px); padding: 20px 15px 0; border-bottom: 1px solid rgb(151 189 229 / 48%); background: repeating-linear-gradient(to bottom, transparent 0 calc(33.333% - 1px), rgb(151 189 229 / 17%) calc(33.333% - 1px) 33.333%); }
-.overviewBars span { display: grid; height: 100%; min-width: 0; flex: 1; align-content: end; justify-items: center; }
-.overviewBars i { width: min(58px, 72%); min-height: 4px; background: linear-gradient(#e5effd, #7898c5); box-shadow: 0 0 18px rgb(120 180 235 / 23%); }
+.overviewBars { position: absolute; right: 38px; bottom: 28px; left: 38px; display: flex; height: calc(100% - 134px); min-height: 120px; align-items: stretch; gap: clamp(12px, 2.1vw, 36px); padding: 20px 15px 0; border-bottom: 1px solid rgb(151 189 229 / 48%); background: repeating-linear-gradient(to bottom, transparent 0 calc(33.333% - 1px), rgb(151 189 229 / 17%) calc(33.333% - 1px) 33.333%); }
+.overviewBars span { display: flex; height: 100%; min-width: 0; flex: 1; flex-direction: column; align-items: center; justify-content: flex-end; }
+.overviewBars i { display: block; width: min(58px, 72%); min-height: 10px; background: linear-gradient(#e5effd, #7898c5); box-shadow: 0 0 18px rgb(120 180 235 / 23%); }
 .overviewBars small { margin: 8px 0 -21px; color: var(--sia-pale); font-size: 11px; }
 .accuracyRings { display: grid; height: calc(100% - 42px); grid-template-columns: repeat(2, 1fr); align-items: center; margin-top: 5px; }
 .accuracyRings span { display: grid; height: 82%; align-content: center; justify-items: center; gap: 8px; border-right: 1px solid var(--sia-soft-line); }
@@ -68,11 +68,10 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .drawer { position: fixed; z-index: 30; top: 54px; right: 0; width: clamp(280px, 24vw, 330px); height: calc(100vh - 54px); border-left: 1px solid var(--sia-line); background: white; }
 .drawer button { display: grid; width: 100%; grid-template-columns: 48px 1fr 20px; align-items: center; column-gap: 8px; padding: 19px 24px; border: 0; border-bottom: 1px solid var(--sia-soft-line); background: transparent; color: var(--sia-navy); font-size: 16px; font-weight: 700; text-align: left; cursor: pointer; }
 .navIcon { width: 42px; height: 42px; object-fit: contain; }
-.detailHead { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: end; margin-bottom: 26px; }
+.detailHead { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, auto); align-items: end; gap: 12px; margin-bottom: 26px; }
 .detailBack { align-self: start; margin-top: 22px; border: 0; background: transparent; color: var(--sia-navy); font-size: 42px; cursor: pointer; }
-.periods { display: grid; width: min(550px, 46vw); grid-template-columns: repeat(4, 1fr); border: 1px solid var(--sia-line); background: white; clip-path: polygon(15px 0, calc(100% - 15px) 0, 100% 15px, 100% calc(100% - 15px), calc(100% - 15px) 100%, 15px 100%, 0 calc(100% - 15px), 0 15px); }
-.periods button { min-height: 76px; border: 0; border-right: 1px solid var(--sia-soft-line); background: transparent; color: var(--sia-navy); font-size: 18px; font-weight: 800; cursor: pointer; }
-.periods button:last-child { border-right: 0; }
+.periods { display: grid; width: min(550px, 100%); max-width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 6px; padding: 10px 12px; border: 1px solid var(--sia-line); background: white; clip-path: polygon(15px 0, calc(100% - 15px) 0, 100% 15px, 100% calc(100% - 15px), calc(100% - 15px) 100%, 15px 100%, 0 calc(100% - 15px), 0 15px); }
+.periods button { min-height: 56px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--sia-navy); font-size: clamp(13px, 1.3vw, 18px); font-weight: 800; cursor: pointer; }
 .periods .activePeriod { background: var(--sia-navy); color: white; }
 .largeCard { height: clamp(300px, 43vh, 430px); min-height: 0; padding: 24px 38px; }
 .largeCard::before { width: 260px; }
@@ -92,20 +91,22 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .legend i { width: 15px; height: 15px; border: 1px solid white; background: #f5f8ff; }
 .legend .legend1 { background: #88a6d0; }
 .legend .legend2 { border-radius: 50%; background: #31ddf2; }
-.chart { position: relative; z-index: 1; width: 100%; height: calc(100% - 52px); margin-top: 4px; }
+.chart { position: relative; z-index: 1; width: 100%; height: calc(100% - 52px); margin-top: 4px; overflow: visible; }
 .chart line { stroke: rgb(153 190 226 / 28%); stroke-width: 1; stroke-dasharray: 4 4; }
-.chart text { fill: #d8e4f3; font-size: 13px; }
+.chart text { fill: #d8e4f3; font-family: Pretendard, "Noto Sans KR", sans-serif; font-size: 13px; white-space: nowrap; }
 .period_year .chart text { font-size: 10.5px; }
 .horizontalBars { display: grid; gap: 15px; padding: 24px 10px 10px; }
-.horizontalRow { display: grid; grid-template-columns: 42px 180px 1fr 64px; align-items: center; gap: 16px; color: white; }
+.horizontalRow { display: grid; grid-template-columns: 42px minmax(0, 32%) minmax(0, 1fr) 64px; align-items: center; gap: 12px; min-height: 36px; color: white; }
 .horizontalRow > b { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #9bb8dc; border-radius: 50%; }
+.horizontalRow > span { overflow: hidden; min-width: 0; font-size: clamp(11px, 0.95vw, 16px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .horizontalRow > div { height: 20px; overflow: hidden; border-radius: 12px; background: rgb(139 174 216 / 15%); }
 .horizontalRow i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f4f8ff, #79a0d2); }
 .summaryCards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
 .summary_accuracy { grid-template-columns: repeat(2, 1fr); }
-.summaryCards > span { display: grid; min-height: 150px; align-content: center; padding: 26px 38px; }
-.summaryCards small { color: var(--sia-muted); font-size: 15px; }
+.summaryCards > span { display: grid; min-width: 0; min-height: 150px; align-content: center; padding: 26px 110px 26px 38px; }
+.summaryCards small { color: var(--sia-muted); font-size: 15px; line-height: 1.35; }
 .summaryCards strong { margin-top: 9px; color: var(--sia-navy); font-size: clamp(32px, 3.2vw, 46px); }
+.summary_apps > span:nth-child(2) strong { overflow: hidden; font-size: clamp(16px, 1.8vw, 28px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .summaryCards svg { position: absolute; right: 35px; bottom: 38px; width: 76px; height: 58px; fill: none; stroke: #7e9fc9; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
 .summaryCards svg path:nth-child(2) { fill: #6f96c6; stroke: none; opacity: .8; }
 .summaryCards .summaryAccent { background: linear-gradient(135deg, #071a36, #11345e); }
@@ -115,6 +116,7 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .panelHeading { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
 .panelHeading button { border: 0; background: transparent; color: var(--sia-navy); font-size: 38px; }
 .panelHeading h1 { margin: 0; font-size: 34px; }
+.view_gestures .panelHeading { min-height: 52px; padding-right: min(560px, 52%); }
 
 .view_settings { background: linear-gradient(135deg, #fbfdff, var(--sia-page)); }
 .view_settings .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }

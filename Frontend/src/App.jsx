@@ -17,7 +17,7 @@ export default function App() {
     <>
       {/* 첫 설정 중에는 명령 알림을 숨기고 기존 전역 팝업은 라우터 밖에서 유지 */}
       {!isOnboarding && <TopNotification />}
-      {!isOnboarding && <BootToast />}
+      <BootToast hidden={isOnboarding} />
       <RouterProvider router={router} />
     </>
   );

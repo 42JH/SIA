@@ -31,7 +31,6 @@ export default function GazeMeasurement({ point, ready }) {
     if (previous === point.n) return undefined;
     setActivePoint(null);
     setRecentlyHit(previous);
-    // 추정값 - 원본 이미지에서 명확히 확인 불가
     const timer = setTimeout(() => {
       setCaught((items) => new Set(items).add(previous));
       displayedPoint.current = point.n;
@@ -40,6 +39,7 @@ export default function GazeMeasurement({ point, ready }) {
     }, 420);
     return () => clearTimeout(timer);
   }, [introDone, point]);
+
   useEffect(() => {
     const check = () => { if (!document.fullscreenElement) fail('전체화면이 해제되었습니다. 보정을 다시 시작해주세요.'); };
     let resizeGuardReady = false;
@@ -62,24 +62,40 @@ export default function GazeMeasurement({ point, ready }) {
       window.removeEventListener('resize', resized);
     };
   }, []);
+
   useEffect(() => {
     if (!activePoint || !ready || !document.fullscreenElement || !target.current || sentPoints.current.has(activePoint)) return;
-    const frame = requestAnimationFrame(() => {
-      const rect = target.current.getBoundingClientRect();
-      try {
-        sendOnboarding('calib_point_shown', { n: activePoint, x: Math.round((rect.x + rect.width / 2) * window.devicePixelRatio), y: Math.round((rect.y + rect.height / 2) * window.devicePixelRatio) });
-        sentPoints.current.add(activePoint);
-      }
-      catch (error) { fail(error.message); }
+    let secondFrame;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const rect = target.current?.getBoundingClientRect();
+        if (!rect) return;
+        try {
+          sendOnboarding('calib_point_shown', { n: activePoint, x: Math.round((rect.left + rect.width / 2) * window.devicePixelRatio), y: Math.round((rect.top + rect.height / 2) * window.devicePixelRatio) });
+          sentPoints.current.add(activePoint);
+        } catch (error) { fail(error.message); }
+      });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); };
   }, [activePoint, ready]);
-  const screen = <div className={styles.measure}><p className={styles.guide}>튀어나온 두더지의 코를 1초간 바라보면 잡힙니다.</p><div className={styles.grid}>{Array.from({ length: 9 }, (_, index) => {
-    const number = index + 1;
-    const active = activePoint === number;
-    const isCaught = caught.has(number);
-    const hit = recentlyHit === number;
-    return <div className={styles.cell} key={number}>{active && <span ref={target} className={styles.nose} aria-hidden="true" />}<div className={`${styles.platform} ${active ? styles.active : ''} ${isCaught ? styles.caught : ''} ${hit ? styles.hit : ''}`}>{active && <><span className={styles.timer}>1초</span><img src={moleImage} alt="시선으로 잡을 두더지" /></>}{isCaught && !hit && <span className={styles.check}>✓</span>}{hit && <><span className={styles.hitLabel}>HIT!</span><img src={moleHitImage} alt="잡은 두더지" /></>}</div><small>{isCaught && !hit ? '잡음' : active || hit ? '' : '대기'}</small></div>;
-  })}</div>{!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><span>◎</span><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}{!ready && <p className={styles.measureError} role="alert">연결 또는 화면 상태를 확인해주세요.</p>}</div>;
+
+  const screen = <div className={styles.measure}>
+    <p className={styles.guide}>튀어나온 두더지의 코를 1초간 바라보면 잡힙니다.</p>
+    <div className={styles.grid}>{Array.from({ length: 9 }, (_, index) => {
+      const number = index + 1;
+      const active = activePoint === number;
+      const hit = recentlyHit === number;
+      const isCaught = caught.has(number) && !hit;
+      return <div className={styles.cell} key={number}>
+        <span className={styles.hole} aria-hidden="true" />
+        {isCaught && <><span className={styles.check}>✓</span><small>잡음</small></>}
+        {!active && !hit && !isCaught && <small>대기</small>}
+        {active && <div className={styles.targetGroup}><span className={styles.scope}><i /><b>1초</b></span><img src={moleImage} alt="시선으로 잡을 두더지" /><span ref={target} className={styles.noseAnchor} aria-hidden="true" /></div>}
+        {hit && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><span className={styles.scope}><i /><b>HIT!</b></span><img className={styles.hitMole} src={moleHitImage} alt="잡은 두더지" /></div>}
+      </div>;
+    })}</div>
+    {!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><b className={styles.modalBevel} /><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}
+    {!ready && <p className={styles.measureError} role="alert">연결 또는 화면 상태를 확인해주세요.</p>}
+  </div>;
   return createPortal(screen, document.body);
 }

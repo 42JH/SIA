@@ -17,6 +17,7 @@ import {
   stopGesturePreview,
   subscribeGestures,
 } from '../../ws/gestures';
+import { isTauriRuntime, pickNativeAbsolutePath } from '../../utils/nativePathDialog';
 import styles from './GesturePanel.module.css';
 
 const toolLabels = {
@@ -108,7 +109,16 @@ const argumentLabels = {
   dir: '방향', amount: '이동량', level: '볼륨', preset: '위치', x1: '시작 X', y1: '시작 Y', x2: '끝 X', y2: '끝 Y',
 };
 
+function launchAppName(step, apps) {
+  if (step?.tool !== 'app.launch') return null;
+  const appKey = String(step.args?.appRef ?? '').replace(/^app:/, '');
+  if (!appKey) return null;
+  return apps.find((app) => app.appKey === appKey)?.displayName || appKey;
+}
+
 function displayStepDetail(step, apps) {
+  const appName = launchAppName(step, apps);
+  if (appName) return `실행 앱 ${appName}`;
   const args = step.args || {};
   const details = Object.entries(args).map(([key, value]) => {
     let displayed = value;
@@ -121,6 +131,12 @@ function displayStepDetail(step, apps) {
     return `${argumentLabels[key] || key}: ${displayed}`;
   });
   return details.join(' · ') || '추가 설정 없이 실행';
+}
+
+function displayLinkedAction(step, apps) {
+  const appName = launchAppName(step, apps);
+  if (appName) return `${displayTool(step)} · ${appName}`;
+  return `${displayTool(step)} · ${displayStepDetail(step, apps)}`;
 }
 
 const categoryLabels = {
@@ -169,8 +185,12 @@ export default function GesturePanel() {
   const { items, loading, error, registration, setItems, setLoading, setError, patchItem, removeItem, beginRegistration } = useGestureStore();
   const [selected, setSelected] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [tools, setTools] = useState([]);
   const [apps, setApps] = useState([]);
+  const [appCatalog, setAppCatalog] = useState([]);
 
   const load = async () => {
     setLoading(true);
@@ -179,6 +199,7 @@ export default function GesturePanel() {
       const [gestureItems, toolList, appList] = await Promise.all([fetchAllGestures(), fetchGestureTools(), fetchRegisteredApps()]);
       setItems(gestureItems);
       setTools(toolList.filter(isSelectableGestureTool));
+      setAppCatalog(appList);
       setApps(appList.filter((app) => app.enabled));
     } catch (requestError) {
       setError(requestError.message);
@@ -214,6 +235,28 @@ export default function GesturePanel() {
     }
   };
 
+  const toggleDeleteSelection = (id) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+
+  const removeSelected = async () => {
+    if (!selectedIds.length) return;
+    setDeleting(true);
+    setError('');
+    try {
+      for (const id of selectedIds) await deleteGesture(id);
+      selectedIds.forEach(removeItem);
+      setSelectedIds([]);
+      setDeleteMode(false);
+      setConfirmBulkDelete(false);
+    } catch (requestError) {
+      setError(requestError.message);
+      await load();
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const basic = buildDefaultGestures(items);
   const custom = items.filter((item) => item.custom);
 
@@ -223,40 +266,50 @@ export default function GesturePanel() {
     <>
       <div className={styles.toolbar}>
         <span />
-        <button className={styles.primary} onClick={beginRegistration}>+ 새 제스처 등록</button>
+        <div className={styles.toolbarActions}>
+          {deleteMode ? <>
+            <button onClick={() => { setDeleteMode(false); setSelectedIds([]); }}>취소</button>
+            <button className={styles.danger} disabled={!selectedIds.length || deleting} onClick={() => setConfirmBulkDelete(true)}>선택 삭제 ({selectedIds.length})</button>
+          </> : <button disabled={!custom.length} onClick={() => { setDeleteMode(true); setSelected(null); }}>제스처 삭제</button>}
+          {!deleteMode && <button className={styles.primary} onClick={beginRegistration}>+ 새 제스처 등록</button>}
+        </div>
       </div>
       {loading && <p role="status">제스처를 불러오는 중입니다.</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
       {!loading && <>
-        <GestureSection title="기본 제스처" items={basic} onSelect={setSelected} onToggle={toggle} />
-        <GestureSection title="내 커스텀 제스처" items={custom} onSelect={setSelected} onToggle={toggle} empty="등록한 커스텀 제스처가 없습니다." />
+        <GestureSection title="기본 제스처" items={basic} onSelect={setSelected} onToggle={toggle} deleteMode={deleteMode} apps={appCatalog} />
+        <GestureSection title="내 커스텀 제스처" items={custom} onSelect={setSelected} onToggle={toggle} deleteMode={deleteMode} selectedIds={selectedIds} onSelectForDelete={toggleDeleteSelection} apps={appCatalog} empty="등록한 커스텀 제스처가 없습니다." />
       </>}
       {selected && <GestureDetail
         gesture={selected}
         tools={tools}
         apps={apps}
+        appCatalog={appCatalog}
         onClose={() => setSelected(null)}
         onToggle={(enabled) => toggle(selected, enabled)}
         onUpdated={(next) => { patchItem(next.id, next); setSelected(next); }}
         onDelete={remove}
         deleting={deleting}
       />}
+      {confirmBulkDelete && <div className={styles.backdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>선택한 제스처 {selectedIds.length}개를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmBulkDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={removeSelected}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
     </>
   );
 }
 
-function GestureSection({ title, items, onSelect, onToggle, empty }) {
+function GestureSection({ title, items, onSelect, onToggle, deleteMode = false, selectedIds = [], onSelectForDelete, apps = [], empty }) {
   return (
     <section className={styles.section}>
       <h3>{title}</h3>
       {items.length ? <div className={styles.grid}>{items.map((gesture) => (
-        <article key={gesture.id} className={`${styles.card} ${!gesture.enabled ? styles.disabled : ''}`} onClick={() => onSelect(gesture)}>
-          <label className={styles.switch} onClick={(event) => event.stopPropagation()} title={gesture.virtual ? '백엔드 기본 제스처 등록이 필요합니다.' : undefined}>
+        <article key={gesture.id} className={`${styles.card} ${!gesture.enabled ? styles.disabled : ''} ${deleteMode && gesture.custom ? styles.deleteSelectable : ''}`} onClick={() => deleteMode ? gesture.custom && onSelectForDelete?.(gesture.id) : onSelect(gesture)}>
+          {deleteMode && gesture.custom ? <label className={styles.deleteCheck} onClick={(event) => event.stopPropagation()}>
+            <input type="checkbox" checked={selectedIds.includes(gesture.id)} onChange={() => onSelectForDelete?.(gesture.id)} aria-label={`${displayName(gesture)} 삭제 선택`} />
+          </label> : <label className={styles.switch} onClick={(event) => event.stopPropagation()} title={gesture.virtual ? '백엔드 기본 제스처 등록이 필요합니다.' : undefined}>
             <input type="checkbox" checked={gesture.enabled} disabled={gesture.virtual} onChange={(event) => onToggle(gesture, event.target.checked)} aria-label={`${displayName(gesture)} 사용`} />
             <i />
-          </label>
+          </label>}
           <HoverPreview gesture={gesture} />
-          <div className={styles.cardInfo}><strong>{displayName(gesture)}</strong><span>{gesture.steps?.[0] ? displayTool(gesture.steps[0]) : gesture.custom ? '연결 기능 없음' : '기본 제공'}</span><small className={styles.cardAction}>상세 보기 <b>›</b></small></div>
+          <div className={styles.cardInfo}><strong>{displayName(gesture)}</strong><span>{gesture.steps?.[0] ? displayLinkedAction(gesture.steps[0], apps) : gesture.custom ? '연결 기능 없음' : '기본 제공'}</span><small className={styles.cardAction}>{deleteMode && gesture.custom ? '선택해서 삭제' : '상세 보기'} <b>›</b></small></div>
           {gesture.custom && !gesture.runnable && <small className={styles.warning}>현재 사용할 수 없는 기능이 포함되어 있습니다.</small>}
         </article>
       ))}</div> : <p className={styles.empty}>{empty}</p>}
@@ -264,7 +317,7 @@ function GestureSection({ title, items, onSelect, onToggle, empty }) {
   );
 }
 
-function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onDelete, deleting }) {
+function GestureDetail({ gesture, tools, apps, appCatalog = [], onClose, onToggle, onUpdated, onDelete, deleting }) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState(gesture.name);
@@ -331,7 +384,11 @@ function GestureDetail({ gesture, tools, apps, onClose, onToggle, onUpdated, onD
             /> : <div className={styles.detailBody}>
               <small>GESTURE NAME</small><h3>{displayName(gesture)}</h3>
               <small>GESTURE TYPE</small><strong>{gesture.custom ? '커스텀 제스처' : '기본 제공 제스처'}</strong>
-              <small>LINKED ACTION</small><strong>{gesture.steps?.length ? gesture.steps.map(displayTool).join(' → ') : '연결된 기능 없음'}</strong>
+              <small>LINKED ACTION</small>
+              {gesture.steps?.length ? <ol className={styles.actionList}>{gesture.steps.map((step, index) => {
+                const appName = launchAppName(step, appCatalog.length ? appCatalog : apps);
+                return <li key={`${step.tool}-${index}`}><b>{index + 1}. {displayTool(step)}</b>{appName ? <span>실행 앱 · {appName}</span> : <span>{displayStepDetail(step, appCatalog.length ? appCatalog : apps)}</span>}</li>;
+              })}</ol> : <strong>연결된 기능 없음</strong>}
               {gesture.createdAt && <><small>REGISTRATION DATE</small><strong>등록일 {gesture.createdAt.slice(0, 10)}</strong></>}
               {!gesture.custom && <p>기본 제스처의 이름과 동작은 변경할 수 없습니다.</p>}
               {!gesture.virtual && <div className={styles.detailToggle}><span><small>USAGE</small>사용 켜기</span><label className={styles.switch}><input type="checkbox" checked={gesture.enabled} onChange={(event) => onToggle(event.target.checked)} /><i /></label></div>}
@@ -409,6 +466,7 @@ function FileTargetPicker({ path, onChange }) {
   const folderInput = useRef(null);
   const [targetType, setTargetType] = useState('file');
   const [pickerError, setPickerError] = useState('');
+  const [picking, setPicking] = useState(false);
 
   const chooseFile = (event) => {
     const file = event.target.files?.[0];
@@ -437,19 +495,41 @@ function FileTargetPicker({ path, onChange }) {
     event.target.value = '';
   };
 
-  const openPicker = () => {
-    if (targetType === 'folder') folderInput.current?.click();
+  const openPicker = async () => {
+    if (picking) return;
+    setPickerError('');
+    const directory = targetType === 'folder';
+    setPicking(true);
+    try {
+      const selectedPath = await pickNativeAbsolutePath({ directory });
+      if (typeof selectedPath === 'string' && selectedPath) {
+        onChange(selectedPath);
+        return;
+      }
+      if (selectedPath === null) return;
+      if (isTauriRuntime()) {
+        setPickerError('Tauri 파일 선택 창을 열 수 없습니다. 경로를 직접 입력해주세요.');
+        return;
+      }
+    } catch (error) {
+      if (isTauriRuntime()) {
+        setPickerError('네이티브 파일 선택기를 열 수 없습니다. 경로를 직접 입력해주세요.');
+        return;
+      }
+    } finally {
+      setPicking(false);
+    }
+    if (directory) folderInput.current?.click();
     else fileInput.current?.click();
   };
 
   return <div className={styles.filePicker}>
     <input value={path} onChange={(event) => { onChange(event.target.value); setPickerError(''); }} placeholder="열 파일 또는 폴더의 절대경로" />
     <select value={targetType} onChange={(event) => setTargetType(event.target.value)} aria-label="열 대상 종류"><option value="file">파일 선택</option><option value="folder">폴더 선택</option></select>
-    <button type="button" onClick={openPicker}>찾아보기</button>
+    <button type="button" onClick={openPicker} disabled={picking}>찾아보기</button>
     <input ref={fileInput} className={styles.hiddenPicker} type="file" onChange={chooseFile} />
     <input ref={folderInput} className={styles.hiddenPicker} type="file" webkitdirectory="" directory="" onChange={chooseFolder} />
     {pickerError && <small className={styles.pickerError}>{pickerError}</small>}
-    {/* TODO(BE): 순수 웹 파일 선택기는 절대경로를 제공하지 않으므로 네이티브 파일·폴더 선택 API 필요 */}
   </div>;
 }
 
@@ -484,30 +564,31 @@ export function GestureRegistration({ onClose, onSaved }) {
 
   useEffect(() => subscribeGestures({
     cam_preview_state: (data) => {
-      if (useGestureStore.getState().registration?.stage !== 'intro') return;
-      const ready = data.phase === 'READY';
-      if (ready) {
+      const stage = useGestureStore.getState().registration?.stage;
+      if (!['intro', 'waiting', 'capture'].includes(stage)) return;
+      if (data.phase === 'READY') {
         previewStarted.current = true;
-        previewSeq.current = -1;
+        updateRegistration({ previewReady: true, error: '' });
+        return;
       }
       if (data.phase === 'ERROR' || data.phase === 'STOPPED') {
         previewStarted.current = false;
         previewSeq.current = -1;
+        updateRegistration({
+          previewReady: false,
+          ...(data.phase === 'ERROR' ? { error: data.message || '카메라 인식 화면을 사용할 수 없습니다.' } : {}),
+        });
       }
-      updateRegistration({
-        previewReady: ready,
-        ...(data.phase === 'STARTING' ? { previewFrame: null, error: '' } : {}),
-        ...(ready ? { error: '' } : {}),
-        ...(data.phase === 'ERROR' ? { error: data.message || '카메라 인식 화면을 사용할 수 없습니다.' } : {}),
-      });
     },
     cam_preview_frame: (data) => {
-      if (useGestureStore.getState().registration?.stage !== 'intro' || !data.jpegB64) return;
+      const stage = useGestureStore.getState().registration?.stage;
+      if (!['intro', 'waiting', 'capture'].includes(stage) || !data.jpegB64) return;
       const seq = Number(data.seq);
       if (!Number.isInteger(seq) || seq < 0 || seq <= previewSeq.current) return;
       previewStarted.current = true;
       previewSeq.current = seq;
-      updateRegistration({ previewFrame: `data:image/jpeg;base64,${data.jpegB64}`, previewReady: true });
+      const previewFrame = `data:image/jpeg;base64,${data.jpegB64}`;
+      updateRegistration({ previewFrame, previewReady: true, ...(stage === 'capture' && !useGestureStore.getState().registration?.frame ? { frame: previewFrame } : {}) });
     },
     reg_state: (data) => {
       if (!registrationRequested.current) return;
@@ -605,7 +686,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       startGesturePreview();
       previewStarted.current = true;
       previewSeq.current = -1;
-      updateRegistration({ previewFrame: null, previewReady: false, error: '' });
+      updateRegistration({ previewReady: false, error: '' });
     } catch (error) {
       updateRegistration({ previewReady: false, error: error.message });
     }
@@ -636,7 +717,7 @@ export function GestureRegistration({ onClose, onSaved }) {
     try { stopGesturePreview(); } catch (error) { updateRegistration({ error: error.message }); }
     previewStarted.current = false;
     previewSeq.current = -1;
-    updateRegistration({ previewFrame: null, previewReady: false });
+    updateRegistration({ previewReady: false });
   };
 
   const start = (motion = registration.motion) => {
@@ -707,7 +788,7 @@ export function GestureRegistration({ onClose, onSaved }) {
       {registration.stage === 'waiting' && <><div className={styles.cameraBox}>카메라 연결을 기다리고 있습니다.</div><p>잠시만 기다려주세요.</p></>}
       {registration.stage === 'capture' && <>
         <div className={styles.liveFrame}>
-          {registration.frame ? <img src={registration.frame} alt="제스처 촬영 화면" /> : <span>카메라 화면을 기다리고 있습니다.</span>}
+          {(registration.frame || registration.previewFrame) ? <img src={registration.frame || registration.previewFrame} alt="제스처 촬영 화면" /> : <span>카메라 화면을 기다리고 있습니다.</span>}
           <b className={registration.motion === 'DYNAMIC' && registration.takePhase === 'RECORDING' ? styles.recordingIndicator : undefined}>● {registration.motion === 'STATIC' ? 'PHOTO' : 'REC'} {registration.take || 1}/3</b>
           {registration.takePhase === 'COUNTDOWN' && <strong className={styles.countdown} aria-live="assertive">{countdown ?? 3}</strong>}
           {registration.takePhase === 'COUNTDOWN' && registration.frame && <small className={styles.frameNotice}>직전 화면</small>}
