@@ -237,6 +237,7 @@ class AgentLink:
                  "gesture_registered", "gesture_renamed", "gesture_removed", "gesture_result",
                  "reg_mode_start", "reg_finish", "model_load",
                  "voice_reg_start", "voice_collect", "voice_finalize", "voice_reg_cancel", "voice_registered",
+                 "wakeword_enroll_cancel",
                  "cam_preview_start", "cam_preview_stop",
                  "mic_preview_start", "mic_preview_stop"}:
             with self._event_lock:
