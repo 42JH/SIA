@@ -85,7 +85,7 @@ public final class ToolCatalog {
                     + "실제 반영된 level 과 muted 를 반환하므로 사용자에게 그 값을 그대로 알려 주세요. "
                     + "현재 볼륨은 context.get 의 volume 에 있습니다 — '조금만 줄여줘'처럼 상대적인 요청은 그 값에서 계산해 부르세요.";
     public static final String D_FILES_OPEN =
-            "지정한 절대 경로의 파일을 Windows 기본 연결 프로그램으로 엽니다. 열기만 하며 내용을 바꾸지 않습니다. 제스처 매크로의 '파일 실행' 단계가 이 도구를 사용합니다.";
+            "지정한 절대 경로의 파일을 엽니다. 실행 파일(.exe)은 그 자신의 폴더를 작업 디렉터리로 직접 실행하고, 그 밖의 확장자는 Windows 기본 연결 프로그램으로 엽니다. 열기만 하며 내용을 바꾸지 않습니다. 제스처 매크로의 '파일 실행' 단계가 이 도구를 사용합니다.";
     public static final String D_FILES_DELETE =
             "지정한 파일들을 휴지통으로 이동합니다. 완전 삭제가 아니라 복구 가능한 휴지통 이동입니다. 반드시 사용자에게 확인을 받은 뒤에만 호출하세요.";
     public static final String D_FILES_SAVE =
