@@ -1512,7 +1512,7 @@ def test_second_confirm_does_not_clobber_the_first():
 def test_stale_worker_only_clears_its_own_confirmation():
     """폐기된 스레드의 뒷정리가 옆 스레드가 방금 연 확인 대기를 지우지 않는다 (-320 검수).
 
-    지우면 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+    지우면 사용자가 제때 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
     """
     import time
 
@@ -1542,44 +1542,60 @@ def test_wake_scoring_is_serialized_and_reset():
     청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
     돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려가고, 사용자는 불러도 무반응을 본다.
     """
-    import inspect
-    import time
-
     import brain as B
 
-    src = inspect.getsource(B.Brain._handle)
-    assert "self._wake_lock" in src, "호출어 채점이 직렬화되지 않는다"
-    assert "self.wake.reset()" in src, "채점 전에 버퍼를 비우지 않는다"
+    from unittest.mock import patch
 
-    # 실제로 겹치지 않는지 — 두 스레드가 동시에 채점을 시도한다.
-    overlap, inside, lock = [], [], threading.Lock()
+    # 문자열 검사로 때우지 않는다 — 실제 _handle 을 여러 스레드로 돌려 채점이 겹치는지 본다.
+    # (예전엔 inspect.getsource 로 "self._wake_lock" 유무만 봐서, 호출을 with 밖으로 내려도
+    #  초록이었다. 검수 blocker 가 안 잠긴 채 통과했다.)
+    overlap, inside, resets, lock = [], [], [], threading.Lock()
 
     class FakeModel:
         def reset(self):
-            pass
+            with lock:
+                resets.append(1)
 
         def predict_clip(self, audio):
             with lock:
                 inside.append(1)
                 overlap.append(len(inside))
-            time.sleep(0.02)
+            done = threading.Event()
+            done.wait(0.03)          # time.sleep 은 못 쓴다 — run() 정지에 패치돼 있다
             with lock:
                 inside.pop()
             return [{B.WAKE_MODEL.stem: 0.0}]
 
-    model, wl = FakeModel(), B.Brain._wake_lock
+    class Done(BaseException):
+        pass
 
-    def score():
-        with wl:
-            model.reset()
-            B.wake_score_of(model, np.zeros(16000, dtype=np.int16))
+    b = B.Brain.__new__(B.Brain)
+    b._audio_lock = threading.RLock()
+    b._audio_generation, b._audio_since, b.busy = 0, 0, 0
+    b.queue, b._workers = [], []
+    b._client = object()
+    b._pending = b.speaker = b.link = b.wake_template = None
+    b._accum = B.SpeakerAccum()
+    b.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    b.wake = FakeModel()
+    b._try_router = lambda *a, **k: {"action": "test"}
+    b._execute = lambda *a, **k: None
+    # 호출어 게이트는 통과시킨다 — 이 검사의 주제는 채점이 겹치느냐다.
+    b._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4)
 
-    ts = [threading.Thread(target=score) for _ in range(4)]
-    for t in ts:
-        t.start()
-    for t in ts:
-        t.join()
+    with patch("brain.log_utterance"), patch("brain.EVAL_CAPTURE", False):
+        for _ in range(4):
+            b.submit(np.zeros(16000, dtype=np.int16), None, None)
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                b.run()          # 큐 4건을 스레드 4개로 띄운다
+            except Done:
+                pass
+        assert b._drain(10), "발화 처리 스레드가 끝나지 않았다"
+
+    assert len(overlap) == 4, f"채점이 4번 돌지 않았다 ({len(overlap)})"
     assert max(overlap) == 1, f"호출어 채점이 겹쳤다 (동시 {max(overlap)}건)"
+    assert len(resets) == 4, f"채점 전에 버퍼를 비우지 않았다 (reset {len(resets)}회)"
 
 
 def test_mcp_roundtrip_is_not_serialized():
@@ -1615,6 +1631,52 @@ def test_mcp_roundtrip_is_not_serialized():
         t.join()
     assert max(peak) > 1, "MCP 왕복이 직렬로 묶였다 — 락이 _post 까지 감싸고 있다"
     assert sorted(ids) == [1, 2, 3, 4], f"JSON-RPC id 가 겹쳤다: {ids}"
+
+
+def test_inflight_cap_waits_for_one_slot_not_everyone():
+    """동시 실행 상한에 걸려도 **한 자리**만 기다린다 (-320 재점검).
+
+    여기서 전원 대기(_drain)를 부르면, 가장 느린 LLM 왕복(실측 12~29 s)이 끝날 때까지
+    run() 이 통째로 멈춰 -320 이 지운 큐 대기(23.57 s)가 그대로 되살아난다.
+    """
+    import time
+    from unittest.mock import patch
+
+    import brain as B
+
+    slow, fast, started = threading.Event(), threading.Event(), []
+
+    def handle(idx, *_):
+        started.append(idx)
+        (slow if idx == 0 else fast).wait(5)
+
+    b = B.Brain.__new__(B.Brain)
+    b._audio_lock, b._pending, b._workers = threading.RLock(), None, []
+    b._handle = handle
+
+    with patch("brain.MAX_INFLIGHT", 2):
+        b._start(0, None, None, 1.0)      # 느린 발화 — 끝까지 잡아 둔다
+        b._start(1, None, None, 2.0)      # 빠른 발화
+        assert len(b._alive()) == 2
+
+        # 3번째는 상한에 걸려 막힌다.
+        third = threading.Thread(target=lambda: b._start(2, None, None, 3.0), daemon=True)
+        third.start()
+        blocked = threading.Event()
+        blocked.wait(0.3)
+        assert started == [0, 1], f"상한을 안 지켰다: {started}"
+
+        fast.set()                        # 자리 하나만 비운다 (느린 쪽은 아직 돌고 있다)
+        for _ in range(100):
+            if len(started) == 3:
+                break
+            blocked.wait(0.02)
+        assert started == [0, 1, 2], "슬롯이 비었는데 3번째가 안 떴다 — 전원 대기 중이다"
+        assert b._workers[0].is_alive(), "느린 발화가 이미 끝났다 — 검사가 성립하지 않는다"
+
+        slow.set()
+        third.join(5)
+        assert b._drain(5)
 
 
 def test_session_is_be_owned():
@@ -1893,6 +1955,7 @@ if __name__ == "__main__":
     test_session_is_be_owned()
     test_be_results_do_not_leak_between_threads()
     test_tier1_does_not_queue_behind_llm()
+    test_inflight_cap_waits_for_one_slot_not_everyone()
     test_answer_never_lands_on_an_unheard_question()
     test_second_confirm_does_not_clobber_the_first()
     test_stale_worker_only_clears_its_own_confirmation()
@@ -1903,4 +1966,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 40/40 통과")
+    print("OK - 41/41 통과")
