@@ -90,8 +90,8 @@ export default function GazeMeasurement({ point, ready }) {
         <span className={styles.hole} aria-hidden="true" />
         {isCaught && <><span className={styles.check}>✓</span><small>잡음</small></>}
         {!active && !hit && !isCaught && <small>대기</small>}
-        {active && <div className={styles.targetGroup}><span className={styles.scope}><i /><b>1초</b></span><img src={moleImage} alt="시선으로 잡을 두더지" /><span ref={target} className={styles.noseAnchor} aria-hidden="true" /></div>}
-        {hit && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><span className={styles.scope}><i /><b>HIT!</b></span><img className={styles.hitMole} src={moleHitImage} alt="잡은 두더지" /></div>}
+        {active && <div className={styles.targetGroup}><img src={moleImage} alt="시선으로 잡을 두더지" /><span className={styles.scope}><i /><b>1초</b></span><span ref={target} className={styles.noseAnchor} aria-hidden="true" /></div>}
+        {hit && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><img className={styles.hitMole} src={moleHitImage} alt="잡은 두더지" /><span className={styles.scope}><i /><b>HIT!</b></span></div>}
       </div>;
     })}</div>
     {!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><b className={styles.modalBevel} /><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}

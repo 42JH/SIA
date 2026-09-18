@@ -36,6 +36,7 @@ const toolLabels = {
   'media.mute_toggle': '음소거 전환',
   'media.next': '다음 미디어',
   'media.prev': '이전 미디어',
+  'media.seek': '재생 위치 이동',
   'volume.step': '볼륨 올리기 / 내리기',
   'volume.set': '볼륨 설정',
   'files.open': '파일 열기',
@@ -87,6 +88,7 @@ const isSelectableGestureTool = (tool) => {
   const name = tool?.name || '';
   if (!tool?.available || tool.confirmRequired) return false;
   return name !== 'context.get'
+    && name !== 'app.list'
     && !name.startsWith('browser.')
     && name !== 'window.list'
     && name !== 'explorer.items'
@@ -433,9 +435,9 @@ function GestureForm({ custom = true, name, setName, description, setDescription
     {custom && <label>제스처 설명<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="어떤 모양과 움직임의 제스처인지 적어주세요." /></label>}
     <div><span>이 제스처로 실행할 기능</span>{steps.map((step, index) => <div className={styles.stepEditor} key={index}>
       <b>{index + 1}</b><select value={step.tool} onChange={(event) => updateStep(index, { tool: event.target.value, args: {} })}><option value="">기능 선택</option>{Object.entries(groups).map(([category, categoryTools]) => <optgroup label={categoryLabels[category] || category} key={category}>{categoryTools.map((tool) => <option value={tool.name} key={tool.name}>{toolLabels[tool.name] || tool.name}</option>)}</optgroup>)}</select>
-      <StepSettings step={step} apps={apps} update={(args) => updateStep(index, { args })} />
-      <button onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))} aria-label={`${index + 1}번째 기능 삭제`}>×</button>
-    </div>)}<button className={styles.addStep} disabled={steps.length >= 5} onClick={() => setSteps([...steps, initialStep()])}>+ 기능 추가하기</button><small>위에서 아래 순서로 실행됩니다. 최대 5개까지 등록할 수 있습니다.</small></div>
+      <button type="button" className={styles.removeStep} onClick={() => setSteps(steps.filter((_, stepIndex) => stepIndex !== index))} aria-label={`${index + 1}번째 기능 삭제`}>×</button>
+      <div className={styles.stepBody}><StepSettings step={step} apps={apps} update={(args) => updateStep(index, { args })} /></div>
+    </div>)}<button className={styles.addStep} onClick={() => setSteps((current) => [...current, initialStep()])}>+ 기능 추가하기</button><small>위에서 아래 순서로 실행됩니다.</small></div>
     <label className={styles.repeat}><input type="checkbox" checked={repeatable} onChange={(event) => setRepeatable(event.target.checked)} /> 제스처를 유지하는 동안 반복 실행</label>
     {error && <p className={styles.error} role="alert">{error}</p>}
   </div>;

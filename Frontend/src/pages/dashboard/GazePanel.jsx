@@ -35,7 +35,10 @@ export default function GazePanel({ onBack }) {
 
   useEffect(() => { loadProfiles(); }, []);
   useEffect(() => {
-    if (location.state?.gazeAdded) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    if (location.state?.gazeAdded) {
+      const { gazeAdded, ...rest } = location.state;
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: rest });
+    }
   }, [location.pathname, location.search, location.state, navigate]);
 
   async function loadProfiles() {
@@ -53,7 +56,7 @@ export default function GazePanel({ onBack }) {
     finally { setLoading(false); }
   }
 
-  function startEnrollment() { navigate('/dashboard/gaze/setup'); }
+  function startEnrollment() { navigate('/dashboard/gaze/setup', { state: location.state }); }
 
   async function activate(profile, successType = 'activated') {
     setBusy(true);
@@ -139,7 +142,7 @@ export default function GazePanel({ onBack }) {
 }
 
 function GazeHero({ onBack }) {
-  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="대시보드로 돌아가기">‹</button><h1>시선</h1></div><Circuit /><GazeRadar hero /></header>;
+  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="이전 화면으로 돌아가기">‹</button><h1>시선</h1></div><Circuit /><GazeRadar hero /></header>;
 }
 
 function Circuit() {
