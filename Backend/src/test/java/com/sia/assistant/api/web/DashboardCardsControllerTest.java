@@ -146,6 +146,28 @@ class DashboardCardsControllerTest {
     }
 
     @Test
+    @DisplayName("내역 합계는 total 을 쪼갠 값이고, 버킷을 더한 값과 같다")
+    void usageTotalsSplitByKind() {
+        event("gesture", null, null, null, thisWeek(0));
+        event("gesture", null, null, null, thisWeek(0));
+        event("gesture", null, null, null, thisWeek(1));
+        event("voice", 0.9, null, null, thisWeek(1));
+        event("voice-rejected", 0.2, null, null, thisWeek(1));   // 폐기된 발화는 "사용"이 아니다
+
+        Map<String, Object> body = controller.usage("week");
+        Map<String, Object> summary = summaryOf(body);
+
+        assertThat(summary.get("gestureTotal")).isEqualTo(3L);
+        assertThat(summary.get("voiceTotal")).isEqualTo(1L);
+        assertThat(summary.get("total")).isEqualTo(4L);
+
+        // ★ 합계는 버킷을 더한 값과 같다 — 화면이 따로 더할 필요가 없다는 근거다.
+        // 평균은 이 등식이 성립하지 않아서(표본 수가 버킷마다 다르다) summary 를 써야 한다.
+        assertThat(bucketSum(body, "gesture")).isEqualTo(3L);
+        assertThat(bucketSum(body, "voice")).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("최다 버킷이 동률이면 먼저 오는 버킷을 고른다")
     void peakPrefersEarlierBucketOnTie() {
         Instant earlier = thisWeek(0);
@@ -299,6 +321,15 @@ class DashboardCardsControllerTest {
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> bucketsOf(Map<String, Object> body) {
         return (List<Map<String, Object>>) body.get("buckets");
+    }
+
+    /** 버킷의 한 컬럼을 전부 더한다. summary 의 합계와 맞는지 보는 용도다. */
+    private static long bucketSum(Map<String, Object> body, String key) {
+        long sum = 0;
+        for (Map<String, Object> b : bucketsOf(body)) {
+            sum += (Long) b.get(key);
+        }
+        return sum;
     }
 
     @SuppressWarnings("unchecked")
