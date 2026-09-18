@@ -6,7 +6,8 @@
 로컬 VLM(Ollama 등)으로 갈아끼울 때는 이 파일의 _ask()만 교체하면 된다.
 
 상태 두 가지를 이 클래스가 소유한다:
-- 활성 세션: 호출어로 명령이 한 번 통하면 SESSION_S 동안 호출어 없이 명령 인정.
+- 활성 세션: 호출어로 명령이 한 번 통하면 BE 가 정한 시간 동안 호출어 없이 명령 인정.
+  마감 시각은 BE 소유다 — AI 는 자기 시계를 갖지 않고 session_state{deadlineMs} 만 본다.
   유효 명령마다 갱신 ("그만/이제 됐어" → end_session으로 즉시 종료)
 - 확인 대기: 파괴적 동작(창 닫기)은 즉시 실행하지 않고 되물은 뒤,
   다음 발화의 승인(confirm_yes)/거부(confirm_no)로 처리
@@ -14,6 +15,7 @@
 키: 환경변수 GEMINI_API_KEY 또는 프로젝트 루트의 gemini_api_key.txt (gitignore됨)
 모델: 환경변수 GEMINI_MODEL (기본 gemini-3.5-flash)
 """
+import collections
 import ctypes
 import io
 import json
@@ -40,7 +42,9 @@ SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전�
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
 HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
-SESSION_S = 90.0          # 호출어 인정 후 이 시간 동안은 호출어 없이 명령 가능
+Pending = collections.namedtuple(  # 확인 대기 — 자리 인덱스로 읽던 6튜플을 이름으로 바꿨다
+    "Pending", "q kind expire target completed asked_at generation")
+MAX_INFLIGHT = 4          # 동시에 처리할 발화 수 상한 — 몰릴 때 LLM 왕복이 무제한으로 늘지 않게
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
 WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
 WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
@@ -330,9 +334,18 @@ def capture_case(audio_i16, full_img, crop_img, session, pending_q, dom):
     eval/은 gitignore — 커밋 금지.
     """
     try:
+        # 같은 밀리초에 뜬 스레드 둘이 같은 폴더에 겹쳐 쓰면 A 의 오디오 + B 의 화면으로
+        # 케이스가 조립돼 회귀 측정이 거짓말을 한다. 충돌할 때만 접미사를 붙인다.
         cid = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}"
-        d = EVAL_DIR / cid
-        d.mkdir(parents=True, exist_ok=True)
+        for n in range(20):
+            d = EVAL_DIR / (cid if n == 0 else f"{cid}-{n}")
+            try:
+                d.mkdir(parents=True)
+                break
+            except FileExistsError:
+                continue
+        else:
+            return
         (d / "audio.wav").write_bytes(wav_bytes(audio_i16))
         if full_img is not None:
             full_img.convert("RGB").save(d / "full.jpg", "JPEG", quality=85)
@@ -717,14 +730,18 @@ def jpeg_bytes(pil_img, max_w=1400, quality=75):
 
 class Brain(threading.Thread):
     """요청 큐를 소비하는 워커 — 메인 루프(영상 처리)를 API 지연으로 막지 않는다."""
-    # 클래스 기본값 — 확인 대기 경로처럼 라우터를 거치지 않는 발화나 테스트의 Brain.__new__ 객체에서도
-    # [지연] 출력·log_utterance·submit 이 AttributeError 없이 읽는다.
-    _last_stt_s = _last_stt_lp = _last_llm_s = _last_llm_tries = None
+    # 클래스 기본값 — 테스트의 Brain.__new__ 객체에서도 AttributeError 없이 읽는다.
     _router_fails = 0
-    _last_be_payload = None  # 마지막 _be_ok 성공 payload
-    _last_be_error = None    # 마지막 _be_ok 실패 시 BE 가 준 {code, message}
+    _workers = ()            # 진행 중인 발화 처리 스레드 (_alive 가 인스턴스 리스트로 갈아끼운다)
     _apps = None             # BE 앱 레지스트리 캐시 (app.list, 세션 불요)
+    # BE 미연결이면 세션이 없어 모든 발화가 호출어 게이트를 탄다 — 그 경로가 읽는 필드도 기본값이 필요하다.
+    _wake_notified = None
+    _speaker_error_notified = False
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
+    # openwakeword Model 은 발화마다 독립이 아니다 — predict_clip 이 내부적으로 predict() 를
+    # 청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
+    # 돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려간다(불러도 무반응).
+    _wake_lock = threading.Lock()
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -744,17 +761,19 @@ class Brain(threading.Thread):
         # 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
         self.paused = False
         self.queue = []
+        self._workers = []   # 진행 중인 발화 처리 스레드
         self._audio_lock = threading.RLock()
         self._audio_generation = 0
         self._audio_since = 0.0
         self.busy = 0
-        self.session_until = 0.0
         self._pending = None  # (확인 질문, 종류, 만료 시각, 대상, 원래 명령의 완료 통계, 질문 시각)
         self._client = None
         self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         self._keys = load_api_keys()
         self._key_i = 0
+        # 키 회전은 '읽고-바꿔-쓰기' 한 쌍이라 발화마다 스레드가 돌면 엇갈린다.
+        self._key_lock = threading.Lock()
         self._accum = SpeakerAccum()  # 화자 인증에서 거부된 짧은 조각 모음 (다음 발화와 이어붙여 재판정)
         # 시동어 모델은 Gemini 키와 상관없이 올린다 — 온보딩 호출어 등록이 이 인스턴스를 그대로 쓰기 때문에,
         # 키가 없다는 이유로 건너뛰면 등록 첫 발화가 "호출어 모델이 없어 등록할 수 없어요." 로 막힌다.
@@ -765,7 +784,7 @@ class Brain(threading.Thread):
         if self._keys:
             self._client = llm_client(self._keys[0])
             print(f"Gemini 연결됨 (모델 {MODEL}, 키 {len(self._keys)}개, "
-                  f"호출어 '{WAKE_WORD}', 세션 {SESSION_S:.0f}초)")
+                  f"호출어 '{WAKE_WORD}', 세션 길이는 BE 설정)")
         else:
             print("GEMINI_API_KEY 없음 → 1단 로컬 명령(음소거·볼륨 등)만 동작, 나머지 발화는 안내 후 버림.")
             print("키 설정: 환경변수 GEMINI_API_KEY 또는 gemini_api_key.txt 파일")
@@ -779,26 +798,68 @@ class Brain(threading.Thread):
         return self.link if (self.link and self.link.connected) else None
 
     def _session_until(self):
-        """활성 세션 마감(모노토닉). BE 연결 시 BE 소유 타이머, 아니면 로컬."""
-        be = self._be()
-        return be.session_until_mono if be else self.session_until
+        """활성 세션 마감(모노토닉) — **BE 소유**. AI 는 자기 시계를 갖지 않는다.
 
-    def _be_ok(self, tool, args=None):
-        """BE MCP 도구 호출 → 실행됐으면 True, 결과는 _last_be_payload. 토스트 없음(중간 단계용).
-        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
+        BE 가 session_state{deadlineMs} 로 밀어 준 값(be_link.session_until_mono)만 쓴다.
+        BE 미연결이면 세션은 없다 — 실행도 BE 가 하므로 따로 시계를 둘 이유가 없고,
+        로컬 미러를 두면 BE(기본 15 s)와 어긋나 SESSION_REQUIRED 로 전부 거절된다(9/18 실측).
+        """
         be = self._be()
-        self._last_be_payload = None
+        return be.session_until_mono if be else 0.0
+
+    def _pending_for(self, t_utter):
+        """t_utter 에 시작한 발화가 답할 수 있는 확인 대기 — 없으면 None.
+
+        만료 전인 것만 보면 안 된다. 발화마다 스레드가 도는 지금은 사용자가 답을 말한 **뒤에**
+        다른 스레드가 새 확인 대기를 열 수 있다. 그러면 "응, 삭제" 가 아직 듣지도 않은 창 닫기
+        질문에 붙어 창이 닫힌다(-320 검수 blocker). 질문이 먼저 있었는지도 함께 본다.
+        """
+        p = self._pending   # 한 번만 읽는다 — 두 번 읽으면 그 사이 옆 스레드가 None 으로 바꾼다
+        return p if (p and p.asked_at <= t_utter < p.expire) else None
+
+    def _open_confirm(self, q, hint, kind, target, completed, generation):
+        """파괴적 동작 재확인을 연다. 답 안 한 질문이 살아 있으면 열지 않는다.
+
+        확인 질문 둘이 동시에 떠 있으면 "응" 이 어느 쪽에 붙는지 사용자도 우리도 모른다.
+        되돌릴 수 없는 동작이라 먼저 뜬 질문을 지키고 새 것을 거른다.
+        generation 을 같이 실어야, 입력이 바뀌어 폐기된 스레드의 finally 가 '자기가 만든'
+        확인 대기만 거둔다 — 옆 스레드 것까지 지우면 승인이 통째로 사라진다.
+        """
+        now = time.monotonic()
+        with self._audio_lock:
+            live = self._pending
+            busy = live.q if (live and now < live.expire) else None
+            if busy is None:
+                self._pending = Pending(q, kind, now + CONFIRM_TIMEOUT_S, target,
+                                        completed, now, generation)
+        if busy is not None:
+            self._say(f"먼저 물어본 것에 답해 주세요 — {busy}")
+            return
+        self._say(q + hint, "confirm", CONFIRM_TIMEOUT_S, timeoutSec=int(CONFIRM_TIMEOUT_S))
+
+    def _session_live(self):
+        """지금 이 순간 BE 세션이 살아 있나 — 연장(extend)이 통할지의 기준.
+        발화 시점이 아니라 호출 시점으로 본다: renew 는 BE 의 현재 상태를 보고 판단하므로,
+        LLM 왕복 사이에 만료됐으면 연장이 아니라 개시로 보내야 한다."""
+        return time.monotonic() < self._session_until()
+
+    def _be_call(self, tool, args=None):
+        """BE MCP 도구 호출 → (성공?, payload, 실패사유). 토스트 없음(중간 단계용).
+
+        결과를 self 에 얹지 않는다. 명령마다 스레드가 도는 구조에서 self 에 얹으면 서로
+        덮어쓴다 — 스레드 A 의 files.save 결과를 B 의 capture_region 이 지워서 A 가 B 의
+        저장 경로를 말하는 사고가 난다(9/17 경로 안내 버그와 같은 모양).
+        """
+        be = self._be()
         if not be:
-            return False
+            return False, None, None
         ok, payload = be.call(tool, args or {})
-        self._last_be_error = None
         if ok is True:
-            self._last_be_payload = payload
-            return True
-        if ok is False and isinstance(payload, dict):
-            self._last_be_error = payload   # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
-            print(f"[BE {tool} 거절] {payload.get('code')}: {payload.get('message')}")
-        return False
+            return True, payload, None
+        err = payload if (ok is False and isinstance(payload, dict)) else None
+        if err:  # BE 가 이유를 말해 줬다 — 사용자에게 그대로 전한다
+            print(f"[BE {tool} 거절] {err.get('code')}: {err.get('message')}")
+        return False, None, err
 
     def _win_ref(self, hwnd):
         """발화 시점 창(hwnd) → BE winRef("win:N"). BE 는 hwnd 를 내주지 않고 win:N 은 스냅샷
@@ -813,9 +874,9 @@ class Brain(threading.Thread):
         title = window_title_of(hwnd)
         if not title or title == HUD_TITLE:  # 우리 HUD 창은 BE 목록에도 뜬다 — 대상으로 삼지 않는다
             return None
-        if not self._be_ok("context.get"):
+        ok, ctx, _ = self._be_call("context.get")
+        if not ok:
             return None
-        ctx = self._last_be_payload
         if not isinstance(ctx, dict):
             return None
         hits = [w.get("ref") for w in (ctx.get("windows") or []) if w.get("title") == title]
@@ -829,11 +890,10 @@ class Brain(threading.Thread):
         print(f"[BE 창 참조 실패] 제목 {title!r} 후보 {len(hits)}개 — 대상을 특정하지 못했다")
         return None
 
-    def _be_down(self, what):
+    def _be_down(self, what, err=None):
         """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다.
         BE 가 이유를 말해 줬으면 그 이유를, 아예 못 닿았으면 연결 문제를 알린다 —
         둘을 뭉뚱그리면 사용자도 우리도 원인을 못 찾는다(실측: 앱 미등록을 '연결 안 됨'으로 안내)."""
-        err = getattr(self, "_last_be_error", None)
         reason = (err or {}).get("message") or "백엔드에 연결되지 않아 실행하지 못했습니다"
         self._say(f"{what} — {reason}")
         return None
@@ -846,7 +906,8 @@ class Brain(threading.Thread):
         그대로 보내지 않고 목록에서 찾는다. app.list 는 세션이 필요 없는 읽기 도구다.
         """
         if self._apps is None:
-            self._apps = self._be_ok("app.list") and (self._last_be_payload or {}).get("apps") or []
+            ok, payload, _ = self._be_call("app.list")
+            self._apps = ((payload or {}).get("apps") or []) if ok else []
         want = f"app:{key}"
         for a in self._apps:                      # ① ref 완전 일치
             if a.get("ref") == want:
@@ -863,9 +924,9 @@ class Brain(threading.Thread):
     def _explorer_items(self):
         """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
         BE 가 못 주면 빈 목록이다. 로컬 win32com 으로 셸을 직접 읽지 않는다."""
-        if not self._be_ok("explorer.items"):
+        ok, data, _ = self._be_call("explorer.items")
+        if not ok:
             return []
-        data = self._last_be_payload
         return (data.get("items") or []) if isinstance(data, dict) else []
 
     def _explorer_selection(self):
@@ -874,14 +935,13 @@ class Brain(threading.Thread):
                 if it.get("selected") and it.get("path")]
 
     def _try_be(self, tool, args, ok_say):
-        """BE MCP 도구 시도 → 실제로 실행됐으면(ok True) 토스트 후 True.
-        BE 가 막았거나(SESSION_REQUIRED 등) 접속 불가면 False → 호출측이 로컬 폴백."""
-        if not self._be_ok(tool, args):
-            return False
-        payload = self._last_be_payload
+        """BE MCP 도구 시도 → (실행됐나, payload, 실패사유). 성공하면 안내까지 띄운다."""
+        ok, payload, err = self._be_call(tool, args)
+        if not ok:
+            return False, None, err
         msg = payload.get("message") if isinstance(payload, dict) else ""
         self._say(ok_say or msg or "완료")
-        return True
+        return True, payload, None
 
     def session_left(self):
         return max(0.0, self._session_until() - time.monotonic())
@@ -1008,199 +1068,245 @@ class Brain(threading.Thread):
                 if not self.queue:
                     continue
                 audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
+                live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 # 제스처 등록이 시작되는 순간에는 submit() 이전에 들어와 있던 발화가
                 # 큐에 남아 있을 수 있다. 소비 단계에서도 한 번 더 버려야 등록 중
                 # 세션/명령이 뒤늦게 실행되지 않는다. 버릴 발화는 먼저 버린다.
                 if self.paused:
                     print("[발화 무시] 일시정지 중 큐에 남은 발화")
                     continue
-                # 이 시점엔 아직 본문이 없다 — DomBridge 은퇴 후 dom 은 2단에서 BE 로 가져온다(아래).
-                # EVAL_CAPTURE 골든셋 수집이 여기서 dom 을 읽으므로 반드시 먼저 정의한다.
-                dom = None
-                live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
+            self._start(audio, full_img, crop_img, t_utter, hwnd, t_recv,
+                        live_score, live_cut, generation, accum, profile)
+
+    def _start(self, *args):
+        """발화 하나에 스레드 하나. 큐에 줄 세우면 1단 적중(0.42 s)이 앞선 LLM 왕복
+        (12~29 s) 뒤에서 기다린다 — 9/18 실측 대기 23.57 s.
+
+        직렬화는 확인 대기가 열려 있을 때만 한다. "응, 삭제"가 다른 명령과 겹치면
+        _pending 을 누가 먼저 집어갔느냐에 따라 삭제가 되기도 안 되기도 한다.
+        동시에 도는 수는 막아 둔다 — 발화가 몰릴 때 이미지 몇 장씩 든 LLM 왕복이
+        무제한으로 늘면 GPU·쿼터가 먼저 무너진다.
+        """
+        t_utter = args[3]
+        if self._pending_for(t_utter) or len(self._alive()) >= MAX_INFLIGHT:
+            self._drain()
+        t = threading.Thread(target=self._handle, args=args, daemon=True)
+        self._workers.append(t)
+        t.start()
+
+    def _alive(self):
+        self._workers = [t for t in self._workers if t.is_alive()]
+        return self._workers
+
+    def _drain(self, timeout=None):
+        """진행 중인 발화 처리가 끝날 때까지 기다린다 (테스트·확인 대기 직렬화용)."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self._alive():
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            self._workers[0].join(0.05)
+        return True
+
+    def _handle(self, audio, full_img, crop_img, t_utter, hwnd, t_recv,
+                live_score, live_cut, generation, accum, profile):
+        """발화 하나를 게이트→판정→실행까지 끝낸다. 스레드 하나가 통째로 맡는다 —
+        self 에 중간 결과를 얹지 않는 이유가 이것이다(_be_call · lat 참고)."""
+        dom = None  # 2단(LLM) 경로에서 BE 로 가져온다. 아래 로그가 먼저 읽으므로 여기서 정의한다.
+        with self._audio_lock:
             self.busy += 1
-            t_proc = time.monotonic()  # 처리 시작(발화 종료 + VAD 꼬리 이후) — 지연 분해 기준점
-            t_end = t_recv - VAD_TAIL_S  # 발화가 끝난 시각(추정): VAD 는 꼬리 침묵 뒤에 세그먼트를 넘긴다. 이전 식(t_utter+길이)은 프리롤 2초만큼 늦게 잡았다
-            try:
-                if EVAL_CAPTURE:
-                    pq = self._pending[0] if self._pending and t_utter < self._pending[2] else None
-                    capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
-                # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
-                # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
-                # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
-                wake_score, i_max, lead, oww_pass = None, None, 0, False
-                wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
-                if self.wake is not None:
+        t_proc = time.monotonic()  # 처리 시작(발화 종료 + VAD 꼬리 이후) — 지연 분해 기준점
+        t_end = t_recv - VAD_TAIL_S  # 발화가 끝난 시각(추정): VAD 는 꼬리 침묵 뒤에 세그먼트를 넘긴다. 이전 식(t_utter+길이)은 프리롤 2초만큼 늦게 잡았다
+        try:
+            if EVAL_CAPTURE:
+                pq = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
+                capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
+            # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
+            # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
+            # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
+            wake_score, i_max, lead, oww_pass = None, None, 0, False
+            wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
+            if self.wake is not None:
+                with self._wake_lock:      # 모델 하나를 여러 발화가 나눠 쓴다 — 직렬 + 버퍼 비우고 시작
+                    self.wake.reset()
                     wake_score, i_max, lead = wake_score_of(self.wake, audio)
-                    oww_pass = i_max is not None
-                in_session = t_utter < self._session_until()
-                confirming = bool(self._pending and t_utter < self._pending[2])
-                only_wake = (oww_pass and not WAKE_SHADOW
-                             and not confirming
-                             and wake_only(audio, i_max, lead))
-                # 활성 세션의 명령은 기존 화자 게이트로 보낸다. 단독 호출 후보는 세션 안에서도
-                # 개인화를 확인해야 타인의 호출에 곧바로 응답하는 우회가 생기지 않는다.
-                if in_session and not only_wake:
-                    wake_ok, wake_why = True, "in_session"
-                else:
-                    wake_ok, wake_why, wake_sim, seg_t0, seg_t1 = self._wake_ok(audio, i_max, lead, oww_pass)
-                    if wake_ok:
-                        accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
-                        be = self._be()
-                        with self._audio_lock:
-                            stale = generation != self._audio_generation
-                        if stale:
-                            continue
-                        if be and not WAKE_SHADOW and not in_session:
-                            be.wake_detected()  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
-                        if only_wake:
-                            if be is None and not in_session:
-                                self.session_until = time.monotonic() + SESSION_S
-                            self._say("네, 듣고 있어요")
-                            log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
-                                          wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                          wake_live=live_score, wake_cut=live_cut,
-                                          seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
-                            continue  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
-                    elif not WAKE_SHADOW:
-                        print(f"[호출어 아님 무시] {wake_why}"
-                              + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
-                        log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
+                oww_pass = i_max is not None
+            in_session = t_utter < self._session_until()
+            confirming = self._pending_for(t_utter) is not None
+            only_wake = (oww_pass and not WAKE_SHADOW
+                         and not confirming
+                         and wake_only(audio, i_max, lead))
+            # 활성 세션의 명령은 기존 화자 게이트로 보낸다. 단독 호출 후보는 세션 안에서도
+            # 개인화를 확인해야 타인의 호출에 곧바로 응답하는 우회가 생기지 않는다.
+            if in_session and not only_wake:
+                wake_ok, wake_why = True, "in_session"
+            else:
+                wake_ok, wake_why, wake_sim, seg_t0, seg_t1 = self._wake_ok(audio, i_max, lead, oww_pass)
+                if wake_ok:
+                    accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
+                    be = self._be()
+                    with self._audio_lock:
+                        stale = generation != self._audio_generation
+                    if stale:
+                        return
+                    if be and not WAKE_SHADOW and not in_session:
+                        be.wake_detected()  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
+                    if only_wake:
+                        # BE 가 없으면 세션도 없다 — 실행이 BE 전용이라 로컬 세션은 의미가 없다.
+                        self._say("네, 듣고 있어요")
+                        log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                       wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
                                       wake_live=live_score, wake_cut=live_cut,
-                                      seg_t0=seg_t0, seg_t1=seg_t1,
-                                      session=in_session, **audio_stats(audio))
-                        continue
-                # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
-                # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
-                sim, crop_t0, crop_t1 = None, None, None
-                accum_n, accum_sim = 0, None  # 이어붙인 조각 수 / 이어붙여 다시 낸 유사도 (로그 근거)
-                if profile is not None and profile[0] is not None:
-                    spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
-                    ok, sim = self.speaker.verify(spk_audio, profile)
-                    if not ok and sim is not None:
-                        # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
-                        # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
-                        # 유사도를 아예 재지 못한 인증 오류(sim None)는 이 재판정에 넣지 않는다 — 목소리를
-                        # 확인하지 못한 발화를 조각에 업혀 통과시키면 게이트를 우회하는 길이 된다.
-                        combined = accum.offer(speech_part(spk_audio), sim, t_utter)
-                        if combined is not None:
-                            accum_n = accum.n_joined
-                            ok, accum_sim = self.speaker.verify(combined, profile)
-                            if ok:
-                                sim = accum_sim  # 이어붙여 통과했으니 기록도 재판정 유사도로 남긴다.
-                            elif accum_sim is None:
-                                sim = None  # 재판정이 오류로 끝났다 — 타인이라는 근거가 아니므로 아래 오류 분기로.
-                    if ok:
-                        self._speaker_error_notified = False
-                        accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
-                        # 통과한 발화를 보이스 재생 샘플로 올리지 않는다 — "내 목소리" 에서는 등록 때 읽은 마지막 문장이 들려야 한다
-                    elif sim is None:
-                        # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
-                        # 그래서 거부(voice_rejected)로 기록하지 않고 이번 발화만 버린다. 예외 내용은
-                        # speaker.verify 가 콘솔에 남기고, 사용자에게는 안내 문구만 보낸다.
-                        if not self._speaker_error_notified:
-                            self._speaker_error_notified = True
-                            self._say("목소리를 확인하지 못했습니다 — 다시 한 번 말씀해 주세요.")
-                        log_utterance(gate="speaker_error", accum_n=accum_n,
-                                      wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
-                                      speech_s=round(speech_s(audio), 2),
-                                      session=t_utter < self._session_until(), **audio_stats(audio))
-                        continue
-                    else:
-                        print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
-                              + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
-                        sp = speech_s(audio)
-                        log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
-                                      accum_n=accum_n,
-                                      accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
-                                      wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
-                                      speech_s=round(sp, 2), session=t_utter < self._session_until(), **audio_stats(audio))
-                        # BE 이벤트(→ FE "등록된 목소리로 한 명령이 아닙니다", 프로토콜 4.1 voice_rejected {})는
-                        # 판정할 만큼 말소리가 긴 발화에서만 — 짧은 호출어는 지금은 조용히 버린다(사유는 SPEAKER_JUDGE_SPEECH_S 주석).
-                        be = self._be()
-                        with self._audio_lock:
-                            fresh = generation == self._audio_generation
-                        if fresh and be and sp >= SPEAKER_JUDGE_SPEECH_S:
-                            be.voice_rejected()
-                            be.queue_usage("voice-rejected", sessionId=be.be_session_id)
-                        continue
-                # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
-                # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
-                result, stt_draft, tier = None, None, 2
-                dom_s, t_pre = None, None  # dom 은 2단(LLM) 경로에서만 채운다(위에서 None 으로 시작)
-                self._last_stt_s = self._last_stt_lp = self._last_llm_s = self._last_llm_tries = None  # 발화 단위 지연 — 확인 대기 경로(라우터 생략)도 리셋
-                if not (self._pending and t_utter < self._pending[2]):
-                    t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
-                    r1 = self._try_router(audio, t_utter)
-                    if isinstance(r1, dict):
-                        result, tier = r1, 1
-                    else:
-                        stt_draft = r1  # STT 초안(승격 힌트) 또는 None(라우터 비활성)
-                if result is None:
-                    # DOM 본문은 LLM 경로에서만, 그리고 wake_detected 뒤(세션 개시 후)에 가져온다 —
-                    # 첫 명령("시아야 이거 요약해줘")도 여기선 세션이 열려 있어 본문이 붙는다.
-                    t_dom = time.monotonic()
-                    dom = be_dom_text(self._be())
-                    dom_s = round(time.monotonic() - t_dom, 2)
-                    result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft)
-                log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
-                              stt_s=getattr(self, "_last_stt_s", None), stt_lp=getattr(self, "_last_stt_lp", None),
-                              llm_s=getattr(self, "_last_llm_s", None),
-                              llm_tries=getattr(self, "_last_llm_tries", None),  # 지연 분해: 6~15초가 STT·LLM·키회전 중 어디서 나는지
-                              queue_s=round(t_proc - t_end, 2), pre_s=round(t_pre - t_proc, 2) if t_pre else None, dom_s=dom_s,
-                              wake_why=wake_why,  # 세션 개시 판정 경로 (in_session / ok / content_only)
-                              wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                              wake_live=live_score, wake_cut=live_cut,
-                              seg_t0=seg_t0, seg_t1=seg_t1,  # 개인화 판정에 쓴 호출어 구간
-                              speaker_sim=round(sim, 3) if sim is not None else None,
-                              accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0
-                              accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
-                              wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
-                              i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # i_max 는 처음 임계를 넘은 프레임.
-                              # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
-                              session=t_utter < self._session_until(),
-                              audio_is_speech=result.get("audio_is_speech"),
-                              wake_heard=result.get("wake_heard"),
-                              is_command=result.get("is_command"),
-                              action=result.get("action"),
-                              transcript=result.get("transcript", "")[:120],
-                              had_dom=dom is not None,
-                              # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
-                              # 세션 없음/브라우저 없음/타임아웃을 못 가른다.
-                              dom_via=(dom or {}).get("via"),
-                              dom_chars=len((dom or {}).get("text") or "") or None,
-                              dom_cut=(dom or {}).get("truncated"),
-                              **audio_stats(audio))
-                with self._audio_lock:
-                    stale = generation != self._audio_generation
-                # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
-                if not stale:
+                                      seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
+                        return  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
+                elif not WAKE_SHADOW:
+                    print(f"[호출어 아님 무시] {wake_why}"
+                          + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
+                    log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
+                                  wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                  wake_live=live_score, wake_cut=live_cut,
+                                  seg_t0=seg_t0, seg_t1=seg_t1,
+                                  session=in_session, **audio_stats(audio))
+                    return
+            # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
+            # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
+            sim, crop_t0, crop_t1 = None, None, None
+            accum_n, accum_sim = 0, None  # 이어붙인 조각 수 / 이어붙여 다시 낸 유사도 (로그 근거)
+            if profile is not None and profile[0] is not None:
+                spk_audio, crop_t0, crop_t1 = speaker_input(audio, i_max, lead)
+                ok, sim = self.speaker.verify(spk_audio, profile)
+                if not ok and sim is not None:
+                    # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
+                    # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
+                    # 유사도를 아예 재지 못한 인증 오류(sim None)는 이 재판정에 넣지 않는다 — 목소리를
+                    # 확인하지 못한 발화를 조각에 업혀 통과시키면 게이트를 우회하는 길이 된다.
+                    combined = accum.offer(speech_part(spk_audio), sim, t_utter)
+                    if combined is not None:
+                        accum_n = accum.n_joined
+                        ok, accum_sim = self.speaker.verify(combined, profile)
+                        if ok:
+                            sim = accum_sim  # 이어붙여 통과했으니 기록도 재판정 유사도로 남긴다.
+                        elif accum_sim is None:
+                            sim = None  # 재판정이 오류로 끝났다 — 타인이라는 근거가 아니므로 아래 오류 분기로.
+                if ok:
+                    self._speaker_error_notified = False
+                    accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
+                    # 통과한 발화를 보이스 재생 샘플로 올리지 않는다 — "내 목소리" 에서는 등록 때 읽은 마지막 문장이 들려야 한다
+                elif sim is None:
+                    # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
+                    # 그래서 거부(voice_rejected)로 기록하지 않고 이번 발화만 버린다. 예외 내용은
+                    # speaker.verify 가 콘솔에 남기고, 사용자에게는 안내 문구만 보낸다.
+                    if not self._speaker_error_notified:
+                        self._speaker_error_notified = True
+                        self._say("목소리를 확인하지 못했습니다 — 다시 한 번 말씀해 주세요.")
+                    log_utterance(gate="speaker_error", accum_n=accum_n,
+                                  wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
+                                  speech_s=round(speech_s(audio), 2),
+                                  session=t_utter < self._session_until(), **audio_stats(audio))
+                    return
+                else:
+                    print(f"[화자 불일치 무시] 유사도 {sim:.2f} < {profile[1]}"
+                          + (f" (조각 {accum_n}개 이어붙여도 {accum_sim:.2f})" if accum_sim is not None else ""))
+                    sp = speech_s(audio)
+                    log_utterance(gate="speaker_reject", speaker_sim=round(sim, 3),
+                                  accum_n=accum_n,
+                                  accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
+                                  wake_score=wake_score, i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,
+                                  speech_s=round(sp, 2), session=t_utter < self._session_until(), **audio_stats(audio))
+                    # BE 이벤트(→ FE "등록된 목소리로 한 명령이 아닙니다", 프로토콜 4.1 voice_rejected {})는
+                    # 판정할 만큼 말소리가 긴 발화에서만 — 짧은 호출어는 지금은 조용히 버린다(사유는 SPEAKER_JUDGE_SPEECH_S 주석).
                     be = self._be()
-                    t_exec = time.monotonic()
-                    completed = self._execute(result, crop_img, t_utter, hwnd, full_img,
-                                              profile, tier, generation)
-                    finished = time.monotonic()
-                    print(f"[지연] 대기 {t_proc - t_end:.2f} | 게이트 {(t_pre - t_proc) if t_pre else 0:.2f} | STT {self._last_stt_s} | DOM {dom_s}"
-                          f" | LLM {self._last_llm_s}({self._last_llm_tries}) | 실행 {finished - t_exec:.2f} | 발화끝→완료 {finished - t_end:.2f}s")
                     with self._audio_lock:
                         fresh = generation == self._audio_generation
-                    if completed and be and fresh:
-                        started, fields = completed
-                        latency_ms = int((finished - started) * 1000)
-                        be.queue_usage("command", **fields, latencyMs=latency_ms)
-            except Exception as e:
-                self._say(f"오류: {e}")
-                print(f"[brain 오류] {e}")
-            finally:
+                    if fresh and be and sp >= SPEAKER_JUDGE_SPEECH_S:
+                        be.voice_rejected()
+                        be.queue_usage("voice-rejected", sessionId=be.be_session_id)
+                    return
+            # 1단 로컬 라우터: 고정 명령은 LLM 없이 즉시. 확인 대기 중엔
+            # 승인/거부 판정이 필요하므로 항상 LLM(2단)로.
+            result, stt_draft, tier = None, None, 2
+            dom_s, t_pre = None, None  # dom 은 2단(LLM) 경로에서만 채운다(위에서 None 으로 시작)
+            lat = {}  # 이 발화의 지연 계측 — self 에 얹으면 동시에 처리되는 옆 발화 것과 섞인다
+            if self._pending_for(t_utter) is None:
+                t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
+                r1 = self._try_router(audio, t_utter, lat)
+                if isinstance(r1, dict):
+                    result, tier = r1, 1
+                else:
+                    stt_draft = r1  # STT 초안(승격 힌트) 또는 None(라우터 비활성)
+            if result is None:
+                # DOM 본문은 LLM 경로에서만, 그리고 wake_detected 뒤(세션 개시 후)에 가져온다 —
+                # 첫 명령("시아야 이거 요약해줘")도 여기선 세션이 열려 있어 본문이 붙는다.
+                t_dom = time.monotonic()
+                dom = be_dom_text(self._be())
+                dom_s = round(time.monotonic() - t_dom, 2)
+                result = self._ask(audio, full_img, crop_img, t_utter, dom, stt_draft, lat)
+            log_utterance(gate="router" if tier == 1 else "llm", tier=tier,
+                          stt_s=lat.get("stt_s"), stt_lp=lat.get("stt_lp"),
+                          llm_s=lat.get("llm_s"),
+                          llm_tries=lat.get("llm_tries"),  # 지연 분해: 6~15초가 STT·LLM·키회전 중 어디서 나는지
+                          queue_s=round(t_proc - t_end, 2), pre_s=round(t_pre - t_proc, 2) if t_pre else None, dom_s=dom_s,
+                          wake_why=wake_why,  # 세션 개시 판정 경로 (in_session / ok / content_only)
+                          wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                          wake_live=live_score, wake_cut=live_cut,
+                          seg_t0=seg_t0, seg_t1=seg_t1,  # 개인화 판정에 쓴 호출어 구간
+                          speaker_sim=round(sim, 3) if sim is not None else None,
+                          accum_n=accum_n,  # 이어붙여 통과했으면 조각 수, 단독 통과면 0
+                          accum_sim=round(accum_sim, 3) if accum_sim is not None else None,
+                          wake_score=wake_score,  # 섀도 실측: wake_heard와 대조해 누락·오발 집계
+                          i_max=i_max, crop_t0=crop_t0, crop_t1=crop_t1,  # i_max 는 처음 임계를 넘은 프레임.
+                          # 화자 인증에 쓴 구간 기록 — 잘라낸 구간과 원본을 나중에 비교하기 위해
+                          session=t_utter < self._session_until(),
+                          audio_is_speech=result.get("audio_is_speech"),
+                          wake_heard=result.get("wake_heard"),
+                          is_command=result.get("is_command"),
+                          action=result.get("action"),
+                          transcript=result.get("transcript", "")[:120],
+                          had_dom=dom is not None,
+                          # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
+                          # 세션 없음/브라우저 없음/타임아웃을 못 가른다.
+                          dom_via=(dom or {}).get("via"),
+                          dom_chars=len((dom or {}).get("text") or "") or None,
+                          dom_cut=(dom or {}).get("truncated"),
+                          **audio_stats(audio))
+            with self._audio_lock:
+                stale = generation != self._audio_generation
+            # MCP·파일 작업이 길어져도 submit()과 마이크 복구를 막지 않도록 실행은 잠금 밖에서 한다.
+            if not stale:
+                be = self._be()
+                t_exec = time.monotonic()
+                completed = self._execute(result, crop_img, t_utter, hwnd, full_img,
+                                          profile, tier, generation)
+                finished = time.monotonic()
+                print(f"[지연] 대기 {t_proc - t_end:.2f} | 게이트 {(t_pre - t_proc) if t_pre else 0:.2f} | STT {lat.get('stt_s')} | DOM {dom_s}"
+                      f" | LLM {lat.get('llm_s')}({lat.get('llm_tries')}) | 실행 {finished - t_exec:.2f} | 발화끝→완료 {finished - t_end:.2f}s")
                 with self._audio_lock:
-                    if generation != self._audio_generation:
-                        self._pending = None  # 이미 시작된 이전 액션이 뒤늦게 만든 확인 대기도 새 화자에게 넘기지 않는다.
-                self.busy -= 1
+                    fresh = generation == self._audio_generation
+                if completed and be and fresh:
+                    started, fields = completed
+                    latency_ms = int((finished - started) * 1000)
+                    be.queue_usage("command", **fields, latencyMs=latency_ms)
+        except Exception as e:
+            self._say(f"오류: {e}")
+            print(f"[brain 오류] {e}")
+        finally:
+            self._retire(generation)
 
-    def _try_router(self, audio, t_utter):
+    def _retire(self, generation):
+        """발화 처리 스레드 뒷정리 — 자기가 만든 확인 대기만 거두고 busy 를 반납한다.
+
+        이미 시작된 이전 액션이 뒤늦게 만든 확인 대기는 새 화자에게 넘기지 않는다. 단
+        **내가 만든 것만** 거둔다 — 발화마다 스레드가 도는 지금 옆 스레드가 방금 연 확인
+        대기까지 지우면, 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+        """
+        with self._audio_lock:
+            p = self._pending
+            if generation != self._audio_generation and p is not None and p.generation == generation:
+                self._pending = None
+            self.busy -= 1  # 여러 발화가 동시에 돌므로 증감도 락 안에서
+
+    def _try_router(self, audio, t_utter, lat=None):
         """1단 라우터 시도 — 액션 dict(즉시 실행) / STT 초안 str(승격 힌트) /
         None(라우터 사용 불가). 어떤 오류도 2단 승격으로 흡수한다."""
         if self._router_dead:
@@ -1219,8 +1325,8 @@ class Brain(threading.Thread):
         try:
             text, sec = self.router.transcribe(audio)
             hit = self.router.route(text, True)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
-            self._last_stt_s = round(sec, 2)
-            self._last_stt_lp = self.router.last_logprob
+            if lat is not None:
+                lat["stt_s"], lat["stt_lp"] = round(sec, 2), self.router.last_logprob
             self._router_fails = 0
             print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
             return hit or (text or None)
@@ -1232,13 +1338,13 @@ class Brain(threading.Thread):
             return None
 
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---
-    def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None, stt_draft=None):
+    def _ask(self, audio, full_img, crop_img, t_utter=None, dom=None, stt_draft=None, lat=None):
         if self._client is None:  # 키 없이도 1단 로컬 명령은 돌리고, LLM 이 필요한 발화만 여기서 안내 — except 가 "오류: …" 로 화면·FE 에 띄운다
             raise RuntimeError("Gemini 키가 없어 이 명령은 처리하지 못해요 (AI/gemini_api_key.txt)")
         from google.genai import types
 
         t_utter = t_utter or time.monotonic()
-        pending_q = self._pending[0] if self._pending and t_utter < self._pending[2] else None
+        pending_q = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
         prompt = build_prompt(t_utter < self._session_until(), pending_q, crop_img is not None)
 
         # 이미지 다이어트 + thinking 끄기 = 실측 8~9초 → 2.4~3.0초 (품질 손실 체감 없음)
@@ -1255,10 +1361,16 @@ class Brain(threading.Thread):
             parts.append(f"로컬 STT 초안(오인식 가능, 참고용 힌트): {stt_draft}")
         parts.append(prompt)
         t0 = time.monotonic()
-        resp, self._client, self._key_i, tries = llm_generate(
-            self._client, parts, self._keys, self._key_i)
+        with self._key_lock:            # 스냅샷만 락 안에서 — 긴 LLM 왕복을 락으로 묶으면 병렬화가 무의미해진다
+            client, key_i = self._client, self._key_i
+        resp, client, new_i, tries = llm_generate(client, parts, self._keys, key_i)
+        if new_i != key_i:              # 429 로 키가 넘어갔다. 그 사이 다른 스레드가 더 넘겼으면 그쪽이 최신이다
+            with self._key_lock:
+                if self._key_i == key_i:
+                    self._client, self._key_i = client, new_i
         result = llm_json(resp)
-        self._last_llm_s, self._last_llm_tries = round(time.monotonic() - t0, 2), tries  # 키 회전·재시도 횟수 포함
+        if lat is not None:
+            lat["llm_s"], lat["llm_tries"] = round(time.monotonic() - t0, 2), tries  # 키 회전·재시도 횟수 포함
         print(f"[{time.monotonic() - t0:.1f}s] {result.get('transcript', '')!r} → "
               f"{result.get('action')} (명령={result.get('is_command')})")
         return result
@@ -1292,11 +1404,10 @@ class Brain(threading.Thread):
                 be = self._be()
                 if be:
                     be.renew(opening=True)  # BE 가 세션 개시 → session_state 로 마감시각 회신
-                self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
                 self._say("네, 듣고 있어요")
             return
         # 코드 차원 호출어 게이트: 세션이 없을 땐 wake_heard 없이는 절대 통과 못 함 —
-        # 환각 한 번이 90초 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
+        # 환각 한 번이 무호출어 세션을 여는 자기증폭 사고 방지 (프롬프트만 믿지 않는다)
         if t_utter >= self._session_until() and not result.get("wake_heard"):
             print(f"[무시] 호출어 없음: {result.get('transcript', '')!r}")
             return
@@ -1306,8 +1417,11 @@ class Brain(threading.Thread):
         session_id = be.be_session_id if be else None
         if action != "end_session":  # '그만'은 세션을 연장하지 않는다.
             if be:
-                session_id = be.renew(opening=t_utter >= self._session_until())
-            self.session_until = time.monotonic() + SESSION_S  # 로컬 미러(폴백 대비)
+                # 개시/연장 판정은 발화 시점(t_utter)이 아니라 **지금** BE 상태로 한다.
+                # 사용자는 세션 안에서 말했지만 LLM 왕복(실측 12~29 s)이 BE 세션(기본 15 s)보다
+                # 길면 호출 시점엔 이미 닫혀 있다. 그때 연장을 보내면 SessionService.renew 가
+                # active==null 로 SESSION_REQUIRED 를 던져 명령이 통째로 버려진다(9/18 실측 0/19).
+                session_id = be.renew(opening=not self._session_live())
         with self._audio_lock:
             if generation is not None and generation != self._audio_generation:
                 return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
@@ -1315,7 +1429,8 @@ class Brain(threading.Thread):
                                "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
         pending, done = self._pending, None
         try:
-            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img, full_img)
+            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img,
+                             full_img, generation)
             return done
         finally:
             # voice 이벤트는 실행이 끝난 뒤에 보낸다 — 대시보드 "음성 인식 정확도"는 명령으로 인식된 발화
@@ -1331,12 +1446,12 @@ class Brain(threading.Thread):
                                accuracy=None if asked else float(done is not None),
                                action=result.get("action"))
 
-    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img):
+    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img,
+             generation=0):
         """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
             if be:
                 be.end()
-            self.session_until = 0.0
             self._pending = None
             self._say(say or "대기 모드로 전환합니다")
             return completed if self.act else None
@@ -1345,24 +1460,28 @@ class Brain(threading.Thread):
             return
 
         if action == "confirm_yes":
-            if self._pending and t_utter < self._pending[2]:
-                kind, target = self._pending[1], self._pending[3]
-                started, fields = self._pending[4]
+            p = self._pending_for(t_utter)
+            if p:
+                kind, target = p.kind, p.target
+                started, fields = p.completed
                 # 질문 표시부터 승인 발화 시작까지의 사람 대기만 뺀다.
-                completed = (started + max(0.0, t_utter - self._pending[5]), fields)
+                completed = (started + max(0.0, t_utter - p.asked_at), fields)
                 self._pending = None
                 if kind == "window_close":
                     # 확인은 AI 가 이미 받았다 — BE 는 재확인 없이 닫는다(API명세 §3.8).
                     ref = self._win_ref(target)
-                    if ref and self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다"):
+                    closed, _, err = self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다") if ref else (False, None, None)
+                    if closed:
                         return completed
-                    return self._be_down("창 닫기")
+                    return self._be_down("창 닫기", err)
                 elif kind == "delete_file":
                     # 확인은 AI 가 이미 받았고 BE 는 재확인 없이 실행한다(§1).
-                    if self._try_be("files.delete", {"paths": list(target)},
-                                    f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)"):
+                    deleted, _, err = self._try_be(
+                        "files.delete", {"paths": list(target)},
+                        f"{len(target)}개 파일을 휴지통으로 보냈습니다 (복구 가능)")
+                    if deleted:
                         return completed
-                    return self._be_down("파일 삭제")
+                    return self._be_down("파일 삭제", err)
             else:
                 self._say("확인 대기 중인 작업이 없습니다 (시간 초과였을 수 있음)")
         elif action == "confirm_no":
@@ -1381,14 +1500,16 @@ class Brain(threading.Thread):
                 if not ref:
                     self._say(f"{app} — 백엔드에 등록된 앱이 아닙니다")
                     return None
-                if not self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행"):
-                    return self._be_down(f"{app} 실행")
+                launched, _, err = self._try_be("app.launch", {"appRef": ref}, say or f"{app} 실행")
+                if not launched:
+                    return self._be_down(f"{app} 실행", err)
             return completed
         elif action == "web_search":
             q = (result.get("query") or "").strip()
             # BE browser.search: 확장 연결 시 활성 크롬에 새 탭, 아니면 OS 기본 브라우저.
-            if q and not self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색"):
-                return self._be_down(f"'{q}' 검색")
+            searched, _, err = self._try_be("browser.search", {"query": q}, say or f"'{q}' 검색") if q else (True, None, None)
+            if not searched:
+                return self._be_down(f"'{q}' 검색", err)
             if q:
                 return completed
         elif action == "find_file":
@@ -1406,32 +1527,31 @@ class Brain(threading.Thread):
                 self._say("대상 창을 찾지 못했습니다")
             elif op == "close":  # 파괴적 동작 — 즉시 실행하지 않고 재확인
                 q = f'창 "{window_title_of(hwnd)[:24]}"을(를) 닫을까요?'
-                asked_at = time.monotonic()
-                self._pending = (q, "window_close", asked_at + CONFIRM_TIMEOUT_S,
-                                 hwnd, completed, asked_at)
-                self._say(q + ' — "응, 닫아" / "취소"로 답하세요', "confirm", CONFIRM_TIMEOUT_S,
-                          timeoutSec=int(CONFIRM_TIMEOUT_S))
+                self._open_confirm(q, ' — "응, 닫아" / "취소"로 답하세요',
+                                   "window_close", hwnd, completed, generation)
             elif op in ("maximize", "minimize"):
                 msg = say or ("창 최대화" if op == "maximize" else "창 최소화")
                 ref = self._win_ref(hwnd)
-                if ref and self._try_be(f"window.{op}", {"winRef": ref}, msg):
+                done_, _, err = self._try_be(f"window.{op}", {"winRef": ref}, msg) if ref else (False, None, None)
+                if done_:
                     return completed
-                return self._be_down(msg)
+                return self._be_down(msg, err)
             elif op in ("scroll_down", "scroll_up"):
                 direction = "down" if op == "scroll_down" else "up"
                 ref = self._win_ref(hwnd)
                 # scroll.step 의 대상은 '포커스된 창'이라 말하던 그 창을 BE 로 먼저 잡는다 —
                 # 발화 뒤 사용자가 창을 옮겨도 의도한 창이 스크롤되게(로컬 경로와 같은 보장).
                 if ref:
-                    self._be_ok("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
+                    self._be_call("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
                 # NOTE(한계): scroll.step 은 좌표 없는 휠 한 발이라(SendInputService.fillWheel)
                 # 실제 대상은 '커서 아래 창'이다 — window.focus 로도 보장되지 않는다.
                 # scroll.step 에 winRef 가 생겨야 '발화 시점 창' 보장이 돌아온다(-295).
-                if self._be_ok("scroll.step", {"dir": direction, "amount": SCROLL_AMOUNT}):
+                scrolled, _, err = self._be_call("scroll.step", {"dir": direction, "amount": SCROLL_AMOUNT})
+                if scrolled:
                     if say:
                         self._say(say)
                     return completed
-                return self._be_down("스크롤")
+                return self._be_down("스크롤", err)
         elif action == "delete_file":
             # 대상 결정: ① 말했거나 응시한 파일명(query) → 폴더에서 해석,
             # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
@@ -1444,11 +1564,8 @@ class Brain(threading.Thread):
             else:
                 names = ", ".join(Path(p).name for p in sel)[:60]
                 q = f"{len(sel)}개 파일 삭제(휴지통): {names} — 삭제할까요?"
-                asked_at = time.monotonic()
-                self._pending = (q, "delete_file", asked_at + CONFIRM_TIMEOUT_S,
-                                 sel, completed, asked_at)
-                self._say(q + ' — "응, 삭제" / "취소"', "confirm", CONFIRM_TIMEOUT_S,
-                          timeoutSec=int(CONFIRM_TIMEOUT_S))
+                self._open_confirm(q, ' — "응, 삭제" / "취소"',
+                                   "delete_file", sel, completed, generation)
         elif action == "media":
             if self._media(result.get("media_key"), say, hwnd, level=result.get("level")):
                 return completed
@@ -1463,13 +1580,13 @@ class Brain(threading.Thread):
                 name = f"저장_{ts}.txt"
                 # 저장 위치는 BE 가 정한다(~/Documents/SIA). 이름이 겹치면 BE 가 " (1)" 을 붙이므로
                 # 우리가 지어 보낸 이름이 아니라 BE 가 실제로 쓴 경로를 그대로 말한다.
-                ok = self._be_ok("files.save", {"name": name, "content": text})
-                log_save(t_utter, "text", result, ok=ok, payload=self._last_be_payload)
+                ok, payload, err = self._be_call("files.save", {"name": name, "content": text})
+                log_save(t_utter, "text", result, ok=ok, payload=payload)
                 if ok:
-                    saved = (self._last_be_payload or {}).get("path") or name
+                    saved = (payload or {}).get("path") or name
                     self._say(where(say or "글로 저장했습니다", saved))
                     return completed
-                return self._be_down("글 저장")
+                return self._be_down("글 저장", err)
             if box:
                 # 9/16 이관 뒤 크롭 이미지는 쓰이지 않는다 — 좌표만 BE 로 가고 캡처는 BE 가 한다.
                 # (로컬 저장 시절의 full_img.crop(box) 잔재를 제거. 저장마다 전체 이미지 복사 1회였다)
@@ -1488,10 +1605,10 @@ class Brain(threading.Thread):
                 # 시점' 화면 기준이라 LLM 왕복(4~6초) 사이에 화면이 바뀌면 다른 내용이 저장된다.
                 # AI 가 든 이미지를 그대로 받는 도구가 생기면 그쪽이 맞다(-295).
                 off = virtual_screen_offset(full_img.size) or (0, 0)
-                ok = self._be_ok("screen.capture_region",
+                ok, p, err = self._be_call("screen.capture_region",
                                  {"x1": box[0] + off[0], "y1": box[1] + off[1],
                                   "x2": box[2] + off[0], "y2": box[3] + off[1]})
-                p = self._last_be_payload or {}
+                p = p or {}
                 log_save(t_utter, "region", result, box=box, screen=full_img.size,
                          ok=ok, payload=p)
                 if ok:
@@ -1499,7 +1616,7 @@ class Brain(threading.Thread):
                     # 가려졌고, 저장물은 눈에 안 띄는 폴더로 간다 (9/17 라이브에서 오해 발생).
                     self._say(where(say or "화면을 저장했습니다", p.get("path")))
                     return completed
-                return self._be_down("화면 저장")
+                return self._be_down("화면 저장", err)
             else:  # bbox 없음·비정상 — 어디를 저장할지 못 정했다. 로컬로 대신 저장하지 않는다.
                 print("[bbox] 없음 → 저장 영역을 특정하지 못했다")
                 log_save(t_utter, "none", result, screen=full_img.size if full_img else None)
@@ -1516,7 +1633,7 @@ class Brain(threading.Thread):
 
     def _media(self, key, say="", hwnd=0, level=None):
         if key == "volset":  # 절대값은 BE 전용(volume.set) — 로컬 키 입력으론 현재 값을 모른다
-            if level is not None and self._try_be("volume.set", {"level": int(level)}, say):
+            if level is not None and self._try_be("volume.set", {"level": int(level)}, say)[0]:
                 return True
             self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
             return False
@@ -1529,12 +1646,14 @@ class Brain(threading.Thread):
             ref = self._win_ref(hwnd) if hwnd else None
             if ref:
                 args["winRef"] = ref
-            if self._try_be("media.seek", args, say):
+            seeked, _, err = self._try_be("media.seek", args, say)
+            if seeked:
                 return True
-            return bool(self._be_down("영상 이동"))
+            return bool(self._be_down("영상 이동", err))
         # 미디어/볼륨은 MCP 도구로 나간다 (유튜브 여부는 BE 가 포그라운드로 판별).
         tool = MEDIA_MCP.get(key)
-        if tool and self._try_be(tool[0], tool[1], say):
+        played, _, err = self._try_be(tool[0], tool[1], say) if tool else (False, None, None)
+        if played:
             return True
-        self._be_down("미디어 제어")
+        self._be_down("미디어 제어", err)
         return False

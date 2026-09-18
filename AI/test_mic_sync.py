@@ -10,7 +10,7 @@ from unittest.mock import patch
 import numpy as np
 
 from be_link import AgentLink
-from brain import Brain, SpeakerAccum
+from brain import Brain, Pending, SpeakerAccum
 from voice import BLOCK, SR, VoiceListener, _wasapi_dlls, resolve_input_device
 
 
@@ -258,7 +258,7 @@ def test_overflow_preserves_completed_audio():
     brain._audio_lock = threading.RLock()
     brain._audio_generation, brain._audio_since = 0, 0
     brain.queue = [("완성된 발화", "화면 캡처")]
-    brain._pending = ("창을 닫을까요?",)
+    brain._pending = Pending("창을 닫을까요?", "window_close", 1e9, 0, (0.0, {}), 0.0, 0)
     brain._accum = SpeakerAccum()
     accum = brain._accum
     events = collections.deque([("utter", 0, np.ones(BLOCK, dtype=np.int16))])
@@ -279,7 +279,7 @@ def test_overflow_preserves_completed_audio():
             assert not listener.seg.recording and not listener.seg._buf
             assert listener._generation == brain._audio_generation == 0
             assert brain.queue == [("완성된 발화", "화면 캡처")]
-            assert brain._pending == ("창을 닫을까요?",) and brain._accum is accum
+            assert brain._pending.q == "창을 닫을까요?" and brain._accum is accum
             assert len(events) == 1 and events[0][0] == "utter"
             # 연속 오버플로에서 로그가 쏟아지지 않는다 (장치 이름 같은 다른 줄은 센 적 없다).
             assert sum("오버플로" in str(c) for c in log.call_args_list) == 1
@@ -322,7 +322,7 @@ def test_pending_audio_reset():
     brain._audio_since = 0
     brain._client = object()
     brain.queue = [("old audio", "old screen")]
-    brain._pending = ("old confirmation",)
+    brain._pending = Pending("old confirmation", "window_close", 1e9, 0, (0.0, {}), 0.0, 0)
     brain._accum = SpeakerAccum()
     old_accum = brain._accum
     before = time.monotonic()
@@ -367,8 +367,11 @@ def test_inflight_audio_is_not_executed_after_switch():
         brain.queue, brain.busy = [], 0
         brain._pending = brain.speaker = brain.wake = brain.link = None
         brain.wake_template = None
-        # 이 검사의 주제는 입력 전환이다 — 호출어 판정을 타지 않도록 활성 세션 안에서 돌린다.
-        brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
+        # 이 검사의 주제는 입력 전환이다 — 세션은 BE 소유가 됐으므로(-320) BE 대역 없이는
+        # 세션이 없다. 호출어 판정에 걸리지 않게 게이트만 통과시킨다.
+        brain._accum = SpeakerAccum()
+        brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
         brain._try_router = lambda *_: None
         executed = []
         brain._execute = lambda *args: executed.append(args)
@@ -386,6 +389,7 @@ def test_inflight_audio_is_not_executed_after_switch():
                 brain.run()
             except Done:
                 pass
+        assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"   # run() 은 띄우기만 한다(-320)
         assert len(executed) == int(not switch) and brain.busy == 0
 
 
@@ -401,7 +405,11 @@ def test_slow_execution_does_not_block_audio():
     brain.queue, brain.busy = [], 0
     brain._pending = brain.speaker = brain.wake = brain.link = None
     brain.wake_template = None
-    brain._accum, brain.session_until = SpeakerAccum(), time.monotonic() + 60
+    brain._accum = SpeakerAccum()
+    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    # 세션은 BE 소유가 됐다(-320). BE 대역이 없으면 세션도 없어 모든 발화가 호출어 게이트를
+    # 탄다 — 이 테스트의 관심사는 '입력이 바뀌면 진행 중 발화를 실행하지 않는다' 라 게이트는 통과시킨다.
+    brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
     brain._try_router = lambda *_: {"action": "test"}
     listener = VoiceListener(collections.deque(), on_reset=brain.reset_audio)
     started, release, completed = threading.Event(), threading.Event(), threading.Event()
@@ -410,14 +418,17 @@ def test_slow_execution_does_not_block_audio():
     def execute(*_):
         started.set()
         release.wait(3)  # 느린 MCP·파일 작업을 재현한다.
-        brain._pending = ("이전 액션의 확인 질문",)  # 입력 전환 뒤 늦게 도착한 결과도 재사용하면 안 된다.
-        raise Done
+        # 입력 전환 뒤 늦게 도착한 결과가 만든 확인 대기 — generation 0 은 이 스레드 것이다.
+        brain._pending = Pending("이전 액션의 확인 질문", "window_close",
+                                 time.monotonic() + 12, 0, (0.0, {}), time.monotonic(), 0)
 
     def run():
-        try:
-            brain.run()
-        except Done:
-            pass
+        # -320 이후 run() 은 발화를 스레드에 넘기고 곧장 돌아온다. 큐가 비면 sleep 에서 Done.
+        with patch("brain.time.sleep", side_effect=Done):
+            try:
+                brain.run()
+            except Done:
+                pass
 
     def receive():
         try:
@@ -448,6 +459,7 @@ def test_slow_execution_does_not_block_audio():
             if receiver.ident is not None:
                 receiver.join(3)
         assert not worker.is_alive() and not receiver.is_alive()
+        assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"
         assert brain._pending is None
 
 
