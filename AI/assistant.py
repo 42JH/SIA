@@ -416,6 +416,11 @@ def main():
                         link.voice.on_finalize(data.get("tempId"))
                     elif event_type == "voice_reg_cancel" and link.voice:
                         link.voice.on_cancel(data.get("tempId"))
+                    elif event_type == "wakeword_enroll_cancel" and link.wake:
+                        # BE -315. 안 접으면 아래 라우팅이 모든 발화를 등록 샘플로 먹어
+                        # 음성 명령이 통째로 죽는다. 방치 타임아웃은 그대로 안전망으로 남긴다
+                        # (FE 탭이 그냥 닫히면 BE 도 취소를 못 보낸다).
+                        link.wake.cancel()
                     elif event_type == "voice_registered" and link.voice:
                         link.voice.on_registered(data.get("id"), data.get("active"))
                     elif event_type == "model_load":
