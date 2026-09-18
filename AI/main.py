@@ -37,7 +37,7 @@ import numpy as np
 from gaze import Calibrator, ClickRecal, GazeBuffer, make_engine
 from hands import GestureEngine, GestureStable, HoldToggle, OneEuro, PinchFSM
 
-HERE = Path(__file__).parent
+from paths import asset_path, data_path
 
 # --- 튜닝 노브 (환경마다 손맛이 다르니 여기서 조정) ---
 DRAG_GAIN = 2.2        # 손 이동 → 커서 이동 배율 (에어 트랙패드)
@@ -232,8 +232,8 @@ class GazeWorker(threading.Thread):
 
 def run_check(camera_idx):
     """환경 점검: 모델 로드 + 카메라 + 파이프라인별 fps. 마우스는 건드리지 않는다."""
-    face = make_engine(HERE / "models")
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    face = make_engine(asset_path("models"))
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     cap = open_camera(camera_idx)
     n = 40
     face_hit = hand_hit = 0
@@ -261,12 +261,12 @@ def run_check(camera_idx):
 def run_gaze_test(camera):
     """시선만 따로 검증하는 전체화면 모드: 화면을 보면 점이 따라오는지 눈으로 확인.
     회색 점 = 실시간 추정(원래 떨림), 원 = fixation(초록=확정). 마우스는 안 건드린다."""
-    calib_path = HERE / "models" / "calib.npz"
+    calib_path = data_path("models", "calib.npz")
     if not calib_path.exists():
         sys.exit("캘리브레이션이 없습니다. 먼저:  python calibrate.py")
     calib = Calibrator.load(calib_path)
     sw, sh = calib.screen
-    face = make_engine(HERE / "models")
+    face = make_engine(asset_path("models"))
     if calib.W.shape[0] != 1 + face.dim + face.dim * (face.dim + 1) // 2:
         sys.exit("특징 차원이 바뀌었습니다(딥 모델 on/off) → 먼저:  python calibrate.py")
     buffer = GazeBuffer()
@@ -330,7 +330,7 @@ def main():
     mouse = Mouse(enabled=not args.no_mouse)
     screen = tuple(mouse.pg.size())
 
-    calib_path = HERE / "models" / "calib.npz"
+    calib_path = data_path("models", "calib.npz")
     calib = None
     if calib_path.exists():
         try:
@@ -344,11 +344,11 @@ def main():
     if calib is None:
         print("시선 워프 비활성 (핀치는 현재 커서 위치에서 동작). 시선을 쓰려면: python calibrate.py")
 
-    face = make_engine(HERE / "models")
+    face = make_engine(asset_path("models"))
     if calib is not None and calib.W.shape[0] != 1 + face.dim + face.dim * (face.dim + 1) // 2:
         print("특징 차원이 바뀜(딥 모델 on/off) → 시선 비활성. calibrate.py를 다시 실행하세요.")
         calib = None
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     buffer = GazeBuffer()
     pinch = PinchFSM()
     clutch = HoldToggle(hold_s=0.6, cooldown_s=1.5)
@@ -368,7 +368,7 @@ def main():
             try:
                 from pynput import mouse as pmouse
 
-                recal = ClickRecal(calib, calib_path, HERE / "models" / "clicks.npz")
+                recal = ClickRecal(calib, calib_path, data_path("models", "clicks.npz"))
 
                 def on_click(x, y, button, pressed):
                     if pressed and button == pmouse.Button.left:

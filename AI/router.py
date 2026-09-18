@@ -180,14 +180,23 @@ class Router:
         self.device, self.compute = STT_DEVICE, STT_COMPUTE
         try:
             if STT_DEVICE.startswith("cuda"):
-                import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
-            self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+                import torch  # noqa: F401 — CUDA 빌드 torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
+            m = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+            if STT_DEVICE.startswith("cuda"):
+                # cuBLAS·cuDNN 은 모델 생성이 아니라 첫 연산에서 로드된다 — 생성만 보고 GPU 를 채택하면
+                # CPU 전용 torch 환경에서 발화마다 "cublas64_12.dll is not found" 로 죽고, self._model 이
+                # 이미 차 있어 아래 CPU 폴백이 영영 안 탄다(9/18 팀원 전원 재현: GPU 는 4050~4070 로 멀쩡한데
+                # requirements.txt 의 torch==2.11.0 이 PyPI 윈도우 휠이라 CPU 전용이었다).
+                import numpy as np
+
+                list(m.transcribe(np.zeros(4000, np.float32), language="ko", beam_size=1)[0])
+            self._model = m
         except Exception as e:
             if not STT_DEVICE.startswith("cuda"):
                 raise
-            # GPU 는 보이는데 로드가 실패하는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
+            # GPU 는 보이는데 쓸 수 없는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
             # 재시도 대신 CPU small 로 한 번에 내려간다. 팀원 노트북 셋업 차이를 여기서 흡수.
-            print(f"STT GPU 로드 실패 → CPU 폴백: {str(e)[:120]}")
+            print(f"STT GPU 사용 불가 → CPU 폴백: {str(e)[:120]}")
             self.device, self.compute = "cpu", "int8"
             self._model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
         print(f"STT 모델 로드 ({MODEL_NAME}, {self.device}/{self.compute}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
@@ -356,6 +365,35 @@ def selftest():
     assert r.prompt == STT_PROMPT and (STT_PROMPT_FIXED or r.prompt == DEFAULT_PROMPT)   # "시아야"면 글자까지 그대로
     assert r.wakes == WAKE_VARIANTS["시아야"]
     r.set_wake("  "); assert r.word == "시아야" and r.route("계산기 열어줘", False) is None  # 빈 호출어는 무시 — 모든 문장이 호출이 되면 안 된다
+
+    # GPU 채택 판정: 생성이 아니라 "첫 연산까지" 통과해야 한다. cuBLAS 는 지연 로드라
+    # 생성은 DLL 이 없어도 늘 성공하고, 그때 GPU 를 채택해 버리면 폴백이 영영 안 탄다(9/18).
+    class _FakeWhisper:
+        broken_gpu = True  # cuda 일 때만 첫 연산에서 터진다 — 실제 cuBLAS 누락과 같은 모양
+
+        def __init__(self, name, device="cpu", compute_type="int8"):
+            self.device = device
+
+        def transcribe(self, *a, **k):
+            if self.device.startswith("cuda") and _FakeWhisper.broken_gpu:
+                raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+            return iter(()), None
+
+    g = globals()
+    saved = (g["STT_DEVICE"], g["STT_COMPUTE"])
+    try:
+        g["STT_DEVICE"], g["STT_COMPUTE"] = "cuda", "float16"
+        broken = Router("시아야")
+        broken._load(_FakeWhisper)
+        assert (broken.device, broken.compute) == ("cpu", "int8"), (broken.device, broken.compute)
+        assert broken._model.device == "cpu"          # 폴백 모델로 교체됐다 (망가진 cuda 모델을 들고 있지 않다)
+        _FakeWhisper.broken_gpu = False
+        good = Router("시아야")
+        good._load(_FakeWhisper)
+        assert (good.device, good.compute) == ("cuda", "float16"), (good.device, good.compute)
+    finally:
+        _FakeWhisper.broken_gpu = True
+        g["STT_DEVICE"], g["STT_COMPUTE"] = saved
     print("selftest ok")
 
 

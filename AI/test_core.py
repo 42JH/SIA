@@ -1879,6 +1879,54 @@ def test_inflight_cap_waits_for_one_slot_not_everyone():
         assert b._drain(5)
 
 
+def test_user_data_survives_a_frozen_restart():
+    """얼렸을 때 사용자 데이터가 임시 추출 폴더로 가지 않는다 (PyInstaller onefile).
+
+    onefile 은 매 실행마다 새 임시 폴더에 풀고 끝나면 지운다. `Path(__file__).parent` 는
+    그 폴더를 가리키므로, 온보딩이 쓰는 wake/speaker/calib npz 를 거기 두면 앱을 끌 때
+    같이 사라진다 — 켤 때마다 온보딩을 다시 해야 한다. 자산은 거기서 읽는 게 맞고(번들이
+    거기로 풀린다) 사용자 데이터만 %APPDATA%\SIA 로 나간다.
+    """
+    import io as _io
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    import paths
+
+    root = Path(paths.__file__).resolve().parent
+
+    # 소스 실행이면 지금까지와 같은 자리 — 개발 흐름도 기존 npz 위치도 그대로다
+    assert paths.resolve_data_dir() == root
+
+    # 얼린 상태: 자산은 _MEIPASS, 사용자 데이터는 %APPDATA%\SIA (BE 와 같은 루트)
+    sys.frozen = True
+    try:
+        d = paths.resolve_data_dir()
+        assert "SIA" in str(d), d
+        assert d != root, "얼렸는데 데이터가 아직 코드 옆이다"
+        assert not str(d).startswith(tempfile.gettempdir()), f"임시 폴더에 쓴다: {d}"
+    finally:
+        del sys.frozen
+
+    # SIA_DATA_DIR 로 덮어쓸 수 있어야 한다 — 얼리지 않고도 그 경로를 밟아 본다
+    import os as _os
+    with tempfile.TemporaryDirectory() as tmp:
+        _os.environ["SIA_DATA_DIR"] = tmp
+        try:
+            assert paths.resolve_data_dir() == Path(tmp)
+        finally:
+            del _os.environ["SIA_DATA_DIR"]
+
+    # 런타임 모듈이 다시 자기 폴더를 잡으면 안 된다 — 이게 원래 결함이었다
+    for name in ("brain.py", "assistant.py", "voice_enroll.py", "calibrate.py",
+                 "main.py", "gesture_studio.py", "eval_prompt.py"):
+        src = _io.open(root / name, encoding="utf-8").read()
+        assert "Path(__file__).parent" not in src, (
+            f"{name} 이 다시 Path(__file__).parent 로 경로를 잡는다 — "
+            "얼리면 매 실행 지워지는 임시 폴더를 가리킨다")
+
+
 def test_session_is_be_owned():
     """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
 
@@ -2005,8 +2053,12 @@ def test_mic_preview():
 
 
 def test_llm_retry():
-    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
-    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 백오프 후.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다.
+
+    즉시 한 번만 재시도하면 같은 과부하 구간에 그대로 부딪힌다(9/18 실측: 503 두 번 연속으로
+    명령 소실). 회귀 지점은 셋 — 백오프가 실제로 들어가는가, 키 전환 뒤에도 재시도 기회가
+    남는가, 예산을 넘기면 멈추는가."""
     from unittest.mock import patch
 
     import brain
@@ -2040,17 +2092,51 @@ def test_llm_retry():
         resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
         assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
-        c0.errors = [Exception("503 UNAVAILABLE")]
-        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
-        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+        with patch("brain.time.sleep") as slept:               # 503 → 같은 키로 백오프 후 재시도
+            c0 = FakeClient([Exception("503 UNAVAILABLE")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+            # 즉시 재시도는 같은 과부하에 그대로 부딪힌다 — 실제로 쉬어야 한다.
+            assert slept.call_args_list[0][0][0] == brain.TRANSIENT_BACKOFF_S[0], slept.call_args_list
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
-        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
-            brain.llm_generate(c0, ["p"], ["k1"], 0)
-            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
-        except Exception as e:
-            assert "503" in str(e)
+        with patch("brain.time.sleep") as slept:                # 백오프는 점점 길어진다
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 3)
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            waits = [a[0][0] for a in slept.call_args_list]
+            assert resp == "OK" and tries == 4, (tries, waits)
+            assert waits == list(brain.TRANSIENT_BACKOFF_S), waits
+
+        with patch("brain.time.sleep"):                         # 횟수를 다 쓰면 올린다 (무한 재시도 금지)
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 9)
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("재시도 한도를 넘긴 일시 장애는 올라와야 한다")
+            except Exception as e:
+                assert "503" in str(e)
+            assert c0.calls == len(brain.TRANSIENT_BACKOFF_S) + 1, c0.calls
+
+        # 키 전환 뒤 처음 만난 503 도 재시도 대상 — 예전엔 플래그가 남아 그대로 실패했다.
+        with patch("brain.time.sleep"):
+            plan = [[Exception("503 UNAVAILABLE")]]             # k2 클라이언트가 503 한 번
+            c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+            assert resp == "OK" and ki == 1 and tries == 3, (ki, tries)
+
+        # 예산을 넘기면 남은 횟수가 있어도 멈춘다 (타임아웃이 15초씩 먹는 경우).
+        with patch("brain.time.sleep"), patch.object(brain, "TRANSIENT_BUDGET_S", 0.1):
+            c0 = FakeClient([Exception("504 DEADLINE_EXCEEDED")])
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("예산을 넘기면 재시도하지 않는다")
+            except Exception as e:
+                assert "504" in str(e)
+            assert c0.calls == 1, c0.calls
+
+    # 사용자에게는 서버 원문 대신 행동 지침을 준다 — 데모 화면에 JSON 이 뜨면 안 된다.
+    msg = brain.friendly_error(Exception("503 UNAVAILABLE. {'error': {'code': 503}}"))
+    assert "503" not in msg and "혼잡" in msg, msg
+    assert "가득" in brain.friendly_error(Exception("429 RESOURCE_EXHAUSTED"))
+    assert "400" in brain.friendly_error(Exception("400 INVALID_ARGUMENT"))   # 모르는 건 원문 그대로
 
     assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
     assert brain.is_transient_error(Exception("Read timed out"))
@@ -2416,6 +2502,7 @@ if __name__ == "__main__":
     test_mcp_delegation()
     test_llm_retry()
     test_session_is_be_owned()
+    test_user_data_survives_a_frozen_restart()
     test_be_results_do_not_leak_between_threads()
     test_tier1_does_not_queue_behind_llm()
     test_inflight_cap_waits_for_one_slot_not_everyone()
@@ -2429,4 +2516,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 49/49 통과")
+    print("OK - 50/50 통과")
