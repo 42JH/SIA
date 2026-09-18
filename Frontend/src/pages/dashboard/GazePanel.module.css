@@ -1,16 +1,16 @@
 :global(:root) { --gaze-navy: #071f45; --gaze-deep: #071a37; --gaze-blue: #4f7bd0; --gaze-line: #5f8ee8; --gaze-soft: #c8d9f2; --gaze-copy: #527fc9; }
 
-.gazePage { display: grid; min-height: calc(100vh - 112px); gap: 20px; margin-top: -34px; color: var(--gaze-navy); }
-.gazeHero { position: relative; display: grid; height: 154px; grid-template-columns: minmax(410px, 38%) 1fr 136px; align-items: center; }
+.gazePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; color: var(--gaze-navy); }
+.gazeHero { position: relative; display: grid; min-height: 52px; height: 52px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; }
 .heroTitle { display: flex; align-items: center; gap: 12px; }
 .heroTitle button { width: 38px; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 38px; font-weight: 300; line-height: 1; cursor: pointer; }
-.gazeHero h1 { margin: 0; font-size: 34px; font-weight: 900; line-height: 1.05; letter-spacing: -.055em; }
+.gazeHero h1 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -.055em; }
 .gazeHero p { margin: 12px 0 0 50px; color: var(--gaze-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
-.circuit { width: 100%; height: 116px; overflow: visible; fill: white; stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit { width: 100%; height: 52px; overflow: visible; fill: white; stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--gaze-blue); }
 .circuit circle { stroke-width: 2.4; }
-.heroRadar { width: 118px; height: 118px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
+.heroRadar { width: 52px; height: 52px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
 .heroRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
 .heroRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
 .heroRadar .radarCenter { fill: var(--gaze-blue); stroke: none; }
@@ -95,13 +95,11 @@ button:disabled { cursor: default; opacity: .45; }
 
 @media (min-width: 1001px) and (max-height: 800px) {
   .gazePage { gap: 12px; }
-  .gazeHero { height: 120px; grid-template-columns: minmax(380px, 38%) 1fr 104px; }
-  .heroRadar { width: 92px; height: 92px; }
   .calibrationGrid { min-height: calc(100vh - 330px); }
   .activePanel { padding-top: 26px; padding-bottom: 20px; }
   .activeRadar { min-height: 190px; }
   .radar { width: min(215px, 62%); height: min(215px, 62%); }
   .bottomBar { min-height: 62px; }
 }
-@media (max-width: 1000px) { .gazeHero { grid-template-columns: 1fr 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
-@media (max-width: 680px) { .gazeHero { grid-template-columns: 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }
+@media (max-width: 1000px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
+@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }

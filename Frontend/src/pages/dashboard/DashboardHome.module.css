@@ -1,6 +1,5 @@
 .page { position: relative; min-height: 100vh; overflow-x: hidden; background: radial-gradient(circle at 72% 13%, rgb(112 161 216 / 10%) 0 1px, transparent 2px), radial-gradient(circle at 72% 13%, transparent 0 72px, rgb(100 149 204 / 10%) 73px 74px, transparent 75px 99px, rgb(100 149 204 / 8%) 100px 101px, transparent 102px), linear-gradient(135deg, #fbfdff, var(--sia-page)); color: var(--sia-ink); font-family: Pretendard, "Noto Sans KR", sans-serif; }
 .header { position: sticky; z-index: 20; top: 0; display: grid; height: 54px; grid-template-columns: 190px 1fr 52px; align-items: center; padding: 0 42px; border-bottom: 1px solid var(--sia-line); background: rgb(255 255 255 / 92%); backdrop-filter: blur(8px); }
-.header::before { position: absolute; bottom: -17px; left: 0; width: 238px; height: 17px; border-top: 1px solid var(--sia-line); background: var(--sia-page); clip-path: polygon(0 0, 91% 0, 98% 100%, 8% 100%); content: ""; }
 .header::after { position: absolute; right: 80px; bottom: -1px; width: 380px; height: 1px; background: linear-gradient(90deg, transparent, var(--sia-line)); content: ""; }
 .brand { position: relative; z-index: 1; width: 96px; height: 38px; padding: 5px 0; border: 0; background: transparent; cursor: pointer; }
 .brand img { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -41,7 +40,8 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .cardLabel p { margin: 6px 0 0; color: var(--sia-pale); font-size: 12px; }
 .overviewBars { position: absolute; right: 38px; bottom: 28px; left: 38px; display: flex; height: calc(100% - 134px); min-height: 120px; align-items: stretch; gap: clamp(12px, 2.1vw, 36px); padding: 20px 15px 0; border-bottom: 1px solid rgb(151 189 229 / 48%); background: repeating-linear-gradient(to bottom, transparent 0 calc(33.333% - 1px), rgb(151 189 229 / 17%) calc(33.333% - 1px) 33.333%); }
 .overviewBars span { display: flex; height: 100%; min-width: 0; flex: 1; flex-direction: column; align-items: center; justify-content: flex-end; }
-.overviewBars i { display: block; width: min(58px, 72%); min-height: 10px; background: linear-gradient(#e5effd, #7898c5); box-shadow: 0 0 18px rgb(120 180 235 / 23%); }
+.overviewBars i { display: block; width: min(58px, 72%); min-height: 0; background: linear-gradient(#e5effd, #7898c5); box-shadow: 0 0 18px rgb(120 180 235 / 23%); }
+.overviewBars .emptyBar { min-height: 0; background: none; box-shadow: none; }
 .overviewBars small { margin: 8px 0 -21px; color: var(--sia-pale); font-size: 11px; }
 .accuracyRings { display: grid; height: calc(100% - 42px); grid-template-columns: repeat(2, 1fr); align-items: center; margin-top: 5px; }
 .accuracyRings span { display: grid; height: 82%; align-content: center; justify-items: center; gap: 8px; border-right: 1px solid var(--sia-soft-line); }
@@ -113,16 +113,16 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 .summaryCards .summaryAccent small, .summaryCards .summaryAccent strong { color: white; }
 .summaryCards .summaryAccent svg { stroke: #b9d1ef; }
 .empty { width: 100%; margin: auto; padding: 42px; color: var(--sia-muted); text-align: center; }
-.panelHeading { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-.panelHeading button { border: 0; background: transparent; color: var(--sia-navy); font-size: 38px; }
-.panelHeading h1 { margin: 0; font-size: 34px; }
-.view_gestures .panelHeading { min-height: 52px; padding-right: min(560px, 52%); }
+.panelHeading { display: flex; align-items: center; gap: 12px; min-height: 52px; margin-bottom: 28px; }
+.panelHeading button { width: 38px; padding: 0; border: 0; background: transparent; color: var(--sia-navy); font-size: 38px; font-weight: 300; line-height: 1; cursor: pointer; }
+.panelHeading h1 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -.055em; }
+.view_gestures .panelHeading { padding-right: min(560px, 52%); }
 
 .view_settings { background: linear-gradient(135deg, #fbfdff, var(--sia-page)); }
 .view_settings .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
-.settings { position: relative; display: grid; height: calc(100vh - 132px); min-height: 650px; box-sizing: border-box; grid-template-columns: 1fr 1fr; align-content: start; column-gap: 54px; padding: 142px 38px 30px 29%; border: 1px solid var(--sia-soft-line); background: rgb(255 255 255 / 88%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.settings::before { position: absolute; z-index: 2; top: 38px; left: 29%; color: var(--sia-navy); font-size: clamp(34px, 3vw, 48px); font-weight: 800; content: "설정"; }
-.settings::after { position: absolute; z-index: 1; top: 128px; right: 38px; left: 29%; height: 1px; background: var(--sia-soft-line); content: ""; }
+.settings { position: relative; display: grid; height: calc(100vh - 192px); min-height: 560px; box-sizing: border-box; grid-template-columns: 1fr 1fr; align-content: start; column-gap: 54px; padding: 56px 38px 30px 29%; border: 1px solid var(--sia-soft-line); background: rgb(255 255 255 / 88%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.settings::before { content: none; }
+.settings::after { position: absolute; z-index: 1; top: 42px; right: 38px; left: 29%; height: 1px; background: var(--sia-soft-line); content: ""; }
 .settingsCorner { position: absolute; z-index: 4; top: -18px; right: -1px; width: min(24%, 280px); height: 92px; overflow: visible; pointer-events: none; }
 .settingsCorner path:not(.cornerWedge) { fill: none; stroke: #8ca5cc; stroke-linecap: square; stroke-linejoin: miter; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .settingsCorner .cornerUpper { opacity: .52; }
@@ -197,5 +197,5 @@ button.dashboardCard { display: block; width: 100%; font: inherit; cursor: point
 @keyframes scannerWavePulse { 0% { opacity: .58; transform: scaleY(.62); } 100% { opacity: 1; transform: scaleY(1.2); } }
 @media (prefers-reduced-motion: reduce) { .visualOrbit::before, .visualOrbit::after, .visualOrbit i, .visualWave i, .scannerMiddle, .scannerInner, .scannerSphere, .scannerWave line { animation: none; } }
 
-@media (max-width: 1000px) { .page::after { display: none; } .content { width: min(100% - 32px, 850px); } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto 150px; } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 34px 1fr; } .periods { grid-column: 1 / -1; width: 100%; margin-top: 22px; } .summaryCards { grid-template-columns: 1fr; } .settings { grid-template-columns: 1fr; padding-top: 340px; padding-left: 34px; } .settings::before { top: 292px; left: 34px; } .settingsVisual { width: 100%; height: 270px; } .visualOrbit { top: 35px; } .visualWave { right: calc(50% - 120px); bottom: 15px; left: calc(50% - 120px); } .wakeRow, .deviceRow { grid-column: 1; } }
+@media (max-width: 1000px) { .page::after { display: none; } .content { width: min(100% - 32px, 850px); } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto 150px; } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 34px 1fr; } .periods { grid-column: 1 / -1; width: 100%; margin-top: 22px; } .summaryCards { grid-template-columns: 1fr; } .settings { grid-template-columns: 1fr; padding-top: 286px; padding-left: 34px; } .settings::after { top: 278px; left: 34px; } .settingsVisual { width: 100%; height: 270px; } .visualOrbit { top: 35px; } .visualWave { right: calc(50% - 120px); bottom: 15px; left: calc(50% - 120px); } .wakeRow, .deviceRow { grid-column: 1; } }
 @media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview span { grid-template-columns: 24px 90px 1fr; } .appsOverview span > strong { display: none; } .largeCard { height: 370px; padding: 22px 16px; } .legend { margin: 16px 0 0; justify-content: flex-start; flex-wrap: wrap; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 54px 24px 28px; } }

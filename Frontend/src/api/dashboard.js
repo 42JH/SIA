@@ -10,7 +10,7 @@ async function get(path, params) {
 }
 
 export const fetchDashboardOverview = () => get('/api/dashboard/overview');
-export const fetchDashboardAccuracy = (period) => get('/api/dashboard/accuracy', { period });
-export const fetchDashboardLatency = (period) => get('/api/dashboard/latency', { period });
-export const fetchDashboardUsage = (period) => get('/api/dashboard/usage', { period });
-export const fetchDashboardApps = (period) => get('/api/dashboard/apps', { period, limit: 10 });
+export const fetchDashboardAccuracy = (period, extra = {}) => get('/api/dashboard/accuracy', { period, ...extra });
+export const fetchDashboardLatency = (period, extra = {}) => get('/api/dashboard/latency', { period, ...extra });
+export const fetchDashboardUsage = (period, extra = {}) => get('/api/dashboard/usage', { period, ...extra });
+export const fetchDashboardApps = (period, extra = {}) => get('/api/dashboard/apps', { period, limit: 10, ...extra });

@@ -17,6 +17,16 @@ import styles from './OnboardingHome.module.css';
 
 import { ENROLLMENT_SENTENCES as sentences } from './enrollmentConstants';
 
+const GRADE_EXCELLENT_PX = 160;
+const GRADE_GOOD_PX = 250;
+
+function precheckLabel(value, okWhen) {
+  if (value == null || value === '-') return '확인 중';
+  if (okWhen(value)) return '✓';
+  if (typeof value === 'string' && value !== 'ok') return value;
+  return '확인 필요';
+}
+
 const ORB_POINTS = Array.from({ length: 170 }, (_, index) => {
   const y = 1 - (index / 169) * 2;
   const radius = Math.sqrt(Math.max(0, 1 - y * y));
@@ -241,9 +251,8 @@ function CameraPositionPreview({ precheck }) {
     {!hasFrame && <span className={styles.cameraWaiting}>{ready ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}
     <div className={styles.cameraShade} />
     <span className={styles.cameraLive}>● CAMERA LIVE</span>
-    <div className={styles.personGuide}><i /><b /></div>
-    <p>머리와 어깨가 가이드 안에 들어오도록 맞춰주세요.</p>
-    <small>얼굴 {precheck ? (precheck.face ? '✓' : '확인 필요') : '확인 중'} · 거리 {precheck?.distance === 'ok' ? '✓' : '확인 필요'} · 조명 {precheck?.lighting === 'ok' ? '✓' : '확인 필요'}</small>
+    <p>화면 중앙에 바른 자세로 앉아주세요.</p>
+    <small>얼굴 {precheckLabel(precheck?.face, (value) => value === true)} · 거리 {precheckLabel(precheck?.distance, (value) => value === 'ok')} · 조명 {precheckLabel(precheck?.lighting, (value) => value === 'ok')}</small>
     {cameraError && <em className={styles.cameraError} role="alert">{cameraError}</em>}
   </div>;
 }
@@ -409,11 +418,11 @@ export default function OnboardingFlow() {
       const validPosition = Boolean(f.precheck?.face && f.precheck.distance === 'ok' && f.precheck.lighting === 'ok');
       content = <><FrameTitle>위치 확인</FrameTitle>{center(<CameraPositionPreview precheck={f.precheck} />, styles.positionCenter)}{f.gazeDelayed && <p className={styles.inlineNotice} role="status">위치 확인 응답이 지연되고 있습니다. 카메라 설정과 AI 상태를 확인해주세요.</p>}{foot(<>{btn('카메라 설정', cameraSettings, !connected, 'secondary')}{btn('다음', () => go('gazeGuide'), !ready || !validPosition)}</>)}</>; break;
     }
-    case 'gazeGuide': content = <><FrameTitle>시선 측정</FrameTitle>{center(<><div className={styles.guideGraphic}>◎</div><h2>시선 측정을 시작하겠습니다</h2><p>화면에 나타나는 두더지의 코를 바라보면 됩니다.<br />화면과 60~80cm 거리를 유지하고 고개를 크게 움직이지 마세요.</p></>, styles.guideCenter)}{foot(<>{isCameraOnly && btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', pending: false }), !ready, 'secondary')}{btn('시작하기', () => measure(), !ready)}</>)}</>; break;
+    case 'gazeGuide': content = <><FrameTitle>시선 측정</FrameTitle>{center(<><div className={styles.guideGraphic}>◎</div><h2>시선 측정을 시작하겠습니다</h2><p>화면 중앙에 바른 자세로 앉아주세요.<br />너무 멀거나 가깝지 않게, 조명이 너무 어둡거나 밝지 않은 곳에서 고개를 크게 움직이지 마세요.</p></>, styles.guideCenter)}{foot(<>{isCameraOnly && btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', pending: false }), !ready, 'secondary')}{btn('시작하기', () => measure(), !ready)}</>)}</>; break;
     case 'measuring': content = <GazeMeasurement point={f.point} ready={ready} />; break;
     case 'result': {
       const r = f.result;
-      const displayGrade = r.avgErrorPx == null || r.avgErrorPx > 300 ? '인식 불가' : ({ excellent: '우수', good: '양호', poor: '나쁨' }[r.grade] ?? '미제공');
+      const displayGrade = r.avgErrorPx == null ? '미제공' : (({ excellent: '우수', good: '양호', poor: '나쁨' }[r.grade]) ?? (r.avgErrorPx < GRADE_EXCELLENT_PX ? '우수' : r.avgErrorPx < GRADE_GOOD_PX ? '양호' : '나쁨'));
       const poor = r.pass !== true || displayGrade === '나쁨' || displayGrade === '인식 불가';
       const exhausted = poor && (f.poorCount >= 3 || r.remeasuresLeft === 0);
       const errors = (r.points ?? []).map((point) => Math.hypot(Number(point.dx), Number(point.dy))).filter(Number.isFinite);
