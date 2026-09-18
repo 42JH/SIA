@@ -157,6 +157,7 @@ export default function GazeCalibrationPage() {
   }, [connected, flow.step]);
 
   useEffect(() => {
+    if (flow.step === 'measuring') return;
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [flow.step]);
 

@@ -41,6 +41,11 @@ export default function GazeMeasurement({ point, ready }) {
   }, [introDone, point]);
 
   useEffect(() => {
+    if (!introDone) return undefined;
+    if (!document.fullscreenElement) {
+      fail('전체화면이 해제되었습니다. 보정을 다시 시작해주세요.');
+      return undefined;
+    }
     const check = () => { if (!document.fullscreenElement) fail('전체화면이 해제되었습니다. 보정을 다시 시작해주세요.'); };
     let resizeGuardReady = false;
     let measuredWidth = window.innerWidth;
@@ -49,7 +54,7 @@ export default function GazeMeasurement({ point, ready }) {
       measuredWidth = window.innerWidth;
       measuredHeight = window.innerHeight;
       resizeGuardReady = true;
-    }, 1000);
+    }, 1200);
     const resized = () => {
       if (!resizeGuardReady || (window.innerWidth === measuredWidth && window.innerHeight === measuredHeight)) return;
       fail('화면 크기가 변경되었습니다. 보정을 다시 시작해주세요.');
@@ -61,7 +66,7 @@ export default function GazeMeasurement({ point, ready }) {
       document.removeEventListener('fullscreenchange', check);
       window.removeEventListener('resize', resized);
     };
-  }, []);
+  }, [introDone]);
 
   useEffect(() => {
     if (!activePoint || !ready || !document.fullscreenElement || !target.current || sentPoints.current.has(activePoint)) return;
