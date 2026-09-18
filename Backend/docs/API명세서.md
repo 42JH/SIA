@@ -606,7 +606,7 @@ GET /api/gestures?dangling=true
 | `name` | 커스텀만. 같은 (kind, context) 안에서 중복 불가. 바뀌면 AI 에 `gesture_renamed {id, oldName, newName}`. 템플릿 npz 는 그대로다 |
 | `label` · `description` | 커스텀만. 선택 |
 | `repeatable` | 선택. 기본 제공 제스처도 바꿀 수 있다 |
-| `steps` | 최대 5개. 각 단계에 `tool` 필수, `GET /api/tools` 에 있는 이름만. C 도구(`window.close` · `files.delete`) 금지. `[]` 는 기본 제공 제스처에서 기능 해제, 커스텀에서는 400 |
+| `steps` | 개수 상한 없음. 각 단계에 `tool` 필수, `GET /api/tools` 에 있는 이름만. C 도구(`window.close` · `files.delete`) 금지. `[]` 는 기본 제공 제스처에서 기능 해제, 커스텀에서는 400 |
 
 **200** — 수정 직후 단건 (§1.11 형태).
 
@@ -620,9 +620,6 @@ GET /api/gestures?dangling=true
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "매크로에는 최소 한 단계가 필요합니다" }
-```
-```json
-{ "code": "INVALID_REQUEST", "message": "매크로 단계는 최대 5개까지 쌓을 수 있습니다" }
 ```
 ```json
 { "code": "INVALID_REQUEST", "message": "사용자 동의가 필요한 도구는 제스처로 실행할 수 없습니다: window.close" }
@@ -2243,7 +2240,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `context` | string | | 적용 컨텍스트 (`video` · `youtube` 등). 검증 없이 그대로 저장하고, 생략하면 `null`. 재촬영 경로에서는 무시한다 |
 | `description` | string | | 설명 |
 | `repeatable` | boolean | | 생략 시 `false` |
-| `steps` | object[] | 신규 등록 시 O | 1~5개. 순서대로 실행. 재촬영 경로에서는 생략 · `[]` 이면 기존 단계를 유지한다 |
+| `steps` | object[] | 신규 등록 시 O | 최소 1개, 상한 없음. 순서대로 실행. 재촬영 경로에서는 생략 · `[]` 이면 기존 단계를 유지한다 |
 | `steps[].tool` | string | O | `GET /api/tools` 에 있는 이름. `window.close` · `files.delete` 금지 |
 | `steps[].args` | object | | 생략 시 `{}` |
 | `steps[].delayMs` | int | | 그 스텝 실행 전 대기(ms) |
@@ -2273,7 +2270,6 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `진행 중인 제스처 등록이 없습니다. 등록을 다시 시작해 주세요` | `tempId` 가 진행 중 등록과 다르다 |
 | `제스처 템플릿이 아직 도착하지 않았습니다. 잠시 후 다시 시도해 주세요` | AI 의 `PUT /api/agent/gestures/{tempId}/npz` 가 아직 없다 |
 | `매크로에는 최소 한 단계가 필요합니다` | 신규 등록에 `steps` 가 없거나 `[]` |
-| `매크로 단계는 최대 5개까지 쌓을 수 있습니다` | 6개 이상 |
 | `등록되지 않은 도구입니다: <tool>` | `GET /api/tools` 에 없는 이름 |
 | `사용자 동의가 필요한 도구는 제스처로 실행할 수 없습니다: <tool>` | `window.close` · `files.delete` |
 | `기본 제공 제스처와 같은 이름은 쓸 수 없어요: <name>` | 신규 등록의 이름이 기본 제공 제스처와 같다 |
