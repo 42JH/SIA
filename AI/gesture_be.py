@@ -428,6 +428,8 @@ class GestureRegistration:
               f"{hold_label} {self.take_s:g}초)")
 
     def _emit_frame(self, frame, now, force=False):
+        if frame is None:
+            return                          # 카운트다운 tick 은 프레임 없이 올 수 있다 (카메라가 아직 프레임을 못 준 때)
         if not force and now - self.last_frame_at < self.FRAME_INTERVAL_S:
             return
         self.last_frame_at = now
