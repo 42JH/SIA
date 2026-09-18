@@ -19,16 +19,11 @@ from pathlib import Path
 
 from speaker import SpeakerVerifier
 from voice import SR, VadSegmenter
+from voice_bridge import SENTENCES
 
 HERE = Path(__file__).parent
 PROFILE = HERE / "models" / "speaker.npz"
-PHRASES = [
-    "시아야 지금 화면 좀 정리해줘",
-    "오늘 날씨가 참 맑고 좋다",
-    "이 파일을 다른 폴더로 옮겨줄래",
-    "다음 영상으로 넘어가고 음소거 해줘",
-    "안녕하세요 저는 이 컴퓨터의 주인입니다",
-]
+PHRASES = SENTENCES   # 온보딩과 같은 문장을 쓴다 — 사본을 두면 한쪽만 바뀌어 프로필이 서로 달라진다
 
 
 def record_one(prompt_text, min_s=1.5):
