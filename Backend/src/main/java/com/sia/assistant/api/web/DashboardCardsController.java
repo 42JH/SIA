@@ -228,6 +228,8 @@ public class DashboardCardsController {
 
         List<Map<String, Object>> buckets = new ArrayList<>(n);
         long total = 0;
+        long gestureTotal = 0;
+        long voiceTotal = 0;
         int peakIdx = -1;
         long peakCount = 0;
         for (int i = 0; i < n; i++) {
@@ -241,6 +243,8 @@ public class DashboardCardsController {
             row.put("voice", cnt[i][1]);
             buckets.add(row);
             total += c;
+            gestureTotal += cnt[i][0];
+            voiceTotal += cnt[i][1];
             if (c > peakCount) {   // 동률이면 먼저 오는 버킷을 남긴다
                 peakCount = c;
                 peakIdx = i;
@@ -249,6 +253,10 @@ public class DashboardCardsController {
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("total", total);
+        // 내역 합계. 평균과 달리 버킷을 더해도 같은 값이지만(버킷이 기간을 빈틈없이 덮고 겹치지 않는다)
+        // 화면마다 제각기 더하게 두면 합계의 출처가 갈린다 — total 과 같은 곳에서 준다
+        summary.put("gestureTotal", gestureTotal);
+        summary.put("voiceTotal", voiceTotal);
         // ★ 분모는 버킷 수가 아니다 — day 는 버킷 8개지만 "시간당 평균"이라 24 로 나눈다
         summary.put("average", Math.round((double) total / spec.averageDivisor() * 10) / 10.0);
         summary.put("averageUnit", spec.averageUnit());

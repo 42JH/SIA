@@ -878,6 +878,8 @@ GET /api/dashboard/usage?period=day
   ],
   "summary": {
     "total": 51,
+    "gestureTotal": 33,
+    "voiceTotal": 18,
     "average": 2.1,
     "averageUnit": "HOUR",
     "peak": { "key": "2026-08-31T12", "label": "12시", "count": 14 }
@@ -888,9 +890,12 @@ GET /api/dashboard/usage?period=day
 | 필드 | 설명 |
 |---|---|
 | `count` | `gesture + voice` |
+| `gestureTotal` · `voiceTotal` | `total` 을 종류별로 쪼갠 값. 둘을 더하면 `total` 이다 |
 | `average` | `total` 을 아래 분모로 나눈 값 |
 | `averageUnit` | 분모의 단위 |
 | `peak` | 최다 버킷. 동률이면 먼저 오는 버킷. 전 구간 0 이면 `null` |
+
+합계 세 개는 버킷을 더한 값과 같다. 평균은 그렇지 않으므로(버킷마다 표본 수가 다르다) `summary` 를 쓴다.
 
 | `period` | `averageUnit` | 분모 |
 |---|---|:-:|
