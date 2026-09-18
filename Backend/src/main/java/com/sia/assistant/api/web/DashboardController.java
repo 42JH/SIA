@@ -16,13 +16,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 운영 진단용 집계 (GET /api/dashboard/summary, /api/dashboard/timeseries). days 는 1~90 클램프.
- * ★ 와이어프레임에 대응 화면이 없다 — 사용자 대시보드는 DashboardCardsController(§1.15~§1.19)다.
+ * ★ 와이어프레임에 대응 화면이 없다 — 사용자 대시보드는 DashboardCardsController(§1.19~§1.23)다.
  * 이쪽은 도구 게이트·오인식을 들여다보는 용도다.
  * byTool 의 기간 조건은 반드시 LEFT JOIN 의 ON 절에 둔다 — WHERE 로 옮기면
  * 기간 중 안 불린 도구가 결과에서 통째로 사라진다.
  *
  * <p><b>시각 축.</b> /summary 는 "지금부터 days 일 전"까지의 구르는 창이라 타임존과 무관하다.
- * /timeseries 는 날짜 칸을 만들므로 <b>로컬 날짜</b>다 — §1.15~§1.19 카드와 같은 축이다
+ * /timeseries 는 날짜 칸을 만들므로 <b>로컬 날짜</b>다 — §1.19~§1.23 카드와 같은 축이다
  * (UTC 로 자르면 KST 기준 오전 9시에 날짜가 바뀌어 두 화면이 다른 하루를 보여 준다).
  */
 @RestController
@@ -173,7 +173,7 @@ public class DashboardController {
     }
 
     /**
-     * UTC 시각(substr 1~13)으로 모은 뒤 로컬 날짜 칸에 넣는다 — §1.15~§1.19 카드와 같은 방식이다.
+     * UTC 시각(substr 1~13)으로 모은 뒤 로컬 날짜 칸에 넣는다 — §1.19~§1.23 카드와 같은 방식이다.
      * 한 날짜 칸에 UTC 시각이 24개 들어오므로 대입이 아니라 <b>누적</b>이다.
      */
     private void accumulate(long[][] counts, List<DashboardBuckets.Bucket> buckets, ZoneId zone,

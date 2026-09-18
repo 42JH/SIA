@@ -2,22 +2,28 @@ package com.sia.assistant.api.web;
 
 import com.sia.assistant.common.ApiException;
 import com.sia.assistant.common.ErrorCode;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 대시보드 기간(period) → 버킷 축. API.md §1.14 가 계약이다.
+ * 대시보드 기간(period) → 버킷 축. API명세서 §1.18 이 계약이다.
  *
  * <p>★ 축은 <b>로컬 타임존</b>이다. 저장은 전부 UTC 지만 사용자의 "오늘 00시"는 로컬 00시다
  * (UTC 로 그리면 9시간 밀린 하루가 나온다). 여기서만 로컬을 쓰고, 경계는 UTC 문자열로 환산해 바인딩한다.
  *
+ * <p>★ 네 기간 모두 <b>달력</b> 축이다 — 오늘 · 이번 주(월~일) · 이번 달 · 올해다.
+ * 굴러가는 창이 아니라서 아직 오지 않은 칸이 생기는데, 그 칸도 개수 0 · 평균 null 로 남긴다
+ * (day 가 예전부터 그랬던 것과 같은 규칙이다).
+ *
  * <p>네 기간 모두 <b>원본</b>(usage_event · tool_call)에서 집계한다 — 보존이 400일이라
- * 가장 긴 축(12개월)까지 원본이 살아 있다. 집계 테이블도 롤업 배치도 없다.
+ * 가장 긴 축(올해 1월 1일)까지 원본이 살아 있다. 집계 테이블도 롤업 배치도 없다.
  */
 public final class DashboardBuckets {
 
@@ -28,8 +34,9 @@ public final class DashboardBuckets {
     /**
      * 한 기간의 축 전체.
      *
-     * @param averageDivisor 사용량 카드의 "평균" 분모. ★ 버킷 수가 아니다 —
-     *                       day 는 버킷이 8개지만 "시간당 평균"이라 24 로 나눈다 (§1.18).
+     * @param averageDivisor 사용량 카드의 "평균" 분모. ★ 버킷 수라고 넘겨짚으면 안 된다 —
+     *                       day 는 버킷이 8개지만 "시간당 평균"이라 24 로 나눈다 (§1.22).
+     *                       week 은 7, year 는 12, month 만 칸 수(4~6)와 같다.
      */
     public record Spec(String period, String bucketUnit, List<Bucket> buckets,
                        String averageUnit, int averageDivisor) {
@@ -50,11 +57,18 @@ public final class DashboardBuckets {
 
     /**
      * @param period day | week | month | year. 그 밖의 값은 <b>클램프하지 않고</b> 400 이다 —
-     *               열거값의 오타는 드러나야 한다 (§1.14).
+     *               열거값의 오타는 드러나야 한다 (§1.18).
      */
     public static Spec of(String period, ZoneId zone) {
+        return of(period, ZonedDateTime.now(zone));
+    }
+
+    /**
+     * 시계를 직접 받는 형태. 축이 <b>실행 날짜</b>에 따라 달라지므로
+     * (월요일이냐, 달의 며칠이냐) 테스트가 임의의 날짜를 재현할 수 있어야 한다.
+     */
+    static Spec of(String period, ZonedDateTime now) {
         String p = period == null || period.isBlank() ? "day" : period.trim();
-        ZonedDateTime now = ZonedDateTime.now(zone);
         return switch (p) {
             case "day" -> day(now);
             case "week" -> week(now);
@@ -79,48 +93,55 @@ public final class DashboardBuckets {
         return new Spec("day", "HOUR_3", buckets, "HOUR", 24);
     }
 
-    /** 오늘 포함 최근 7일, 하루 한 칸. 라벨은 요일. */
+    /** 이번 주 월요일 00:00 부터 일요일까지 하루 한 칸, 7칸. 라벨은 요일. */
     private static Spec week(ZonedDateTime now) {
-        LocalDate today = now.toLocalDate();
+        LocalDate monday = now.toLocalDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         List<Bucket> buckets = new ArrayList<>(7);
-        for (int i = 6; i >= 0; i--) {
-            LocalDate d = today.minusDays(i);
+        for (int i = 0; i < 7; i++) {
+            LocalDate d = monday.plusDays(i);
             ZonedDateTime start = d.atStartOfDay(now.getZone());
-            buckets.add(new Bucket(d.toString(),
-                    WEEKDAY[d.getDayOfWeek().getValue() - 1],
-                    start, start.plusDays(1)));
+            buckets.add(new Bucket(d.toString(), WEEKDAY[i], start, start.plusDays(1)));
         }
         return new Spec("week", "DAY", buckets, "DAY", 7);
     }
 
     /**
-     * 오늘부터 7일씩 거슬러 5칸 — <b>가장 최근 7일이 5주차</b>다.
-     * 달력 주(월요일 시작)가 아니라 굴러가는 7일이다: 주 시작 요일을 무엇으로 잡든
-     * 첫 칸이 잘려 "1주차"만 표본이 적어지는 문제가 생기는데, 그걸 피한다.
+     * 이번 달 1일 ~ 말일을 달력 주(월~일) 경계로 쪼갠다. 1일이 든 주가 1주차다.
+     *
+     * <p>★ 칸 수가 <b>달마다 4~6개로 다르다</b> — 고정이라고 보면 안 된다.
+     * 첫 칸과 마지막 칸은 달 경계에서 자른다: 자르지 않으면 "이번 달" 합계가 옆 달을 물어
+     * 월별 합을 더해도 연 합계가 안 맞는다. 그 대신 잘린 칸은 표본이 적어 막대가 낮게 보이는데,
+     * 달력 축을 택한 대가다.
+     *
+     * <p>그래서 사용량 평균의 분모도 5 고정이 아니라 <b>이 달의 칸 수</b>다.
      */
     private static Spec month(ZonedDateTime now) {
-        LocalDate today = now.toLocalDate();
-        List<Bucket> buckets = new ArrayList<>(5);
-        for (int i = 4; i >= 0; i--) {
-            LocalDate start = today.minusDays(7L * i + 6);
-            ZonedDateTime from = start.atStartOfDay(now.getZone());
-            buckets.add(new Bucket(start.toString(), (5 - i) + "주차", from, from.plusDays(7)));
+        LocalDate first = now.toLocalDate().withDayOfMonth(1);
+        LocalDate nextMonth = first.plusMonths(1);
+        List<Bucket> buckets = new ArrayList<>(6);
+        LocalDate cursor = first;
+        while (cursor.isBefore(nextMonth)) {
+            // 이 주의 일요일 다음 날 = 반개구간의 끝. 달을 넘으면 말일에서 자른다
+            LocalDate weekEnd = cursor.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).plusDays(1);
+            LocalDate end = weekEnd.isAfter(nextMonth) ? nextMonth : weekEnd;
+            buckets.add(new Bucket(cursor.toString(), (buckets.size() + 1) + "주차",
+                    cursor.atStartOfDay(now.getZone()), end.atStartOfDay(now.getZone())));
+            cursor = end;
         }
-        return new Spec("month", "WEEK", buckets, "WEEK", 5);
+        return new Spec("month", "WEEK", buckets, "WEEK", buckets.size());
     }
 
     /**
-     * 이번 달 포함 12개월. 롤링이라 축이 감긴다(9월…12월·1월…8월).
-     * 그래서 <b>첫 칸과 해가 바뀌는 칸(1월)에만</b> 연도를 붙인다 (§1.14).
+     * 올해 1월 ~ 12월 12칸. 축이 한 해 안에 있어 감기지 않으므로
+     * <b>1월에만</b> 연도를 붙인다 — 나머지는 "M월"이다 (§1.18).
      */
     private static Spec year(ZonedDateTime now) {
-        LocalDate firstOfThisMonth = now.toLocalDate().withDayOfMonth(1);
+        LocalDate january = now.toLocalDate().withDayOfYear(1);
         List<Bucket> buckets = new ArrayList<>(12);
-        for (int i = 11; i >= 0; i--) {
-            LocalDate m = firstOfThisMonth.minusMonths(i);
+        for (int i = 0; i < 12; i++) {
+            LocalDate m = january.plusMonths(i);
             ZonedDateTime from = m.atStartOfDay(now.getZone());
-            boolean showYear = (i == 11) || m.getMonthValue() == 1;
-            String label = showYear
+            String label = m.getMonthValue() == 1
                     ? String.format("%02d년 %d월", m.getYear() % 100, m.getMonthValue())
                     : m.getMonthValue() + "월";
             buckets.add(new Bucket(String.format("%04d-%02d", m.getYear(), m.getMonthValue()),

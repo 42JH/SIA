@@ -15,10 +15,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 와이어프레임 대시보드의 카드 4종 + 첫 화면 묶음 (API.md §1.15 ~ §1.19).
+ * 와이어프레임 대시보드의 카드 4종 + 첫 화면 묶음 (API명세서 §1.19 ~ §1.23).
  * 운영 진단용 summary·timeseries 는 {@link DashboardController} 에 그대로 남아 있다.
  *
- * <p>공통 규칙 셋 (§1.14):
+ * <p>공통 규칙 셋 (§1.18):
  * <ul>
  *   <li><b>빈 버킷도 채운다.</b> 개수는 0, 평균은 <b>null</b> — 표본 없는 구간을 0 으로 그리면
  *       "정확도 0%" 라는 거짓말이 된다.</li>
@@ -44,7 +44,7 @@ public class DashboardCardsController {
         this.jdbc = jdbc;
     }
 
-    // ------------------------------------------------------------------ §1.15
+    // ------------------------------------------------------------------ §1.19
     /** 첫 화면 카드 4개를 한 번에. 카드마다 와이어프레임이 정한 기간이 달라 인자가 없다. */
     @GetMapping("/overview")
     public Map<String, Object> overview() {
@@ -69,7 +69,7 @@ public class DashboardCardsController {
         latBlock.put("simpleCount", latSum.get("simpleCount"));
         latBlock.put("complexCount", latSum.get("complexCount"));
 
-        // 첫 화면 막대는 합산만 그린다 — 내역(gesture/voice)은 상세(§1.18)에서 본다
+        // 첫 화면 막대는 합산만 그린다 — 내역(gesture/voice)은 상세(§1.22)에서 본다
         List<Map<String, Object>> slim = new ArrayList<>();
         for (Map<String, Object> b : this.<Map<String, Object>>castList(usage.get("buckets"))) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -102,7 +102,7 @@ public class DashboardCardsController {
         return body;
     }
 
-    // ------------------------------------------------------------------ §1.16
+    // ------------------------------------------------------------------ §1.20
     @GetMapping("/accuracy")
     public Map<String, Object> accuracy(@RequestParam(name = "period", defaultValue = "day") String period) {
         Spec spec = DashboardBuckets.of(period, zone);
@@ -152,7 +152,7 @@ public class DashboardCardsController {
         return card(spec, buckets, summary);
     }
 
-    // ------------------------------------------------------------------ §1.17
+    // ------------------------------------------------------------------ §1.21
     /**
      * 사용자가 <b>체감하는</b> 시간이다 — tool_call.latency_ms(BE 실행 시간)가 아니라
      * kind='command' 이벤트의 latency_ms(호출어~결과 전 구간)를 읽는다.
@@ -208,7 +208,7 @@ public class DashboardCardsController {
         return card(spec, buckets, summary);
     }
 
-    // ------------------------------------------------------------------ §1.18
+    // ------------------------------------------------------------------ §1.22
     /** 제스처 + 보이스 합산 사용량. voice-rejected 는 세지 않는다 — 폐기된 발화는 "사용"이 아니다. */
     @GetMapping("/usage")
     public Map<String, Object> usage(@RequestParam(name = "period", defaultValue = "day") String period) {
@@ -264,7 +264,7 @@ public class DashboardCardsController {
         return card(spec, buckets, summary);
     }
 
-    // ------------------------------------------------------------------ §1.19
+    // ------------------------------------------------------------------ §1.23
     /**
      * 실행된 app.launch 만 센다 — 차단·실패한 실행은 "사용"이 아니다.
      * 축이 app_target 이라 등록되지 않은 경로로 뜬 창은 잡히지 않는다(문서에 적힌 한계).
