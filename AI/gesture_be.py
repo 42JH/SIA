@@ -603,39 +603,6 @@ class GestureRegistration:
     def _validate_and_upload(self, hand_count):
         if not self.samples:
             raise ValueError("손이 감지되지 않았습니다. 카메라에 손을 보여주세요")
-        # 손 최소 크기(카메라와의 거리)는 두 번째 손도 같이 본다 — 한쪽만 보면 다른
-        # 손이 너무 멀리/작게 잡혀도 못 걸러낸다. 크기 변화(MAX_SIZE_CV)는 뺐다 —
-        # 저장 형식(normalize_landmarks·encode_sequence) 둘 다 스케일을 지우고
-        # 저장하므로, 등록 중 카메라와의 거리가 바뀌어도 최종 결과엔 영향이 없다.
-        # 절대 최솟값이 아니라 하위 10번째 백분위수를 본다 — 기도처럼 두 손을
-        # 맞대는 동작은 손이 겹치는 순간 손목-중지MCP 벡터가 잠깐 짧게 잡히는
-        # 경우가 실측으로 확인됐다(실제 등록 시도 303프레임 중 11프레임만 순간적으로
-        # 작게 잡히고 나머지는 정상). 손이 정말 멀리 있으면 대부분의 프레임이
-        # 작게 잡혀 이 기준도 넘지 못하지만, 가끔의 순간적 튐은 통과시킨다.
-        # Measure the same tracked hand(s) that will be encoded.  The detector's
-        # first result can be a small background/false second hand during a
-        # one-hand swipe and must not poison the size percentile.
-        if hand_count == 1:
-            measured_sizes = [self._hand_quality(observed["landmarks"])[0]
-                              for take in range(1, self.takes + 1)
-                              for _, observed in self._one_hand_take_observations(take)]
-        else:
-            measured_sizes = [self._hand_quality(hand["landmarks"])[0]
-                              for frames in self.take_frames.values()
-                              for _, hands in frames if len(hands) == 2
-                              for hand in hands]
-        # Compatibility for callers/tests that provide precomputed samples
-        # without raw take frames. Normal registration always uses the path above.
-        if not measured_sizes:
-            measured_sizes = list(self.sizes)
-            if hand_count == 2:
-                measured_sizes.extend(self.sizes2)
-        if not measured_sizes or np.percentile(measured_sizes, 10) < self.MIN_PALM_SIZE:
-            raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
-        # 한 손 등록에서 배경 사람의 손이 잠깐 두 번째 손으로 잡혀도 그 작은
-        # 오검출 때문에 주 손 촬영을 거부하지 않는다. 두 번째 손 크기는 최종
-        # 손 개수가 2손으로 판정된 등록에서만 품질 기준에 포함한다.
-        # For a two-hand take measured_sizes already contains both hands.
         # 순간 좌표 튐 대신 회차별 지속 시간/빈도로 화면 이탈을 판정한다.
         self._validate_frame_bounds()
         # 기도처럼 두 손을 계속 맞댄 정적 자세는 MediaPipe가 어떤 회차는 한 손,
@@ -669,6 +636,27 @@ class GestureRegistration:
             self._upload_static()
         else:
             self._upload_motion(hand_count)
+
+    def _validate_hand_size(self, hand_count):
+        """모든 등록 거부 검사를 통과한 뒤 마지막으로 손 크기를 검사한다."""
+        # 저장에 사용하는 동일한 추적 손만 측정한다. 한 손 동작에서 배경의 작은
+        # 오검출 손이 잠깐 잡혀도 크기 판정을 오염시키지 않는다.
+        if hand_count == 1:
+            measured_sizes = [self._hand_quality(observed["landmarks"])[0]
+                              for take in range(1, self.takes + 1)
+                              for _, observed in self._one_hand_take_observations(take)]
+        else:
+            measured_sizes = [self._hand_quality(hand["landmarks"])[0]
+                              for frames in self.take_frames.values()
+                              for _, hands in frames if len(hands) == 2
+                              for hand in hands]
+        # 원본 회차가 없는 단위 테스트와 이전 호출 경로의 호환성을 유지한다.
+        if not measured_sizes:
+            measured_sizes = list(self.sizes)
+            if hand_count == 2:
+                measured_sizes.extend(self.sizes2)
+        if not measured_sizes or np.percentile(measured_sizes, 10) < self.MIN_PALM_SIZE:
+            raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
 
     def _partial_two_hand_static_collision(self):
         """회차별 손 수가 1손/2손으로 완전히 갈린 접촉 자세를 처리한다."""
@@ -804,6 +792,7 @@ class GestureRegistration:
             poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE
         )
         payload = self.cache.template_bytes("__pending__", feats)
+        self._validate_hand_size(1)
         self.link.put_gesture_npz(self.temp_id, payload)
 
     def _builtin_static_takes_agree(self, label):
@@ -1399,4 +1388,5 @@ class GestureRegistration:
             world_sequences=np.stack(world_sequences),
             world_valid=np.array(world_valid, dtype=bool),
         )
+        self._validate_hand_size(hand_count)
         self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))

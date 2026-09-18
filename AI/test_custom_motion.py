@@ -271,6 +271,19 @@ class MotionTests(unittest.TestCase):
         self.assertGreater(payload["similarity"], 0)
         self.assertLessEqual(payload["similarity"], 1)
 
+    def test_other_take_rejection_is_reported_before_small_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="small-swipe", motion="DYNAMIC", takes=1,
+                       takeDurationSec=1), now=0)
+        for t in np.linspace(0, 1, 21):
+            reg._collect([self.sized_hand(x=0.3 + t * 0.2, size=0.03)], t)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        event, payload = self.link.sent[-1]
+        self.assertEqual(event, "reg_rejected", self.link.sent[-1])
+        self.assertIn("너무 짧습니다", payload["reason"])
+        self.assertNotIn("손이 너무 작게", payload["reason"])
+
     def test_diagonal_dynamic_is_not_rejected_as_builtin_horizontal_swipe(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
         reg.start(dict(tempId="diagonal", motion="DYNAMIC", takes=1, takeDurationSec=1), now=0)
@@ -369,10 +382,7 @@ class MotionTests(unittest.TestCase):
         reg.sizes = [0.12] * 30
         reg.sizes2 = [0.04] * 5
         reg.take_frames = {}
-        with patch.object(reg, "_validate_frame_bounds"), patch.object(reg, "_upload_motion") as upload:
-            reg.motion = "DYNAMIC"
-            reg._validate_and_upload(1)
-        upload.assert_called_once_with(1)
+        reg._validate_hand_size(1)
 
     def test_two_hand_quality_still_rejects_small_second_hand(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
@@ -381,7 +391,7 @@ class MotionTests(unittest.TestCase):
         reg.sizes2 = [0.04] * 30
         reg.take_frames = {}
         with self.assertRaisesRegex(ValueError, "손이 너무 작게"):
-            reg._validate_and_upload(2)
+            reg._validate_hand_size(2)
 
     def test_static_stability_allows_less_than_twenty_percent_outliers(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
