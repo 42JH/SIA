@@ -62,6 +62,9 @@ public class AppLaunchService {
         if (parent != null) {
             pb.directory(parent.toFile());
         }
+        // 기본값인 파이프로 두면 아무도 읽지 않아, 출력이 많은 앱은 파이프가 차는 순간 멈춘다
+        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
         Process process;
         try {
             process = pb.start();
