@@ -164,6 +164,38 @@ class ToolGateTest {
     }
 
     @Test
+    @DisplayName("ApiException 의 detail 은 콘솔에만 붙는다 — 사용자 문장과 기록은 그대로다")
+    void detailReachesTheConsoleOnly() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ToolGate.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            when(sessionService.activeOrNull()).thenReturn(null);
+
+            ToolResult result = gate.run("context.get", Map.of(), Caller.GESTURE, () -> {
+                throw new ApiException(ErrorCode.INTERNAL_ERROR, "파일을 열지 못했습니다. 잠시 후 다시 시도해주세요",
+                        "java.io.IOException: Failed to open PikaPet.exe. Error message: 액세스가 거부되었습니다");
+            });
+
+            // 사용자에게 나가는 문장은 그대로다 — 윈도우 에러가 FE 화면으로 새면 안 된다
+            assertThat(result.message()).isEqualTo("파일을 열지 못했습니다. 잠시 후 다시 시도해주세요");
+            verify(recorder).record(eq("context.get"), any(), eq(Caller.GESTURE),
+                    eq("FAILED"), eq("파일을 열지 못했습니다. 잠시 후 다시 시도해주세요"), isNull(), anyLong());
+            // 진짜 사유는 콘솔에만 — 이게 없으면 QA 로그에 한 문장만 남아 진단이 불가능하다
+            assertThat(logs.list).singleElement()
+                    .extracting(e -> e.getFormattedMessage()).asString()
+                    .contains(" -> FAILED 파일을 열지 못했습니다. 잠시 후 다시 시도해주세요"
+                            + " | java.io.IOException: Failed to open PikaPet.exe."
+                            + " Error message: 액세스가 거부되었습니다 (");
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test
     @DisplayName("도구 실행 한 건마다 이름·caller·인자·결과가 콘솔 INFO 한 줄로 남는다")
     void everyRunLeavesOneConsoleLine() {
         ch.qos.logback.classic.Logger logger =

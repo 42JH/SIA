@@ -73,9 +73,13 @@ public class ToolGate {
                     ? api.getMessage()
                     : "도구 실행에 실패했습니다";
             String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            // reason 은 FE tool_result.message 와 로그 화면에 그대로 나가는 사용자 문장이라, 원인은
+            // 콘솔에만 덧붙인다. 이게 없으면 "파일을 열지 못했습니다" 한 줄만 남아 진단이 불가능하다.
+            String detail = e instanceof ApiException api ? api.detail : null;
             long ms = System.currentTimeMillis() - t0;
-            log.info("[tool] {} caller={} args={} -> FAILED {} ({}ms)",
-                    tool, caller, LogPreview.of(safeArgs.toString()), reason, ms);
+            log.info("[tool] {} caller={} args={} -> FAILED {}{} ({}ms)",
+                    tool, caller, LogPreview.of(safeArgs.toString()), reason,
+                    detail == null || detail.isBlank() ? "" : " | " + detail, ms);
             // 인자 형식 오류도 정책 차단이 아니므로 outcome 은 FAILED 다 — 나뉘는 건 LLM 이 읽는 code 뿐이다.
             recorder.record(tool, safeArgs, caller, "FAILED", reason, sessionId, ms);
             return invalidArgs ? ToolResult.invalid(message) : ToolResult.failed(message);
