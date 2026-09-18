@@ -36,6 +36,9 @@ CROSS_BOUNDARY_MOTION_MAX = PREFIX_MIN_MOTION * 2
 # 짧은 유예. latched(동작 완성 뒤 재무장 대기)의 0.3초와는 다른, 훨씬 짧은
 # "이 프레임만 노이즈였을 뿐" 판단용 값이다.
 TRACKING_GRACE_S = 0.15
+POSE_JOINTS = (11, 12, 13, 14, 15, 16)  # shoulders, elbows, wrists
+POSE_MIN_VISIBILITY = 0.35
+POSE_MATCH_DISTANCE = 0.28
 # 두 손 평균 방향 벡터(손목 중점→중지MCP 중점)의 최소 길이 — 이 값 미만이면
 # "두 손이 거의 정반대를 향한다"는 뜻이라 회전 기준 자체가 정의되지 않는다.
 # 길이 = 2*cos(두 손 사이 각도/2)이므로, 0.35는 두 손이 약 160도 이상
@@ -57,7 +60,43 @@ def empty_templates():
                 sequence_names=np.array([], dtype="U1"), motions=np.array([], dtype="U7"),
                 hand_counts=np.array([], dtype=np.int32), durations=np.array([], dtype=np.float32),
                 world_sequences=np.empty((0, FRAMES, 2, 21, 3), np.float32),
-                world_valid=np.array([], dtype=bool))
+                world_valid=np.array([], dtype=bool),
+                pose_sequences=np.empty((0, FRAMES, len(POSE_JOINTS), 2), np.float32),
+                pose_valid=np.array([], dtype=bool))
+
+
+def normalize_arm_pose(landmarks):
+    """Normalize shoulder/elbow/wrist pose for hand-occlusion fallback matching."""
+    if landmarks is None or len(landmarks) <= max(POSE_JOINTS):
+        return None
+    selected = np.asarray([[landmarks[i][0], landmarks[i][1]] for i in POSE_JOINTS],
+                          dtype=np.float32)
+    visibility = np.asarray([landmarks[i][2] if len(landmarks[i]) > 2 else 0.0
+                             for i in POSE_JOINTS], dtype=np.float32)
+    if not np.isfinite(selected).all() or not np.isfinite(visibility).all():
+        return None
+    if np.any(visibility < POSE_MIN_VISIBILITY):
+        return None
+    shoulder_center = (selected[0] + selected[1]) * 0.5
+    shoulder_width = float(np.linalg.norm(selected[0] - selected[1]))
+    if shoulder_width < 0.05:
+        return None
+    return (selected - shoulder_center) / shoulder_width
+
+
+def encode_pose_sequence(poses):
+    """Store a robust static arm pose in the same time-shaped template format."""
+    valid = [np.asarray(p, dtype=np.float32) for p in poses if p is not None]
+    if not valid:
+        return None
+    pose = np.median(np.stack(valid), axis=0).astype(np.float32)
+    return np.repeat(pose[None, ...], FRAMES, axis=0)
+
+
+def pose_matching_distance(a, b):
+    if a.shape != b.shape:
+        return float("inf")
+    return float(np.sqrt(np.mean(np.square(a - b))))
 
 
 def _ordered_hands(hands):
@@ -331,7 +370,7 @@ def static_execution_allowed(active, registering, claimed, custom_pose, name):
 def read_templates(payload, name=None):
     result = empty_templates()
     with np.load(io.BytesIO(payload), allow_pickle=False) as data:
-        if "schema_version" in data and int(data["schema_version"]) not in (2, 3):
+        if "schema_version" in data and int(data["schema_version"]) not in (2, 3, 4):
             raise ValueError("지원하지 않는 제스처 템플릿 버전입니다")
         for key in result:
             if key in data:
@@ -351,6 +390,12 @@ def read_templates(payload, name=None):
         result["world_valid"] = np.zeros(len(seq), dtype=bool)
     if result["world_valid"].shape != (len(seq),):
         raise ValueError("invalid world landmark metadata")
+    if result["pose_sequences"].shape != (len(seq), FRAMES, len(POSE_JOINTS), 2):
+        result["pose_sequences"] = np.zeros(
+            (len(seq), FRAMES, len(POSE_JOINTS), 2), np.float32)
+        result["pose_valid"] = np.zeros(len(seq), dtype=bool)
+    if result["pose_valid"].shape != (len(seq),):
+        raise ValueError("invalid body pose metadata")
     if not np.isin(result["hand_counts"], [1, 2]).all() or not np.isin(result["motions"], ["STATIC", "DYNAMIC"]).all():
         raise ValueError("잘못된 손 수 또는 동작 종류입니다")
     if not np.isfinite(result["durations"]).all() or np.any(result["durations"] <= 0) or np.any(result["durations"] > 30):
@@ -365,7 +410,7 @@ def read_templates(payload, name=None):
 
 def template_bytes(data):
     out = io.BytesIO()
-    np.savez_compressed(out, schema_version=np.array(3), **data)
+    np.savez_compressed(out, schema_version=np.array(4), **data)
     return out.getvalue()
 
 
@@ -478,7 +523,7 @@ class CustomGestureStore:
         self.missing_since = None
         self._last_claimed = False
 
-    def update(self, hands, now, disabled=()):
+    def update(self, hands, now, disabled=(), pose_landmarks=None):
         """Return (held two-hand pose, completed motion, suppress other commands, distance).
 
         Motion fires once, then requires hands to leave for 0.3 s before rearming.
@@ -490,6 +535,7 @@ class CustomGestureStore:
         if self.latched_name in disabled:
             self.reset_motion()
         points = ordered_landmarks(hands)
+        arm_pose = normalize_arm_pose(pose_landmarks)
         # 양손 후보를 추적하던 중 한 손만 검출되면 새 한손 동작으로 섞지 않는다.
         two_hand_gap = (len(hands) == 1 and self.history
                         and len(self.history[-1][1]) == 2
@@ -498,6 +544,24 @@ class CustomGestureStore:
         if two_hand_gap:
             points = None
         if points is None:
+            # Hands may be hidden by crossed arms or another hand. Use body
+            # pose only for static templates that were registered with it.
+            if arm_pose is not None:
+                current_pose = encode_pose_sequence([arm_pose])
+                best_pose = (POSE_MATCH_DISTANCE, None)
+                for index, (name, motion) in enumerate(zip(
+                        self.data["sequence_names"], self.data["motions"])):
+                    if (motion != "STATIC" or name in disabled
+                            or not bool(self.data["pose_valid"][index])):
+                        continue
+                    score = pose_matching_distance(
+                        current_pose, self.data["pose_sequences"][index])
+                    if score < best_pose[0]:
+                        best_pose = score, str(name)
+                if best_pose[1] is not None:
+                    self.missing_since = None
+                    self._last_claimed = True
+                    return best_pose[1], None, True, best_pose[0]
             # ordered_landmarks는 핸디드니스가 한 프레임만 애매해도(두 손이 순간
             # 같은 쪽으로 잡히는 등, 손이 가까워지는 동작에서 흔함) None을 낸다.
             # 그 찰나에 바로 추적 후보를 놓치면(claimed=False) 호출측이 그 프레임의

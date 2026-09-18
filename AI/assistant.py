@@ -484,8 +484,12 @@ def main():
                         except Exception as exc:
                             print(f"[BE] 신규 제스처 동기화 실패: {exc}")
                     elif event_type == "gesture_removed":
-                        name = data.get("name")
-                        remote_refs = {gid: ref for gid, ref in remote_refs.items() if ref.get("name") != name}
+                        # Backend identifies the removed template by id. Names are
+                        # display/mapping values and may change, so deleting by
+                        # name can leave a stale NPZ in the local cache.
+                        removed_id = data.get("id")
+                        if removed_id is not None:
+                            remote_refs.pop(str(removed_id), None)
                         try:
                             remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                             active_custom = remote_custom if remote_custom.n else custom
@@ -602,16 +606,19 @@ def main():
             from brain import is_youtube
 
             session_left = brain.session_left()
-            # 제스처 실행은 음성 ACTIVE 세션에서만 허용한다. 양손 미리보기는 예외로
-            # 감지 후보만 보여주며 실제 액션은 별도 가드에서 차단한다.
-            gesture_active = args.two_hand_preview or session_left > 0
+            session_active = session_left > 0
+            # 세션 필요 여부는 매크로 안의 도구에 따라 달라지며 Backend가 최종
+            # 판정한다. AI가 PASSIVE 상태에서 감지 자체를 막으면 context.get 같은
+            # 읽기 전용 매크로도 실행할 수 없으므로, recognition_start 이후에는
+            # gesture_exec를 보내고 Backend의 gesture_result를 따른다.
+            gesture_active = args.two_hand_preview or bool(link and link.gesture_ready)
             if gesture_active != was_gesture_active:
                 palm_motion_tracker.update([])
                 palm_motion.update(None, now)
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
                 was_gesture_active = gesture_active
-                print("[제스처] ACTIVE 세션 진입" if gesture_active else "[제스처] PASSIVE 세션 진입")
+                print("[제스처] 인식 활성" if gesture_active else "[제스처] 인식 대기")
 
             hand_start = time.perf_counter()
             hands = gest.hands(frame)
@@ -647,7 +654,7 @@ def main():
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
             if gesture_active and not registration_active:
                 custom_pose, custom_motion_event, custom_claimed, custom_dist = active_custom.update(
-                    hands, now, disabled_gestures
+                    hands, now, disabled_gestures, pose_landmarks=pose_landmarks
                 )
                 # 양손 정적/동적 커스텀도 1손 커스텀과 같은 exp(-거리) 관례로 신뢰도를
                 # 낸다 — 정적 매치는 raw_score를 덮어써 static_names 발동부에서 그대로
@@ -656,7 +663,8 @@ def main():
                 if custom_pose and custom_score is not None:
                     raw_score = custom_score
             else:
-                active_custom.update([], now, disabled_gestures)
+                active_custom.update([], now, disabled_gestures,
+                                     pose_landmarks=pose_landmarks)
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
                 custom_score = None
@@ -669,7 +677,7 @@ def main():
             else:
                 gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
-                registration.tick(frame, hands, now)
+                registration.tick(frame, hands, now, pose_landmarks=pose_landmarks)
             elif gesture_preview:
                 gesture_preview.tick(frame, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
@@ -825,7 +833,7 @@ def main():
                 overlay.set_state("THINKING")
             elif listening:
                 overlay.set_state("LISTENING")
-            elif gesture_active:
+            elif session_active:
                 suffix = f" {int(session_left)}s"
                 overlay.set_state("ACTIVE", suffix)
             else:
@@ -841,7 +849,7 @@ def main():
             # --- HUD 미리보기 ---
             hud = cv2.resize(frame, (480, 270))
             state = ("THINKING" if brain.busy else "LISTENING" if listening
-                     else f"ACTIVE {int(session_left)}s" if gesture_active
+                     else f"ACTIVE {int(session_left)}s" if session_active
                      else "IDLE")
             # 상태, 정적 손모양, 동적 이벤트를 같은 형식의 독립된 줄로 보여 준다.
             # 예: ACTIVE 12s / STATIC: Victory / DYNAMIC: Screen_Next

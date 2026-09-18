@@ -21,7 +21,8 @@ from hands import (REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
                    weighted_distance)
 from custom_motion import (
     CustomGestureStore, FRAMES, MATCH_DISTANCE, PREFIX_MIN_MOTION, distance, encode_sequence,
-    encode_world_sequence, ordered_landmarks, ordered_world_landmarks, read_templates,
+    encode_pose_sequence, encode_world_sequence, normalize_arm_pose,
+    ordered_landmarks, ordered_world_landmarks, read_templates,
     trim_motion_frames, template_bytes as encode_template_bytes,
     matching_distance, motion_matching_distance, motion_direction_8, TRACKING_GRACE_S,
 )
@@ -376,6 +377,7 @@ class GestureRegistration:
         self.builtin_uncertain = 0
         self.hand_counts = []
         self.take_frames = {}
+        self.take_pose_frames = {}
         self.comparison_diagnostics = []
 
     @property
@@ -481,7 +483,7 @@ class GestureRegistration:
             return []
         return [hands] if isinstance(hands, dict) else list(hands)
 
-    def _collect(self, hands, now):
+    def _collect(self, hands, now, pose_landmarks=None):
         """현재 프레임의 손 관측을 기록한다. 크기 측정은 handedness로 정렬해 같은 손을 본다.
 
         hands는 MediaPipe가 그 프레임에 감지한 순서 그대로라 왼손/오른손이 프레임마다
@@ -491,6 +493,8 @@ class GestureRegistration:
         """
         self.hand_counts.append(len(hands))
         self.take_frames.setdefault(self.take, []).append((now, hands))
+        self.take_pose_frames.setdefault(self.take, []).append(
+            (now, normalize_arm_pose(pose_landmarks)))
         if not hands:
             return
         ordered = sorted(hands, key=lambda h: h.get("handedness") or "")
@@ -508,7 +512,7 @@ class GestureRegistration:
         if label and label != "None":
             self.builtin_hits[label] = self.builtin_hits.get(label, 0) + 1
 
-    def tick(self, frame, hands, now=None):
+    def tick(self, frame, hands, now=None, pose_landmarks=None):
         if not self.active:
             return None
         now = time.monotonic() if now is None else now
@@ -526,15 +530,18 @@ class GestureRegistration:
                         "remaining": max(0.0, self.countdown_s - elapsed)}
             self.phase = "RECORDING"
             self.phase_at = now
-            self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
-                                               "phase": "RECORDING"})
+            if self.motion == self.DYNAMIC:
+                self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
+                                                   "phase": "RECORDING"})
         if self.phase == "RECORDING":
             # 정적도 이제 take_s(STATIC_HOLD_S)만큼 짧게 여러 프레임을 모은다 —
             # 흔들린 프레임 한 장이 그대로 등록되는 걸 막기 위함. FE에는 여전히
             # 대표 프레임 하나면 충분하지만(BE가 마지막 프레임을 쓴다), 내부 학습
             # 데이터는 이 구간에서 모인 여러 장을 그대로 쓴다.
-            self._collect(hands, now)
+            self._collect(hands, now, pose_landmarks)
             if now - self.phase_at >= self.take_s:
+                self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
+                                                   "phase": "DONE"})
                 if self.take < self.takes:
                     self.take += 1
                     self.phase = "COUNTDOWN"
@@ -543,8 +550,6 @@ class GestureRegistration:
                                                        "phase": "COUNTDOWN"})
                 else:
                     self.phase = "WAIT_FINISH"
-                    self.link.send_event("reg_take", {"tempId": self.temp_id, "take": self.take,
-                                                       "phase": "DONE"})
         return {"phase": self.phase, "take": self.take, "remaining": 0.0}
 
     def finish_for(self, temp_id):
@@ -567,7 +572,8 @@ class GestureRegistration:
             return
         outcome, diagnostic_reason = 'error', ''
         try:
-            hand_count = self._infer_hand_count()
+            hand_count = (2 if self.motion == self.STATIC and not self.samples
+                          else self._infer_hand_count())
             self._validate_and_upload(hand_count)
             self.link.send_event("reg_captured", {"tempId": temp_id, "hands": hand_count})
             print("[제스처 등록] 품질 검사 통과. 기능 지정 대기")
@@ -602,6 +608,8 @@ class GestureRegistration:
 
     def _validate_and_upload(self, hand_count):
         if not self.samples:
+            if self.motion == self.STATIC and self._upload_pose_only_static():
+                return
             raise ValueError("손이 감지되지 않았습니다. 카메라에 손을 보여주세요")
         # 순간 좌표 튐 대신 회차별 지속 시간/빈도로 화면 이탈을 판정한다.
         self._validate_frame_bounds()
@@ -636,6 +644,49 @@ class GestureRegistration:
             self._upload_static()
         else:
             self._upload_motion(hand_count)
+
+    def _upload_pose_only_static(self):
+        """Register a static arm pose when overlapping hands cannot be detected."""
+        sequences = []
+        for take in range(1, self.takes + 1):
+            poses = [pose for _, pose in self.take_pose_frames.get(take, [])
+                     if pose is not None]
+            sequence = encode_pose_sequence(poses) if len(poses) >= 2 else None
+            if sequence is None:
+                return False
+            sequences.append(sequence)
+        self._validate_take_consistency(
+            sequences,
+            lambda a, b: float(np.sqrt(np.mean(np.square(a - b)))),
+            0.28,
+        )
+        matches = []
+        for sequence in sequences:
+            best = (float("inf"), None)
+            for index, name in enumerate(self.custom_store.data["sequence_names"]):
+                if not bool(self.custom_store.data["pose_valid"][index]):
+                    continue
+                score = float(np.sqrt(np.mean(np.square(
+                    sequence - self.custom_store.data["pose_sequences"][index]))))
+                if score < best[0]:
+                    best = score, str(name)
+            matches.append(best if best[0] < 0.28 else (float("inf"), None))
+        self._validate_custom_collision_votes(matches)
+        count = len(sequences)
+        data = dict(
+            X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
+            sequences=np.zeros((count, FRAMES, 2, 21, 2), np.float32),
+            sequence_names=np.array(["__pending__"] * count),
+            motions=np.array([self.STATIC] * count),
+            hand_counts=np.array([2] * count, dtype=np.int32),
+            durations=np.array([self.take_s] * count, dtype=np.float32),
+            world_sequences=np.zeros((count, FRAMES, 2, 21, 3), np.float32),
+            world_valid=np.zeros(count, dtype=bool),
+            pose_sequences=np.stack(sequences),
+            pose_valid=np.ones(count, dtype=bool),
+        )
+        self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))
+        return True
 
     def _validate_hand_size(self, hand_count):
         """모든 등록 거부 검사를 통과한 뒤 마지막으로 손 크기를 검사한다."""
@@ -1231,6 +1282,8 @@ class GestureRegistration:
         sequences = []
         world_sequences = []
         world_valid = []
+        pose_sequences = []
+        pose_valid = []
         durations = []
         for take in range(1, self.takes + 1):
             raw = self.take_frames.get(take, [])
@@ -1311,6 +1364,14 @@ class GestureRegistration:
             else:
                 world_valid.append(False)
                 world_sequences.append(np.zeros((FRAMES, 2, 21, 3), np.float32))
+            pose_frames = [pose for _, pose in self.take_pose_frames.get(take, [])
+                           if pose is not None]
+            pose_seq = (encode_pose_sequence(pose_frames)
+                        if self.motion == self.STATIC and len(pose_frames) >= 2 else None)
+            pose_valid.append(pose_seq is not None)
+            pose_sequences.append(
+                pose_seq if pose_seq is not None
+                else np.zeros((FRAMES, 6, 2), np.float32))
             durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
         take_directions = ([motion_direction_8(sequence, hand_count) for sequence in sequences]
                            if self.motion == self.DYNAMIC else None)
@@ -1387,6 +1448,8 @@ class GestureRegistration:
             durations=np.array(durations, dtype=np.float32),
             world_sequences=np.stack(world_sequences),
             world_valid=np.array(world_valid, dtype=bool),
+            pose_sequences=np.stack(pose_sequences),
+            pose_valid=np.array(pose_valid, dtype=bool),
         )
         self._validate_hand_size(hand_count)
         self.link.put_gesture_npz(self.temp_id, encode_template_bytes(data))

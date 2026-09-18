@@ -7,7 +7,8 @@ from unittest.mock import patch
 import numpy as np
 
 from custom_motion import (CustomGestureStore, distance, empty_templates,
-                           encode_sequence, encode_world_sequence, ordered_landmarks,
+                           encode_sequence, encode_world_sequence, normalize_arm_pose,
+                           ordered_landmarks,
                            read_templates, static_execution_allowed, motion_direction_8,
                            motion_matching_distance,
                            world_matching_distance)
@@ -23,6 +24,18 @@ def hand(x=0.3, side="Left", shape=0):
     points[4] += [shape, shape]
     points += [x, 0.6]
     return dict(landmarks=points, handedness=side, gesture="Open_Palm")
+
+
+def arm_pose(offset=0.0, visibility=0.95):
+    points = [(0.0, 0.0, visibility)] * 33
+    joints = {
+        11: (0.40, 0.35), 12: (0.60, 0.35),
+        13: (0.47 + offset, 0.52), 14: (0.53 - offset, 0.52),
+        15: (0.58 + offset, 0.38), 16: (0.42 - offset, 0.38),
+    }
+    for index, (x, y) in joints.items():
+        points[index] = (x, y, visibility)
+    return points
 
 
 class Link:
@@ -76,6 +89,32 @@ class MotionTests(unittest.TestCase):
     def feed(self, store, make_hands, duration=1, offset=0):
         return [store.update(make_hands(t / duration), offset + t)
                 for t in np.linspace(0, duration, 21)]
+
+    def test_static_arm_pose_registers_and_matches_when_hands_are_occluded(self):
+        reg = GestureRegistration(self.link, self.cache,
+                                  CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="arms", motion="STATIC", takes=3,
+                       takeDurationSec=.4), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for frame in range(5):
+                reg._collect([], take + frame * .05, arm_pose(offset=.005 * take))
+        reg._validate_and_upload(2)
+        parsed = read_templates(self.link.payload, "crossed-arms")
+        self.assertTrue(parsed["pose_valid"].all())
+        self.assertIsNotNone(normalize_arm_pose(arm_pose()))
+        path = self.root / "pose.npz"
+        path.write_bytes(self.link.payload)
+        store = CustomGestureStore(path)
+        pose, event, claimed, score = store.update(
+            [], 1.0, pose_landmarks=arm_pose(offset=.01))
+        self.assertEqual(pose, "__pending__")
+        self.assertIsNone(event)
+        self.assertTrue(claimed)
+        self.assertLess(score, .28)
+        store.reset_motion()
+        self.assertEqual(store.update([], 2.0, pose_landmarks=arm_pose(visibility=.2)),
+                         (None, None, False, None))
 
     def test_motion_direction_uses_eight_distinct_sectors(self):
         base = hand()["landmarks"]
@@ -1017,6 +1056,34 @@ class MotionTests(unittest.TestCase):
         self.assertEqual([data["seq"] for data in preview_frames], [1, 2, 3])
         self.assertEqual(reg.samples, [])
         self.assertEqual(reg.take_frames, {})
+
+    def test_reg_take_phases_follow_backend_protocol(self):
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        observed = [hand()]
+
+        static = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
+        static.start(dict(tempId="static-phases", motion="STATIC", takes=2,
+                          countdownSec=.1), now=0)
+        static.tick(frame, observed, now=.1)
+        static.tick(frame, observed, now=.6)
+        static.tick(frame, observed, now=.75)
+        static.tick(frame, observed, now=1.3)
+        static_phases = [(data["take"], data["phase"]) for event, data in self.link.sent
+                         if event == "reg_take" and data["tempId"] == "static-phases"]
+        self.assertEqual(static_phases, [(1, "COUNTDOWN"), (1, "DONE"),
+                                         (2, "COUNTDOWN"), (2, "DONE")])
+
+        dynamic = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing"))
+        dynamic.start(dict(tempId="dynamic-phases", motion="DYNAMIC", takes=2,
+                           countdownSec=.1, takeDurationSec=.2), now=0)
+        dynamic.tick(frame, observed, now=.1)
+        dynamic.tick(frame, observed, now=.35)
+        dynamic.tick(frame, observed, now=.5)
+        dynamic.tick(frame, observed, now=.8)
+        dynamic_phases = [(data["take"], data["phase"]) for event, data in self.link.sent
+                          if event == "reg_take" and data["tempId"] == "dynamic-phases"]
+        self.assertEqual(dynamic_phases, [(1, "COUNTDOWN"), (1, "RECORDING"), (1, "DONE"),
+                                          (2, "COUNTDOWN"), (2, "RECORDING"), (2, "DONE")])
 
     def test_duplicate_motion_rejected_after_reload(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)], name="existing")
