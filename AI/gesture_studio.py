@@ -23,8 +23,9 @@ from hands import (CustomGestures, FingerSwipeDetector, GestureEngine, GestureSt
                    SCREEN_SWIPE_CONFIG, SwipeDetector, normalize_landmarks, weighted_distance)
 from main import open_camera
 
-HERE = Path(__file__).parent
-STORE = HERE / "custom_gestures.npz"
+from paths import asset_path, data_path
+
+STORE = data_path("custom_gestures.npz")
 SAMPLES = 30
 CONFUSION_DIST = 0.45  # 기존 클래스와 최근접 거리가 이보다 가까우면 등록 거부 (classify thresh 0.35보다 커야 함)
 BUILTIN_OVERLAP = 0.20  # 내장 제스처로 인식된 샘플 비율이 이 이상이면 등록 거부
@@ -58,7 +59,7 @@ def registration_quality(sizes, angles):
 
 
 def collect_samples(camera_idx, seconds_countdown=3):
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     cap = open_camera(camera_idx)
     feats, builtin_hits = [], {}
     sizes, angles = [], []
@@ -153,7 +154,7 @@ def live_test(camera_idx, distance="미기록", lighting="미기록", hand_side=
     실험자가 CLI 인자로 기록한다. 이 값은 결과를 해석하기 위한 실험 메타데이터다.
     """
     store = CustomGestures(STORE)
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     cap = open_camera(camera_idx)
     print(f"등록된 커스텀 제스처: {store.class_names() or '없음'} — ESC로 종료")
     print(f"[실험 조건] 거리={distance} | 조명={lighting} | 사용 손={hand_side}")
@@ -209,7 +210,7 @@ def trial_test(camera_idx, target, trials, distance="미기록", lighting="미�
     오른손 실험은 왼손으로 SPACE, 왼손 실험은 오른손으로 SPACE를 누르면 된다.
     """
     store = CustomGestures(STORE)
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     cap = open_camera(camera_idx)
     success = failure = 0
     infer_samples = []
@@ -289,7 +290,7 @@ def swipe_trial_test(camera_idx, target, trials, distance="미기록", lighting=
                    ("Swipe_Left", "Swipe_Right", "Swipe_Up", "Swipe_Down"))
     if target not in swipe_names:
         raise ValueError("유효한 스와이프 목표가 아닙니다.")
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     swiper = (PointerControlDetector() if pointer_mode else
               PinchVolumeDetector(enabled=True) if pinch_mode else
               FingerSwipeDetector() if finger_mode else
@@ -406,7 +407,7 @@ def screen_repeat_trial_test(camera_idx, target, sets, distance="미기록", lig
         raise ValueError("target은 Screen_Next 또는 Screen_Prev여야 합니다.")
     opposite_event = "Swipe_Left" if target_event == "Swipe_Right" else "Swipe_Right"
     direction = "오른쪽" if target_event == "Swipe_Right" else "왼쪽"
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     swiper = SwipeDetector(**SCREEN_SWIPE_CONFIG)
     cap = open_camera(camera_idx)
     passed_sets = failed_sets = 0
@@ -496,7 +497,7 @@ def control_flow_trial_test(camera_idx, target, trials, distance="미기록", li
     """
     if target not in ("Screen_Next", "Screen_Prev"):
         raise ValueError("target은 Screen_Next 또는 Screen_Prev여야 합니다.")
-    gest = GestureEngine(HERE / "models" / "gesture_recognizer.task")
+    gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
     cap = open_camera(camera_idx)
     ok_count = fail_count = 0
     infer_samples = []

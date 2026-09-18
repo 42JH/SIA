@@ -27,9 +27,11 @@ import time
 import wave
 from pathlib import Path
 
-HERE = Path(__file__).parent
-LOG_DIR = HERE / "logs"
-EVAL_DIR = HERE / "eval" / "cases"
+from paths import DATA_DIR, asset_path, data_path
+
+# 읽기 전용 자산은 asset_path, 사용자가 만드는 것은 data_path — 얼렸을 때 갈라진다(paths.py).
+LOG_DIR = DATA_DIR / "logs"
+EVAL_DIR = DATA_DIR / "eval" / "cases"
 EVAL_CAPTURE = os.environ.get("EVAL_CAPTURE", "") == "1"  # 회귀 케이스 수집 스위치
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # 무료 티어: 3.5 Flash / 3.1 Flash-Lite
 WAKE_MODEL_WORD = "시아야"  # 고정 시동어 모델(siaya_v2.onnx)이 학습된 문구. 설정·환경변수로 바뀌지 않는다 —
@@ -50,7 +52,7 @@ CONFIRM_TIMEOUT_S = 10.0  # 파괴적 동작 확인 대기 시간 — **FE 표�
 # (notificationStore.js CONFIRM_TIMEOUT_SEC, Tauri overlay/index.html 도 같은 값).
 # 여기가 더 길면 화면에서 확인창이 사라진 뒤에도 "응" 이 먹혀 창이 닫히고 파일이 지워진다 —
 # 사용자는 질문이 끝난 줄 아는데 되돌릴 수 없는 동작이 실행된다. 어긋나면 짧은 쪽으로 맞춘다.
-WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
+WAKE_MODEL = asset_path("models", "siaya_v2.onnx")  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
 WAKE_THRESHOLD = 0.78     # NOTE(튜닝): predict_clip 최대 점수 하한. v2 의 운영점 — 이 값에서 본인 인식 96.55%·본인 비호출 오발 1.97%,
                           # 배경 오발 1.41건/h(봉인 스트림 17.7 h). 0.5 로 두면 배경 오발이 3.11건/h 로 v1(2.49)보다 나빠진다.
                           # 타인 4명 "시아야" 92건 중 시동어 통과 88(v1 73) — 발음만 보는 단계라 의도한 방향이고,
@@ -429,7 +431,7 @@ def load_api_keys():
     gemini_api_key.txt(줄당 하나). 무료 티어 쿼터에 걸리면 다음 키로 넘어간다."""
     raw = os.environ.get("GEMINI_API_KEY", "").strip()
     if not raw:
-        f = HERE / "gemini_api_key.txt"
+        f = data_path("gemini_api_key.txt")
         if f.exists():
             raw = f.read_text(encoding="utf-8")
     return [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]

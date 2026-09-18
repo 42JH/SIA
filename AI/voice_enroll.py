@@ -21,8 +21,9 @@ from speaker import SpeakerVerifier
 from voice import SR, VadSegmenter
 from voice_bridge import SENTENCES
 
-HERE = Path(__file__).parent
-PROFILE = HERE / "models" / "speaker.npz"
+from paths import data_path  # noqa: E402 — 얼렸을 때 사용자 데이터는 %APPDATA% 로
+
+PROFILE = data_path("models", "speaker.npz")
 PHRASES = SENTENCES   # 온보딩과 같은 문장을 쓴다 — 사본을 두면 한쪽만 바뀌어 프로필이 서로 달라진다
 
 
@@ -78,7 +79,7 @@ def verify_live():
 def wake_info():
     from voice_bridge import WakeTemplateStore
 
-    store = WakeTemplateStore(HERE / "models" / "wake.npz")
+    store = WakeTemplateStore(data_path("models", "wake.npz"))
     t = store.current
     if t is None:
         sys.exit("등록된 호출어 템플릿이 없습니다" + (f" (읽기 실패: {store.load_error})" if store.load_error else ""))

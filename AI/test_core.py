@@ -1679,6 +1679,54 @@ def test_inflight_cap_waits_for_one_slot_not_everyone():
         assert b._drain(5)
 
 
+def test_user_data_survives_a_frozen_restart():
+    """얼렸을 때 사용자 데이터가 임시 추출 폴더로 가지 않는다 (PyInstaller onefile).
+
+    onefile 은 매 실행마다 새 임시 폴더에 풀고 끝나면 지운다. `Path(__file__).parent` 는
+    그 폴더를 가리키므로, 온보딩이 쓰는 wake/speaker/calib npz 를 거기 두면 앱을 끌 때
+    같이 사라진다 — 켤 때마다 온보딩을 다시 해야 한다. 자산은 거기서 읽는 게 맞고(번들이
+    거기로 풀린다) 사용자 데이터만 %APPDATA%\SIA 로 나간다.
+    """
+    import io as _io
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    import paths
+
+    root = Path(paths.__file__).resolve().parent
+
+    # 소스 실행이면 지금까지와 같은 자리 — 개발 흐름도 기존 npz 위치도 그대로다
+    assert paths.resolve_data_dir() == root
+
+    # 얼린 상태: 자산은 _MEIPASS, 사용자 데이터는 %APPDATA%\SIA (BE 와 같은 루트)
+    sys.frozen = True
+    try:
+        d = paths.resolve_data_dir()
+        assert "SIA" in str(d), d
+        assert d != root, "얼렸는데 데이터가 아직 코드 옆이다"
+        assert not str(d).startswith(tempfile.gettempdir()), f"임시 폴더에 쓴다: {d}"
+    finally:
+        del sys.frozen
+
+    # SIA_DATA_DIR 로 덮어쓸 수 있어야 한다 — 얼리지 않고도 그 경로를 밟아 본다
+    import os as _os
+    with tempfile.TemporaryDirectory() as tmp:
+        _os.environ["SIA_DATA_DIR"] = tmp
+        try:
+            assert paths.resolve_data_dir() == Path(tmp)
+        finally:
+            del _os.environ["SIA_DATA_DIR"]
+
+    # 런타임 모듈이 다시 자기 폴더를 잡으면 안 된다 — 이게 원래 결함이었다
+    for name in ("brain.py", "assistant.py", "voice_enroll.py", "calibrate.py",
+                 "main.py", "gesture_studio.py", "eval_prompt.py"):
+        src = _io.open(root / name, encoding="utf-8").read()
+        assert "Path(__file__).parent" not in src, (
+            f"{name} 이 다시 Path(__file__).parent 로 경로를 잡는다 — "
+            "얼리면 매 실행 지워지는 임시 폴더를 가리킨다")
+
+
 def test_session_is_be_owned():
     """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
 
@@ -1953,6 +2001,7 @@ if __name__ == "__main__":
     test_mcp_delegation()
     test_llm_retry()
     test_session_is_be_owned()
+    test_user_data_survives_a_frozen_restart()
     test_be_results_do_not_leak_between_threads()
     test_tier1_does_not_queue_behind_llm()
     test_inflight_cap_waits_for_one_slot_not_everyone()
@@ -1966,4 +2015,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 41/41 통과")
+    print("OK - 42/42 통과")

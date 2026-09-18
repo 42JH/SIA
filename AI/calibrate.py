@@ -22,7 +22,7 @@ import numpy as np
 from gaze import Calibrator, make_engine
 from main import open_camera  # 해상도 설정 포함 — 캘리브레이션과 런타임이 반드시 같은 카메라 조건
 
-HERE = Path(__file__).parent
+from paths import asset_path, data_path
 SETTLE_S = 0.8   # 점 이동 후 눈이 도착할 시간
 COLLECT_S = 0.9  # 샘플 수집 시간
 
@@ -89,7 +89,7 @@ def main():
     import pyautogui
 
     sw, sh = pyautogui.size()
-    face = make_engine(HERE / "models")  # 런타임과 동일 엔진 — 특징 차원 일치 필수
+    face = make_engine(asset_path("models"))  # 런타임과 동일 엔진 — 특징 차원 일치 필수
     cap = open_camera(args.camera)
 
     win = "calibration"
@@ -146,12 +146,12 @@ def main():
     cv2.destroyAllWindows()
 
     # 저장은 검증까지 끝난 뒤 — 이전 캘리브레이션은 백업으로 보존 (망친 재캘리브레이션 복구용)
-    out = HERE / "models" / "calib.npz"
+    out = data_path("models", "calib.npz")
     if out.exists():
-        os.replace(out, HERE / "models" / "calib_backup.npz")
+        os.replace(out, data_path("models", "calib_backup.npz"))
         print("이전 캘리브레이션 → models/calib_backup.npz (되돌리려면 파일명을 calib.npz로)")
     calib.save(out)
-    clicks = HERE / "models" / "clicks.npz"
+    clicks = data_path("models", "clicks.npz")
     if clicks.exists():
         clicks.unlink()  # 옛 지오메트리(자세·카메라 각도)의 클릭 샘플은 새 캘리브레이션을 오염시킨다
         print("누적 클릭 샘플 초기화 (새 캘리브레이션 기준으로 다시 쌓임)")
