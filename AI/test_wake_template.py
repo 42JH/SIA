@@ -10,6 +10,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from unittest.mock import patch
 import numpy as np
 
 from be_link import AgentLink
-from brain import (WAKE_CLIP_TAIL_JOIN_S, WAKE_FRAME_S, WAKE_PAD_S, speech_span, wake_clip,
+from brain import (Pending, WAKE_CLIP_TAIL_JOIN_S, WAKE_FRAME_S, WAKE_PAD_S, speech_span, wake_clip,
                    wake_clip_is_clean, wake_only)
 from speaker import EMBED_DIM, MODEL_SOURCE, WakeTemplate
 from voice_bridge import WakeEnroll, WakeTemplateStore
@@ -89,7 +90,7 @@ def test_wake_uses_only_enrolled_samples():
         try:
             store.commit(loaded, "이전 파일")
             body, generation = store.path.read_bytes(), store.generation
-            brain.wake_template, brain.wake = store, object()
+            brain.wake_template, brain.wake = store, SimpleNamespace(reset=lambda: None)
             brain._wake_ok = Brain._wake_ok.__get__(brain)
             with patch.object(store, "commit") as commit, patch.object(store, "_queue_upload") as upload:
                 brain.speaker.embed = lambda _: unit(1)
@@ -168,7 +169,7 @@ def test_wake_only_run_skips_command_processing():
             store = WakeTemplateStore(Path(directory) / "wake.npz")
             try:
                 store.commit(template(), "등록")
-                brain.wake_template, brain.wake = store, object()
+                brain.wake_template, brain.wake = store, SimpleNamespace(reset=lambda: None)
                 brain._wake_ok = Brain._wake_ok.__get__(brain)
                 brain.speaker.embed = lambda _: unit(0 if owner else 1)
                 brain.speaker.verify.return_value = (False, 0.1)  # 이어진 명령에는 화자 인증이 필요하다
@@ -206,10 +207,10 @@ def test_wake_only_preserves_confirmation_and_shadow():
     peak = int(round((speech_span(audio)[1] + WAKE_PAD_S) / WAKE_FRAME_S))
     for shadow in (False, True):
         with assistant() as (brain, link, _):
-            brain.wake = object()
+            brain.wake = SimpleNamespace(reset=lambda: None)
             brain.router.transcribe.return_value = ("시아야", 0.1)
             if not shadow:
-                brain._pending = ("닫을까요?", "test", 100.0)
+                brain._pending = Pending("닫을까요?", "test", 100.0, 0, (0.0, {}), 0.0, 0)
             with patch("brain.wake_score_of", return_value=(0.99, peak, 0)), patch("brain.WAKE_SHADOW", shadow), patch.object(brain, "_execute", return_value=None):
                 utter(brain, audio=audio)
             brain.speaker.verify.assert_called_once()

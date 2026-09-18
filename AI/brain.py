@@ -15,6 +15,7 @@
 키: 환경변수 GEMINI_API_KEY 또는 프로젝트 루트의 gemini_api_key.txt (gitignore됨)
 모델: 환경변수 GEMINI_MODEL (기본 gemini-3.5-flash)
 """
+import collections
 import ctypes
 import io
 import json
@@ -41,6 +42,8 @@ SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전�
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
 HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
+Pending = collections.namedtuple(  # 확인 대기 — 자리 인덱스로 읽던 6튜플을 이름으로 바꿨다
+    "Pending", "q kind expire target completed asked_at generation")
 MAX_INFLIGHT = 4          # 동시에 처리할 발화 수 상한 — 몰릴 때 LLM 왕복이 무제한으로 늘지 않게
 CONFIRM_TIMEOUT_S = 12.0  # 파괴적 동작 확인 대기 시간
 WAKE_MODEL = HERE / "models" / "siaya_v2.onnx"  # 시동어 판정 헤드 (openWakeWord 0.6.0 custom, 415KB)
@@ -331,9 +334,18 @@ def capture_case(audio_i16, full_img, crop_img, session, pending_q, dom):
     eval/은 gitignore — 커밋 금지.
     """
     try:
+        # 같은 밀리초에 뜬 스레드 둘이 같은 폴더에 겹쳐 쓰면 A 의 오디오 + B 의 화면으로
+        # 케이스가 조립돼 회귀 측정이 거짓말을 한다. 충돌할 때만 접미사를 붙인다.
         cid = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}"
-        d = EVAL_DIR / cid
-        d.mkdir(parents=True, exist_ok=True)
+        for n in range(20):
+            d = EVAL_DIR / (cid if n == 0 else f"{cid}-{n}")
+            try:
+                d.mkdir(parents=True)
+                break
+            except FileExistsError:
+                continue
+        else:
+            return
         (d / "audio.wav").write_bytes(wav_bytes(audio_i16))
         if full_img is not None:
             full_img.convert("RGB").save(d / "full.jpg", "JPEG", quality=85)
@@ -726,6 +738,10 @@ class Brain(threading.Thread):
     _wake_notified = None
     _speaker_error_notified = False
     _router_lock = threading.Lock()  # 예열 스레드와 첫 발화가 동시에 Router 를 만들지 않게
+    # openwakeword Model 은 발화마다 독립이 아니다 — predict_clip 이 내부적으로 predict() 를
+    # 청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
+    # 돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려간다(불러도 무반응).
+    _wake_lock = threading.Lock()
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -790,6 +806,36 @@ class Brain(threading.Thread):
         """
         be = self._be()
         return be.session_until_mono if be else 0.0
+
+    def _pending_for(self, t_utter):
+        """t_utter 에 시작한 발화가 답할 수 있는 확인 대기 — 없으면 None.
+
+        만료 전인 것만 보면 안 된다. 발화마다 스레드가 도는 지금은 사용자가 답을 말한 **뒤에**
+        다른 스레드가 새 확인 대기를 열 수 있다. 그러면 "응, 삭제" 가 아직 듣지도 않은 창 닫기
+        질문에 붙어 창이 닫힌다(-320 검수 blocker). 질문이 먼저 있었는지도 함께 본다.
+        """
+        p = self._pending   # 한 번만 읽는다 — 두 번 읽으면 그 사이 옆 스레드가 None 으로 바꾼다
+        return p if (p and p.asked_at <= t_utter < p.expire) else None
+
+    def _open_confirm(self, q, hint, kind, target, completed, generation):
+        """파괴적 동작 재확인을 연다. 답 안 한 질문이 살아 있으면 열지 않는다.
+
+        확인 질문 둘이 동시에 떠 있으면 "응" 이 어느 쪽에 붙는지 사용자도 우리도 모른다.
+        되돌릴 수 없는 동작이라 먼저 뜬 질문을 지키고 새 것을 거른다.
+        generation 을 같이 실어야, 입력이 바뀌어 폐기된 스레드의 finally 가 '자기가 만든'
+        확인 대기만 거둔다 — 옆 스레드 것까지 지우면 승인이 통째로 사라진다.
+        """
+        now = time.monotonic()
+        with self._audio_lock:
+            live = self._pending
+            busy = live.q if (live and now < live.expire) else None
+            if busy is None:
+                self._pending = Pending(q, kind, now + CONFIRM_TIMEOUT_S, target,
+                                        completed, now, generation)
+        if busy is not None:
+            self._say(f"먼저 물어본 것에 답해 주세요 — {busy}")
+            return
+        self._say(q + hint, "confirm", CONFIRM_TIMEOUT_S, timeoutSec=int(CONFIRM_TIMEOUT_S))
 
     def _session_live(self):
         """지금 이 순간 BE 세션이 살아 있나 — 연장(extend)이 통할지의 기준.
@@ -1044,7 +1090,7 @@ class Brain(threading.Thread):
         무제한으로 늘면 GPU·쿼터가 먼저 무너진다.
         """
         t_utter = args[3]
-        if (self._pending and t_utter < self._pending[2]) or len(self._alive()) >= MAX_INFLIGHT:
+        if self._pending_for(t_utter) or len(self._alive()) >= MAX_INFLIGHT:
             self._drain()
         t = threading.Thread(target=self._handle, args=args, daemon=True)
         self._workers.append(t)
@@ -1074,7 +1120,7 @@ class Brain(threading.Thread):
         t_end = t_recv - VAD_TAIL_S  # 발화가 끝난 시각(추정): VAD 는 꼬리 침묵 뒤에 세그먼트를 넘긴다. 이전 식(t_utter+길이)은 프리롤 2초만큼 늦게 잡았다
         try:
             if EVAL_CAPTURE:
-                pq = self._pending[0] if self._pending and t_utter < self._pending[2] else None
+                pq = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
                 capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
             # 시동어 게이트: VAD 발화 버퍼를 통째로 채점 — predict_clip은 발화마다 독립이라
             # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
@@ -1082,10 +1128,12 @@ class Brain(threading.Thread):
             wake_score, i_max, lead, oww_pass = None, None, 0, False
             wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
             if self.wake is not None:
-                wake_score, i_max, lead = wake_score_of(self.wake, audio)
+                with self._wake_lock:      # 모델 하나를 여러 발화가 나눠 쓴다 — 직렬 + 버퍼 비우고 시작
+                    self.wake.reset()
+                    wake_score, i_max, lead = wake_score_of(self.wake, audio)
                 oww_pass = i_max is not None
             in_session = t_utter < self._session_until()
-            confirming = bool(self._pending and t_utter < self._pending[2])
+            confirming = self._pending_for(t_utter) is not None
             only_wake = (oww_pass and not WAKE_SHADOW
                          and not confirming
                          and wake_only(audio, i_max, lead))
@@ -1180,7 +1228,7 @@ class Brain(threading.Thread):
             result, stt_draft, tier = None, None, 2
             dom_s, t_pre = None, None  # dom 은 2단(LLM) 경로에서만 채운다(위에서 None 으로 시작)
             lat = {}  # 이 발화의 지연 계측 — self 에 얹으면 동시에 처리되는 옆 발화 것과 섞인다
-            if not (self._pending and t_utter < self._pending[2]):
+            if self._pending_for(t_utter) is None:
                 t_pre = time.monotonic()  # 게이트(호출어·화자 인증) 끝
                 r1 = self._try_router(audio, t_utter, lat)
                 if isinstance(r1, dict):
@@ -1243,10 +1291,20 @@ class Brain(threading.Thread):
             self._say(f"오류: {e}")
             print(f"[brain 오류] {e}")
         finally:
-            with self._audio_lock:
-                if generation != self._audio_generation:
-                    self._pending = None  # 이미 시작된 이전 액션이 뒤늦게 만든 확인 대기도 새 화자에게 넘기지 않는다.
-                self.busy -= 1  # 여러 발화가 동시에 돌므로 증감도 락 안에서
+            self._retire(generation)
+
+    def _retire(self, generation):
+        """발화 처리 스레드 뒷정리 — 자기가 만든 확인 대기만 거두고 busy 를 반납한다.
+
+        이미 시작된 이전 액션이 뒤늦게 만든 확인 대기는 새 화자에게 넘기지 않는다. 단
+        **내가 만든 것만** 거둔다 — 발화마다 스레드가 도는 지금 옆 스레드가 방금 연 확인
+        대기까지 지우면, 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+        """
+        with self._audio_lock:
+            p = self._pending
+            if generation != self._audio_generation and p is not None and p.generation == generation:
+                self._pending = None
+            self.busy -= 1  # 여러 발화가 동시에 돌므로 증감도 락 안에서
 
     def _try_router(self, audio, t_utter, lat=None):
         """1단 라우터 시도 — 액션 dict(즉시 실행) / STT 초안 str(승격 힌트) /
@@ -1286,7 +1344,7 @@ class Brain(threading.Thread):
         from google.genai import types
 
         t_utter = t_utter or time.monotonic()
-        pending_q = self._pending[0] if self._pending and t_utter < self._pending[2] else None
+        pending_q = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
         prompt = build_prompt(t_utter < self._session_until(), pending_q, crop_img is not None)
 
         # 이미지 다이어트 + thinking 끄기 = 실측 8~9초 → 2.4~3.0초 (품질 손실 체감 없음)
@@ -1371,7 +1429,8 @@ class Brain(threading.Thread):
                                "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
         pending, done = self._pending, None
         try:
-            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img, full_img)
+            done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img,
+                             full_img, generation)
             return done
         finally:
             # voice 이벤트는 실행이 끝난 뒤에 보낸다 — 대시보드 "음성 인식 정확도"는 명령으로 인식된 발화
@@ -1387,7 +1446,8 @@ class Brain(threading.Thread):
                                accuracy=None if asked else float(done is not None),
                                action=result.get("action"))
 
-    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img):
+    def _act(self, result, action, say, be, completed, t_utter, hwnd, crop_img, full_img,
+             generation=0):
         """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
             if be:
@@ -1400,11 +1460,12 @@ class Brain(threading.Thread):
             return
 
         if action == "confirm_yes":
-            if self._pending and t_utter < self._pending[2]:
-                kind, target = self._pending[1], self._pending[3]
-                started, fields = self._pending[4]
+            p = self._pending_for(t_utter)
+            if p:
+                kind, target = p.kind, p.target
+                started, fields = p.completed
                 # 질문 표시부터 승인 발화 시작까지의 사람 대기만 뺀다.
-                completed = (started + max(0.0, t_utter - self._pending[5]), fields)
+                completed = (started + max(0.0, t_utter - p.asked_at), fields)
                 self._pending = None
                 if kind == "window_close":
                     # 확인은 AI 가 이미 받았다 — BE 는 재확인 없이 닫는다(API명세 §3.8).
@@ -1466,11 +1527,8 @@ class Brain(threading.Thread):
                 self._say("대상 창을 찾지 못했습니다")
             elif op == "close":  # 파괴적 동작 — 즉시 실행하지 않고 재확인
                 q = f'창 "{window_title_of(hwnd)[:24]}"을(를) 닫을까요?'
-                asked_at = time.monotonic()
-                self._pending = (q, "window_close", asked_at + CONFIRM_TIMEOUT_S,
-                                 hwnd, completed, asked_at)
-                self._say(q + ' — "응, 닫아" / "취소"로 답하세요', "confirm", CONFIRM_TIMEOUT_S,
-                          timeoutSec=int(CONFIRM_TIMEOUT_S))
+                self._open_confirm(q, ' — "응, 닫아" / "취소"로 답하세요',
+                                   "window_close", hwnd, completed, generation)
             elif op in ("maximize", "minimize"):
                 msg = say or ("창 최대화" if op == "maximize" else "창 최소화")
                 ref = self._win_ref(hwnd)
@@ -1506,11 +1564,8 @@ class Brain(threading.Thread):
             else:
                 names = ", ".join(Path(p).name for p in sel)[:60]
                 q = f"{len(sel)}개 파일 삭제(휴지통): {names} — 삭제할까요?"
-                asked_at = time.monotonic()
-                self._pending = (q, "delete_file", asked_at + CONFIRM_TIMEOUT_S,
-                                 sel, completed, asked_at)
-                self._say(q + ' — "응, 삭제" / "취소"', "confirm", CONFIRM_TIMEOUT_S,
-                          timeoutSec=int(CONFIRM_TIMEOUT_S))
+                self._open_confirm(q, ' — "응, 삭제" / "취소"',
+                                   "delete_file", sel, completed, generation)
         elif action == "media":
             if self._media(result.get("media_key"), say, hwnd, level=result.get("level")):
                 return completed

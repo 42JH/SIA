@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """카메라 없이 도는 핵심 로직 스모크 테스트:  python test_core.py"""
+import threading
+
 import numpy as np
 from types import SimpleNamespace
 
@@ -1391,6 +1393,172 @@ def test_tier1_does_not_queue_behind_llm():
         assert brain.busy == 0
 
 
+def test_answer_never_lands_on_an_unheard_question():
+    """확인 대기 답변은 '그 질문보다 나중에 시작된 발화' 만 받는다 (-320 검수 blocker).
+
+    발화마다 스레드가 도는 구조에서는 사용자가 "응, 삭제" 를 말한 **뒤에** 다른 스레드가
+    LLM 왕복(12~29 s)을 끝내고 창 닫기 확인 대기를 열 수 있다. 만료 시각만 보면 그 승인이
+    아직 듣지도 않은 창 질문에 붙어 창이 닫힌다 — 되돌릴 수 없는 동작이다.
+    """
+    import time
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    now = time.monotonic()
+
+    # 사용자는 t=10 에 답했다. 질문이 t=8 에 떴으면 그 답이 맞다.
+    b._pending = Pending("2개 파일을 삭제할까요?", "delete_file", now + 20, ["a"], (0.0, {}), now + 8, 0)
+    assert b._pending_for(now + 10).kind == "delete_file"
+
+    # 같은 답변인데 질문이 t=25 에 떴다면 — 사용자는 그 질문을 들은 적이 없다.
+    b._pending = Pending("창을 닫을까요?", "window_close", now + 37, 1234, (0.0, {}), now + 25, 0)
+    assert b._pending_for(now + 10) is None, "안 들은 질문에 답이 붙었다"
+    assert b._pending_for(now + 30).kind == "window_close"   # 그 뒤 발화는 정상적으로 답할 수 있다
+
+    # 만료된 것은 여전히 안 받는다
+    b._pending = Pending("만료", "delete_file", now + 5, ["a"], (0.0, {}), now, 0)
+    assert b._pending_for(now + 6) is None
+
+
+def test_second_confirm_does_not_clobber_the_first():
+    """답 안 한 확인 질문이 살아 있으면 새 확인 대기를 열지 않는다 (-320 검수 blocker).
+
+    질문 둘이 동시에 떠 있으면 "응" 이 어느 쪽에 붙는지 사용자도 우리도 모른다.
+    """
+    import time
+    from unittest.mock import Mock
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    b._audio_lock, b.overlay, b.link = threading.RLock(), Mock(), None
+    said = []
+    b._say = lambda msg, *a, **k: said.append(msg)
+
+    b._pending = None
+    b._open_confirm("파일을 삭제할까요?", " — 응/취소", "delete_file", ["a"], (0.0, {}), 0)
+    first = b._pending
+    assert first.kind == "delete_file" and said[-1].startswith("파일을 삭제할까요?")
+
+    b._open_confirm("창을 닫을까요?", " — 응/취소", "window_close", 1234, (0.0, {}), 0)
+    assert b._pending is first, "먼저 뜬 확인 질문이 덮였다"
+    assert "먼저 물어본 것에 답해" in said[-1]
+
+    # 먼저 것이 만료되면 새 질문은 정상적으로 열린다
+    b._pending = first._replace(expire=time.monotonic() - 1)
+    b._open_confirm("창을 닫을까요?", " — 응/취소", "window_close", 1234, (0.0, {}), 0)
+    assert b._pending.kind == "window_close"
+
+
+def test_stale_worker_only_clears_its_own_confirmation():
+    """폐기된 스레드의 뒷정리가 옆 스레드가 방금 연 확인 대기를 지우지 않는다 (-320 검수).
+
+    지우면 사용자가 12초 안에 답해도 "확인 대기 중인 작업이 없습니다" 가 뜬다.
+    """
+    import time
+
+    from brain import Brain, Pending
+
+    b = Brain.__new__(Brain)
+    b._audio_lock = threading.RLock()
+    b._audio_generation, b.busy = 1, 1
+    stale_gen, now = 0, time.monotonic()
+
+    # 살아 있는 세대(1)의 워커가 연 확인 대기를, 폐기된 세대(0)의 워커가 거두면 안 된다.
+    b._pending = Pending("삭제할까요?", "delete_file", now + 12, ["a"], (0.0, {}), now, 1)
+    b._retire(stale_gen)
+    assert b._pending is not None, "옆 스레드의 확인 대기가 지워졌다"
+
+    # 자기가 만든 것(세대 0)은 거둔다 — 새 화자에게 넘기지 않는다.
+    b.busy = 1
+    b._pending = Pending("삭제할까요?", "delete_file", now + 12, ["a"], (0.0, {}), now, stale_gen)
+    b._retire(stale_gen)
+    assert b._pending is None and b.busy == 0
+
+
+def test_wake_scoring_is_serialized_and_reset():
+    """호출어 채점은 직렬이고 매번 버퍼를 비운다 (-320 검수 blocker).
+
+    openwakeword Model 은 발화마다 독립이 아니다 — predict_clip 이 내부적으로 predict() 를
+    청크마다 부르며 melspec/feature 버퍼를 이어 붙인다(reset 없음). 스레드 둘이 동시에
+    돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려가고, 사용자는 불러도 무반응을 본다.
+    """
+    import inspect
+    import time
+
+    import brain as B
+
+    src = inspect.getsource(B.Brain._handle)
+    assert "self._wake_lock" in src, "호출어 채점이 직렬화되지 않는다"
+    assert "self.wake.reset()" in src, "채점 전에 버퍼를 비우지 않는다"
+
+    # 실제로 겹치지 않는지 — 두 스레드가 동시에 채점을 시도한다.
+    overlap, inside, lock = [], [], threading.Lock()
+
+    class FakeModel:
+        def reset(self):
+            pass
+
+        def predict_clip(self, audio):
+            with lock:
+                inside.append(1)
+                overlap.append(len(inside))
+            time.sleep(0.02)
+            with lock:
+                inside.pop()
+            return [{B.WAKE_MODEL.stem: 0.0}]
+
+    model, wl = FakeModel(), B.Brain._wake_lock
+
+    def score():
+        with wl:
+            model.reset()
+            B.wake_score_of(model, np.zeros(16000, dtype=np.int16))
+
+    ts = [threading.Thread(target=score) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert max(overlap) == 1, f"호출어 채점이 겹쳤다 (동시 {max(overlap)}건)"
+
+
+def test_mcp_roundtrip_is_not_serialized():
+    """_rpc 의 락은 id 증가만 감싼다 — 왕복까지 감싸면 도구 호출이 전부 직렬이 된다.
+
+    응답은 요청마다 새로 여는 커넥션으로 짝지어지므로 id 는 겹치지만 않으면 된다.
+    왕복(urlopen timeout=15)을 락에 넣으면 -320 으로 없앤 큐 대기가 락으로 되살아난다.
+    """
+    import time
+
+    from be_link import McpClient
+
+    c = McpClient.__new__(McpClient)
+    c._rpc_id, c._rpc_lock, c.session_id = 0, threading.Lock(), None
+    inside, peak, lock = [], [], threading.Lock()
+    ids = []
+
+    def fake_post(body):
+        with lock:
+            inside.append(1)
+            peak.append(len(inside))
+            ids.append(body["id"])
+        time.sleep(0.05)                      # 느린 BE 왕복
+        with lock:
+            inside.pop()
+        return {"result": {}}, {}
+
+    c._post = fake_post
+    ts = [threading.Thread(target=lambda: c._rpc("tools/call", {})) for _ in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert max(peak) > 1, "MCP 왕복이 직렬로 묶였다 — 락이 _post 까지 감싸고 있다"
+    assert sorted(ids) == [1, 2, 3, 4], f"JSON-RPC id 가 겹쳤다: {ids}"
+
+
 def test_session_is_be_owned():
     """세션 시간은 BE 소유다 — AI 는 자기 시계를 갖지 않는다 (-320).
 
@@ -1667,8 +1835,13 @@ if __name__ == "__main__":
     test_session_is_be_owned()
     test_be_results_do_not_leak_between_threads()
     test_tier1_does_not_queue_behind_llm()
+    test_answer_never_lands_on_an_unheard_question()
+    test_second_confirm_does_not_clobber_the_first()
+    test_stale_worker_only_clears_its_own_confirmation()
+    test_wake_scoring_is_serialized_and_reset()
+    test_mcp_roundtrip_is_not_serialized()
     test_media_seek()
     test_mic_preview()
     test_save_crop_paths()
     test_app_ref_resolution()
-    print("OK - 34/34 통과")
+    print("OK - 39/39 통과")

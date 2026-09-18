@@ -338,7 +338,8 @@ def test_only_long_fresh_final_rejection_emits_ws_and_rest():
                                     (False, True, True), (False, False, False)):
         with assistant() as (brain, link, _):
             link.connected = connected
-            brain.wake = SimpleNamespace(predict_clip=lambda _: [{WAKE_MODEL.stem: 0.99}])
+            brain.wake = SimpleNamespace(reset=lambda: None,
+                                         predict_clip=lambda _: [{WAKE_MODEL.stem: 0.99}])
 
             def reject(*_):
                 if stale:
@@ -358,7 +359,8 @@ def test_only_long_fresh_final_rejection_emits_ws_and_rest():
 def test_wake_miss_and_noncommands_emit_nothing():
     with assistant() as (brain, link, _):
         link.session_until_mono = 0
-        brain.wake = SimpleNamespace(predict_clip=lambda _: [{WAKE_MODEL.stem: 0.0}])
+        brain.wake = SimpleNamespace(reset=lambda: None,
+                                     predict_clip=lambda _: [{WAKE_MODEL.stem: 0.0}])
         with patch("brain.WAKE_SHADOW", False):
             utter(brain)
         assert not events(link)

@@ -10,7 +10,7 @@ from unittest.mock import patch
 import numpy as np
 
 from be_link import AgentLink
-from brain import Brain, SpeakerAccum
+from brain import Brain, Pending, SpeakerAccum
 from voice import BLOCK, SR, VoiceListener, _wasapi_dlls, resolve_input_device
 
 
@@ -258,7 +258,7 @@ def test_overflow_preserves_completed_audio():
     brain._audio_lock = threading.RLock()
     brain._audio_generation, brain._audio_since = 0, 0
     brain.queue = [("완성된 발화", "화면 캡처")]
-    brain._pending = ("창을 닫을까요?",)
+    brain._pending = Pending("창을 닫을까요?", "window_close", 1e9, 0, (0.0, {}), 0.0, 0)
     brain._accum = SpeakerAccum()
     accum = brain._accum
     events = collections.deque([("utter", 0, np.ones(BLOCK, dtype=np.int16))])
@@ -279,7 +279,7 @@ def test_overflow_preserves_completed_audio():
             assert not listener.seg.recording and not listener.seg._buf
             assert listener._generation == brain._audio_generation == 0
             assert brain.queue == [("완성된 발화", "화면 캡처")]
-            assert brain._pending == ("창을 닫을까요?",) and brain._accum is accum
+            assert brain._pending.q == "창을 닫을까요?" and brain._accum is accum
             assert len(events) == 1 and events[0][0] == "utter"
             # 연속 오버플로에서 로그가 쏟아지지 않는다 (장치 이름 같은 다른 줄은 센 적 없다).
             assert sum("오버플로" in str(c) for c in log.call_args_list) == 1
@@ -322,7 +322,7 @@ def test_pending_audio_reset():
     brain._audio_since = 0
     brain._client = object()
     brain.queue = [("old audio", "old screen")]
-    brain._pending = ("old confirmation",)
+    brain._pending = Pending("old confirmation", "window_close", 1e9, 0, (0.0, {}), 0.0, 0)
     brain._accum = SpeakerAccum()
     old_accum = brain._accum
     before = time.monotonic()
@@ -418,7 +418,9 @@ def test_slow_execution_does_not_block_audio():
     def execute(*_):
         started.set()
         release.wait(3)  # 느린 MCP·파일 작업을 재현한다.
-        brain._pending = ("이전 액션의 확인 질문",)  # 입력 전환 뒤 늦게 도착한 결과도 재사용하면 안 된다.
+        # 입력 전환 뒤 늦게 도착한 결과가 만든 확인 대기 — generation 0 은 이 스레드 것이다.
+        brain._pending = Pending("이전 액션의 확인 질문", "window_close",
+                                 time.monotonic() + 12, 0, (0.0, {}), time.monotonic(), 0)
 
     def run():
         # -320 이후 run() 은 발화를 스레드에 넘기고 곧장 돌아온다. 큐가 비면 sleep 에서 Done.

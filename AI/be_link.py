@@ -73,10 +73,11 @@ class McpClient:
         return json.loads(raw), headers
 
     def _rpc(self, method, params=None):
-        with self._rpc_lock:
-            self._rpc_id += 1
-            body = {"jsonrpc": "2.0", "id": self._rpc_id, "method": method, "params": params or {}}
-            obj, headers = self._post(body)
+        with self._rpc_lock:   # id 증가만. 왕복(urlopen timeout=15)까지 잠그면 도구 호출이
+            self._rpc_id += 1  # 전부 직렬이 돼, 없앤다던 큐 대기가 락으로 되살아난다.
+            rpc_id = self._rpc_id
+        body = {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params or {}}
+        obj, headers = self._post(body)   # 응답은 커넥션으로 짝지어진다(요청마다 새 연결)
         if headers.get("Mcp-Session-Id"):
             self.session_id = headers["Mcp-Session-Id"]
         if obj and "error" in obj:
@@ -123,6 +124,7 @@ class AgentLink:
     def __init__(self, voice_sync=None, wake_store=None):
         self.rt = read_runtime()
         self.mcp = None
+        self._mcp_lock = threading.Lock()  # 첫 도구 호출이 여러 스레드에서 동시에 온다
         self.ws = None
         self.connected = False          # WS 열림 (MCP 는 lazy)
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
@@ -378,10 +380,15 @@ class AgentLink:
         """MCP 도구 호출 → (ok, payload). ok 는 True(성공)/False(BE 가 막음·실패)/
         None(BE 접속 불가 → 로컬 폴백 신호). McpClient 는 lazy 연결·재연결."""
         try:
-            if self.mcp is None:
-                self.mcp = McpClient(self.rt["port"], self.rt["token"])
-                self.mcp.connect()
-            return self.mcp.call(tool, args or {})
+            mcp = self.mcp
+            if mcp is None:
+                with self._mcp_lock:
+                    if self.mcp is None:   # 두 스레드가 각자 MCP 세션을 여는 것 방지
+                        fresh = McpClient(self.rt["port"], self.rt["token"])
+                        fresh.connect()
+                        self.mcp = fresh   # initialize 가 끝난 뒤에 공개한다
+                    mcp = self.mcp
+            return mcp.call(tool, args or {})
         except Exception as e:
             self.mcp = None  # 다음 호출 때 재접속
             return None, {"code": "NO_BE", "message": str(e)}
