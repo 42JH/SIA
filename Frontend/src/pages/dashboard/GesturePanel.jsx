@@ -81,6 +81,15 @@ function buildDefaultGestures(items) {
 }
 
 const displayName = (gesture) => gesture.custom ? gesture.name : (gesture.label || gesture.name);
+const catalogLabel = (name) => defaultGestureCatalog.find((item) => item.name === name)?.label || name;
+function localizeGestureMentions(text) {
+  if (!text) return '';
+  return [...defaultGestureCatalog].sort((a, b) => b.name.length - a.name.length)
+    .reduce((current, item) => current.replaceAll(item.name, item.label), text);
+}
+function sentenceLines(text) {
+  return String(text || '').split(/\n+/).flatMap((part) => part.split(/(?<=[.!?])\s+/)).map((line) => line.trim()).filter(Boolean);
+}
 const displayTool = (step) => toolLabels[step.tool] || step.tool;
 const initialStep = () => ({ tool: '', args: {} });
 
@@ -130,6 +139,7 @@ function displayStepDetail(step, apps) {
     } else if (key === 'dir') displayed = directionLabels[value] || value;
     else if (key === 'preset') displayed = presetLabels[value] || value;
     else if (key === 'level') displayed = `${value}%`;
+    else if (key === 'path') displayed = shortenPath(value);
     return `${argumentLabels[key] || key}: ${displayed}`;
   });
   return details.join(' · ') || '추가 설정 없이 실행';
@@ -137,13 +147,13 @@ function displayStepDetail(step, apps) {
 
 function shortenPath(path) {
   const name = String(path ?? '').replaceAll('/', '\\').split('\\').filter(Boolean).pop();
-  return name ? `...${name}` : String(path ?? '');
+  return name || String(path ?? '');
 }
 
 function displayLinkedAction(step, apps) {
   const appName = launchAppName(step, apps);
   if (appName) return `${displayTool(step)} · ${appName}`;
-  if (step.tool === 'files.open' && step.args?.path) return `${displayTool(step)} · ${shortenPath(step.args.path)}`;
+  if (step.args?.path) return `${displayTool(step)} · ${shortenPath(step.args.path)}`;
   return `${displayTool(step)} · ${displayStepDetail(step, apps)}`;
 }
 
@@ -278,14 +288,14 @@ export default function GesturePanel() {
           {deleteMode ? <>
             <button onClick={() => { setDeleteMode(false); setSelectedIds([]); }}>취소</button>
             <button className={styles.danger} disabled={!selectedIds.length || deleting} onClick={() => setConfirmBulkDelete(true)}>선택 삭제 ({selectedIds.length})</button>
-          </> : <button disabled={!custom.length} onClick={() => { setDeleteMode(true); setSelected(null); }}>제스처 삭제</button>}
+          </> : <button disabled={!custom.length} onClick={() => { setDeleteMode(true); setSelected(null); setSelectedIds([]); window.scrollTo(0, 0); }}>제스처 삭제</button>}
           {!deleteMode && <button className={styles.primary} onClick={beginRegistration}>+ 새 제스처 등록</button>}
         </div>
       </div>
       {loading && <p role="status">제스처를 불러오는 중입니다.</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
       {!loading && <>
-        <GestureSection title="기본 제스처" items={basic} onSelect={setSelected} onToggle={toggle} deleteMode={deleteMode} apps={appCatalog} />
+        {!deleteMode && <GestureSection title="기본 제스처" items={basic} onSelect={setSelected} onToggle={toggle} apps={appCatalog} />}
         <GestureSection title="내 커스텀 제스처" items={custom} onSelect={setSelected} onToggle={toggle} deleteMode={deleteMode} selectedIds={selectedIds} onSelectForDelete={toggleDeleteSelection} apps={appCatalog} empty="등록한 커스텀 제스처가 없습니다." />
       </>}
       {selected && <GestureDetail
@@ -840,11 +850,11 @@ function RegistrationRejected({ registration, onRetry }) {
   const currentPreview = registration.previews[0];
   return <section className={styles.rejectedResult}>
     <div className={styles.alertIcon}>!</div>
-    <h3>{registration.error}</h3>
+    <h3>{sentenceLines(localizeGestureMentions(registration.error)).map((line) => <span key={line}>{line}</span>)}</h3>
     {hasSimilarGesture && <p>둘을 구분하지 못해 잘못 실행될 수 있습니다.<br />손 모양이나 방향을 바꿔 다시 촬영해주세요.</p>}
     <div className={`${styles.similarityGrid} ${hasSimilarGesture ? '' : styles.singlePreview}`}>
       <article><div className={styles.compareMedia}>{registration.frame ? <img src={registration.frame} alt="지금 촬영한 제스처" /> : currentPreview?.previewUrl ? (currentPreview.mediaType === 'IMAGE' ? <img src={mediaUrl(currentPreview.previewUrl)} alt="지금 촬영한 제스처" /> : <video src={mediaUrl(currentPreview.previewUrl)} muted loop autoPlay playsInline />) : <span>촬영 화면</span>}</div><strong>지금 만든 제스처</strong></article>
-      {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} comparison /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{registration.similarTo}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
+      {hasSimilarGesture && <article>{similar ? <HoverPreview gesture={similar} comparison /> : <div className={styles.compareMedia}><span>비슷한 제스처</span></div>}<strong>{similar ? displayName(similar) : catalogLabel(registration.similarTo)}</strong>{registration.similarity != null && <small>유사도 {Math.round(registration.similarity * 100)}%</small>}</article>}
     </div>
     <button className={styles.primary} onClick={onRetry}>다시 촬영</button>
     {hasSimilarGesture && <small>혼동 가능한 제스처는 등록할 수 없습니다.</small>}
