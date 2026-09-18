@@ -60,8 +60,8 @@
 .error { color: var(--gesture-danger); }
 
 .toolbar, .section, .backdrop, .registration { font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif; }
-.backdrop { position: fixed; z-index: 100; inset: 54px 0 0; display: grid; overflow: hidden; place-items: center; padding: clamp(8px, 1.6vw, 22px) clamp(10px, 2.4vw, 40px); background: rgb(6 29 61 / 58%); }
-.detailModal { position: relative; display: flex; width: min(1440px, 100%); max-width: 100%; height: min(calc(100vh - 78px), 100%); max-height: min(calc(100vh - 78px), 100%); min-height: 0; overflow: hidden; flex-direction: column; box-sizing: border-box; padding: 0 clamp(12px, 1.6vw, 24px) clamp(12px, 1.6vw, 24px); background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 24%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.backdrop { position: fixed; z-index: 100; inset: 54px 0 0; display: grid; overflow: hidden; place-items: center; padding: 40px 48px; background: rgb(6 29 61 / 58%); }
+.detailModal { position: relative; display: flex; width: min(1040px, 100%); max-width: 100%; height: min(620px, calc(100vh - 180px)); max-height: min(620px, calc(100vh - 180px)); min-height: 0; overflow: hidden; flex-direction: column; box-sizing: border-box; padding: 0 18px 16px; background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 24%); clip-path: polygon(18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .detailModal > header { position: sticky; z-index: 6; top: 0; display: grid; grid-template-columns: 38px 1fr 38px; align-items: center; min-height: 58px; flex-shrink: 0; border-bottom: 1px solid var(--gesture-soft-line); background: rgb(255 255 255 / 96%); }
 .detailModal header h2 { margin: 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 800; }
 .detailModal header button { border: 0; background: transparent; color: var(--gesture-ink); font-size: 36px; cursor: pointer; }
@@ -153,7 +153,8 @@
 .takeChoices span { position: absolute; right: 0; bottom: -28px; left: 0; color: var(--gesture-ink); font-weight: 700; }
 .alertIcon, .completeIcon { display: grid; width: 74px; height: 74px; place-items: center; border: 2px solid var(--gesture-navy); border-radius: 50%; font-size: 42px; }
 .rejectedResult { display: flex; width: 100%; align-items: center; flex-direction: column; }
-.rejectedResult h3 { margin: 12px 0 8px; font-size: 28px; }
+.rejectedResult h3 { display: grid; gap: 8px; margin: 12px 0 8px; font-size: 28px; line-height: 1.45; text-align: center; }
+.rejectedResult h3 span { display: block; }
 .rejectedResult > p { margin: 0; color: var(--gesture-copy); line-height: 1.7; text-align: center; }
 .rejectedResult > small { margin-top: 2px; color: var(--gesture-copy); }
 .similarityGrid { display: grid; width: min(1180px, 100%); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; margin: 22px 0 18px; }
