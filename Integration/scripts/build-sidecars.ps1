@@ -1,5 +1,6 @@
 # BE(jpackage)·AI(PyInstaller)를 빌드해서 Tauri sidecar 규칙에 맞는 이름으로
-# src-tauri/binaries/ 에 배치한다. `npm run build:sidecars`로 실행.
+# src-tauri/binaries/ 에 배치하고, 이어서 `tauri build`로 최종 설치파일까지 만든다.
+# `npm run build:sidecars`로 실행 (사이드카만 필요하면 `-SkipTauriBuild` 옵션).
 #
 # 전제(Agents.md "현재 임시 계약"과 동일):
 #   - sidecar 논리 이름: sia-backend, sia-ai
@@ -17,12 +18,18 @@
 # 코드 그대로 얼리면 "온보딩을 매번 다시 해야 하는" 상태가 된다. `sys.frozen`일 때는
 # `Path(sys.executable).parent`(또는 %APPDATA%처럼 BE의 runtime.json과 같은 방식의
 # 고정 쓰기 위치)를 쓰도록 AI 쪽에서 먼저 고쳐야 이 스크립트의 산출물이 실제로 쓸 만하다.
-# (이 스크립트를 쓰기 전에 AI 담당자와 먼저 확인할 것.)
+
+param(
+    # 사이드카(BE·AI)만 빌드해서 binaries/에 배치하고 끝낸다 — 최종 exe 패키징(tauri
+    # build, [5/5])은 건너뛴다. 사이드카 갱신만 필요할 때(예: 반복 테스트) 씀.
+    [switch]$SkipTauriBuild
+)
 
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path "$PSScriptRoot\..\.."
-$binariesDir = Join-Path (Resolve-Path "$PSScriptRoot\..") "src-tauri\binaries"
+$integrationDir = Resolve-Path "$PSScriptRoot\.."
+$binariesDir = Join-Path $integrationDir "src-tauri\binaries"
 $target = "x86_64-pc-windows-msvc"
 
 if (-not (Test-Path $binariesDir)) {
@@ -30,9 +37,9 @@ if (-not (Test-Path $binariesDir)) {
 }
 
 # ---------------------------------------------------------------------------
-# [1/4] Backend 빌드 (bootJar)
+# [1/5] Backend 빌드 (bootJar)
 # ---------------------------------------------------------------------------
-Write-Host "=== [1/4] Backend 빌드 (gradlew bootJar) ===" -ForegroundColor Cyan
+Write-Host "=== [1/5] Backend 빌드 (gradlew bootJar) ===" -ForegroundColor Cyan
 Push-Location (Join-Path $root "Backend")
 try {
     & .\gradlew.bat bootJar
@@ -48,9 +55,9 @@ if (-not $jar) { throw "빌드된 BE 실행 가능 jar를 못 찾았습니다 (B
 Write-Host "BE jar: $($jar.Name)"
 
 # ---------------------------------------------------------------------------
-# [2/4] Backend jpackage (app-image) -> src-tauri/binaries/
+# [2/5] Backend jpackage (app-image) -> src-tauri/binaries/
 # ---------------------------------------------------------------------------
-Write-Host "=== [2/4] Backend jpackage (app-image) ===" -ForegroundColor Cyan
+Write-Host "=== [2/5] Backend jpackage (app-image) ===" -ForegroundColor Cyan
 
 if (-not (Get-Command jpackage -ErrorAction SilentlyContinue)) {
     throw "jpackage 를 PATH에서 못 찾았습니다. JDK 17+ (jpackage 포함) 설치 후 JAVA_HOME\bin을 PATH에 추가하세요."
@@ -86,9 +93,9 @@ foreach ($name in @("$beName.exe", "app", "runtime")) {
 Write-Host "BE sidecar 배치 완료: $binariesDir\$beName.exe (+ app\, runtime\)"
 
 # ---------------------------------------------------------------------------
-# [3/4] AI 빌드 (PyInstaller --onefile)
+# [3/5] AI 빌드 (PyInstaller --onefile)
 # ---------------------------------------------------------------------------
-Write-Host "=== [3/4] AI 빌드 (PyInstaller --onefile) ===" -ForegroundColor Cyan
+Write-Host "=== [3/5] AI 빌드 (PyInstaller --onefile) ===" -ForegroundColor Cyan
 
 if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
     throw "pyinstaller 를 PATH에서 못 찾았습니다. 'pip install pyinstaller' 먼저 실행하세요."
@@ -113,14 +120,40 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# [4/4] AI 산출물 배치 -> src-tauri/binaries/
+# [4/5] AI 산출물 배치 -> src-tauri/binaries/
 # ---------------------------------------------------------------------------
-Write-Host "=== [4/4] AI 산출물 배치 ===" -ForegroundColor Cyan
+Write-Host "=== [4/5] AI 산출물 배치 ===" -ForegroundColor Cyan
 $aiExe = Join-Path $root "AI\dist\$aiName.exe"
 if (-not (Test-Path $aiExe)) { throw "AI 빌드 산출물을 못 찾았습니다: $aiExe" }
 Copy-Item $aiExe $binariesDir -Force
 Write-Host "AI sidecar 배치 완료: $binariesDir\$aiName.exe"
 
 Write-Host ""
-Write-Host "=== 완료 — $binariesDir ===" -ForegroundColor Green
+Write-Host "=== 사이드카 배치 완료 — $binariesDir ===" -ForegroundColor Green
 Get-ChildItem $binariesDir
+
+# ---------------------------------------------------------------------------
+# [5/5] 최종 패키징 (tauri build) -> src-tauri/target/release/bundle/
+# ---------------------------------------------------------------------------
+if ($SkipTauriBuild) {
+    Write-Host ""
+    Write-Host "=== [5/5] 건너뜀 (-SkipTauriBuild) — 사이드카만 배치하고 종료 ===" -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host ""
+Write-Host "=== [5/5] 전체 패키징 (tauri build) ===" -ForegroundColor Cyan
+Push-Location $integrationDir
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "tauri build 실패 (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+
+$bundleDir = Join-Path $integrationDir "src-tauri\target\release\bundle"
+Write-Host ""
+Write-Host "=== 전체 빌드 및 패키징 완료 — $bundleDir ===" -ForegroundColor Green
+if (Test-Path $bundleDir) {
+    Get-ChildItem $bundleDir -Recurse -File | Select-Object FullName, Length
+}
