@@ -67,6 +67,11 @@ WAKE_ENROLL_IDLE_S = float(os.environ.get("WAKE_ENROLL_IDLE_S") or 180.0)
 # 음성 명령이 죽는다. 5개를 채우는 사람은 몇 초 간격으로 말하므로 3분이면 넉넉하다.
 WAKE_TOTAL = 5         # 온보딩 "시아야" 부르기 샘플 수 — FE 진행바의 total 과 같은 값. 10 이었다가 5 로 줄임 (2026-09-10)
 WAKE_MIN_SIM = 0.30    # ponytail: 임시값. 호출어 교차 화자 실측 후 조정한다
+WAKE_ENROLL_LOGPROB_MIN = -4.5   # NOTE(튜닝): 등록 때의 단어 확률 하한. 실행 기준(brain.WAKE_WORD_LOGPROB_MIN = -4.0)보다
+                       # 느슨하다 — 등록은 사용자가 화면의 단어를 보고 읽는 협조 상황이고, 실측에서 정상 호출의 1할이
+                       # -4.0~-4.5 에 있어 -4.0 이면 5번 중 한 번은 거절될 확률이 30 % 다. 등록 녹음 6개의 실측은 -1.5~-3.5
+WAKE_ENROLL_WORD_FAILS = 3   # NOTE(튜닝): 한 회차에서 단어 확률 미달이 이만큼 이어지면 호출어 자체를 바꾸라고 권한다 —
+                       # 받아쓰기 모델이 잘 모르는 단어는 더 불러도 안 되므로, 5번을 다 헛부르게 두지 않는다
 REJECT_CODES = {"TOO_SHORT", "TOO_LONG", "NOISY", "INCONSISTENT", "MISMATCH"}
                      # 두 이벤트(wakeword_rejected · voice_sentence_rejected)의 확정 code 어휘, BE 프로토콜 §4 와 같은 값
 REJECT_REASONS = {   # 품질 판정 사유 → FE 에 보여 줄 문구
@@ -727,23 +732,25 @@ class WakeTemplateStore:
         return self.setting_word or self.default_word
 
     def on_settings(self, settings):
-        """호출어 설정 반영. 등록 당시 문자열과 다르면 matches_setting에서 사용을 막는다."""
+        """호출어 설정 반영. 등록 당시 문자열과 다르면 matches_setting 에서 사용을 막고 재등록 안내를 남긴다.
+        서버 등록본은 하나뿐이라(BE 프로토콜 §3.3) 이전 호출어로 되돌아가도 다시 5번 불러야 한다."""
         if not isinstance(settings, dict) or "wakeWord" not in settings:
             return False
         word = settings["wakeWord"]
-        if not isinstance(word, str) or not word.strip() or word == self.setting_word:
+        if not isinstance(word, str):
+            return False
+        # 받는 자리에서 한 번만 다듬는다 — 저장·비교·로그·matches_setting 이 모두 이 값을 쓴다.
+        # 소비처(assistant.pick_wake_stream · WakeEnroll._custom)가 "시아야" 와 원본을 그대로 견주므로,
+        # 공백이 하나 붙으면 고정 호출어가 사용자 지정으로 분류돼 등록본이 없다는 이유로 모든 호출이 기각된다.
+        # 다듬기를 아래 검사보다 뒤에 두면 같은 설정이 다시 올 때마다 바뀐 것으로 보고 generation 을 올린다.
+        word = word.strip()
+        if not word or word == self.setting_word:
             return False
         with self._lock:
             self.setting_word = word
             self.generation += 1          # 판정 중인 발화는 이 설정으로 다시 봐야 한다
             template = self.current
-        from brain import WAKE_MODEL_WORD
-
-        # 고정 모델과 설정 호출어가 다르면 세션이 열리지 않으므로 원인을 출력한다.
-        print(f'[BE←] settings.wakeWord "{word}"'
-              + ("" if word == WAKE_MODEL_WORD else
-                 f' — 고정 모델 문구 "{WAKE_MODEL_WORD}" 와 달라 세션이 열리지 않습니다'
-                 " (사용자 지정 호출어는 아직 지원하지 않습니다)"))
+        print(f'[BE←] settings.wakeWord "{word}"')
         if template is not None and not template.matches_setting(word):
             print(f"[호출어 템플릿] 설정이 \"{word}\" 로 바뀌었는데 템플릿은 \"{template.wake_text}\" 로 등록돼 있습니다 "
                   "— 새 호출어로 다시 등록해야 세션이 열립니다")
@@ -1036,13 +1043,16 @@ class WakeEnroll:
     샘플마다 wakeword_sample을 보내고, 서버와 로컬 저장이 끝나면 wakeword_done을 보낸다.
     검사를 통과하지 못하면 wakeword_rejected로 사유를 알리고 같은 순번을 다시 받는다.
     저장 완료 전에는 기존 템플릿을 유지한다. 고정 시동어 모델은 학습하지 않는다.
+    "시아야"가 아닌 호출어는 발음을 받아쓰기 모델의 단어 확률로 확인하고, 5개가 모이면 판정 헤드를 학습해
+    등록본에 함께 담는다 (wake_head.py). 나머지 절차는 "시아야"와 같다.
     """
 
-    def __init__(self, link, speaker=None, store=None, wake_model=None):
+    def __init__(self, link, speaker=None, store=None, wake_model=None, word_scorer=None):
         self.link = link                    # AgentLink (WS 발신·rt) 또는 스텁
         self.speaker = speaker
         self.store = store                  # WakeTemplateStore — 확정된 템플릿을 여기에 맡긴다
         self.wake_model = wake_model        # 고정 시동어 모델 — 실행 때와 같은 것으로 발음을 확인한다
+        self.word_scorer = word_scorer      # 받아쓰기 모델의 단어 확률 (brain.word_logprob) — 사용자 지정 호출어의 발음 확인
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
         self.last_at = 0.0                  # 마지막 진행(시작·샘플) 시각 — 방치 판정용
@@ -1050,11 +1060,16 @@ class WakeEnroll:
         self.epoch = 0                      # 등록 회차 — 늦게 끝난 이전 회차가 확정하지 못하게 한다
         self._samples = []
         self._embs = []
-        self._scores = []                   # 샘플별 시동어 점수 — 실측 기록용(판정에는 쓰지 않는다)
+        self._scores = []                   # 샘플별 발음 점수 — 실측 기록용(판정에는 쓰지 않는다)
         self._fails = 0                     # 연속 실패 횟수 (안내용, 기준을 느슨하게 하지는 않는다)
+        self._word_fails = 0                # 그중 단어 확률 미달만 따로 — 이어지면 호출어 자체를 바꾸라고 권한다
         self._preload = None
         self._saving = False                # 5개를 다 모았고 저장만 남았다 — 다음 발화는 새 샘플이 아니라 저장 재시도다
         self._saved = None                  # (회차, 서버에 저장한 본문) — 이 짝이 맞을 때만 서버 쓰기를 건너뛴다
+        self._head = None                   # (회차, 학습한 헤드) — 같은 회차의 저장 재시도에서 다시 학습하지 않는다
+        self._bank = None                   # 미리 읽어 둔 부정 뱅크 — 등록 시작 때 읽어 5번 부른 뒤에야 없는 걸 알게 되지 않도록
+        self._training = False              # 헤드 학습 중 — 그 사이 들어온 발화는 샘플로도 저장 재시도로도 쓰지 않는다
+        self._trainer = None                # 학습 스레드 — 확정은 회차로 가르므로 기다리지 않는다 (테스트만 join 한다)
 
     def _tx(self, type_, data):
         print(f"[BE→] {type_} {json.dumps(data, ensure_ascii=False)}")
@@ -1065,15 +1080,14 @@ class WakeEnroll:
         log_rx("wakeword_enroll_start", {})
         self.active, self._samples, self._embs, self._scores = True, [], [], []
         self.started_at = self.last_at = time.monotonic()
-        self._fails = 0
+        self._fails = self._word_fails = 0
         self._saving, self._saved = False, None
+        self._head, self._training, self._bank = None, False, None   # 돌고 있는 앞 회차 학습은 끝나고 회차를 보고 스스로 접는다
         self.epoch += 1                     # 앞 회차가 뒤늦게 끝나도 확정하지 못한다
         # 이번 등록이 대상으로 삼는 호출어는 지금 설정값이다 — 설정만 바꾸고 옛 템플릿을 재사용하는 길을 막는다.
         self.wake_text = self.store.wake_word() if self.store else WAKE_DEFAULT_WORD
-        if self.speaker is not None:
-            self._preload = threading.Thread(target=self.speaker._model, daemon=True)
-            self._preload.start()
         print(f"[호출어 수집] 시작({self.epoch}회차) — \"{self.wake_text}\" {WAKE_TOTAL}번")
+        self._start_prepare()
 
     def expired(self, now=None):
         """방치된 수집인가 — 마지막 진행 뒤 WAKE_ENROLL_IDLE_S 가 지났다.
@@ -1092,37 +1106,122 @@ class WakeEnroll:
         self.active, self._saving, self._saved = False, False, None
         self.epoch += 1
         self._samples, self._embs, self._scores = [], [], []
+        self._head, self._training = None, False
         print("[호출어 수집] 중단 — 이전 호출어 설정과 템플릿을 유지합니다")
         return True
+
+    def _start_prepare(self):
+        """뒤에서 준비를 시작한다 — 첫 샘플 전에 끝나면 기다림이 없다."""
+        self._preload = threading.Thread(target=self._prepare, args=(self.epoch,), daemon=True)
+        self._preload.start()
+
+    def _prepare(self, epoch):
+        """화자 모델을 올리고, 사용자 지정 호출어면 부정 뱅크까지 읽어 둔다.
+
+        뱅크를 학습할 때 처음 읽으면 5번을 다 부른 뒤에야 없는 것을 알게 된다. 여기서 먼저 읽어,
+        못 읽으면 한 번도 부르게 하지 않고 수집을 접는다 — 접어야 발화가 다시 명령으로 간다."""
+        if self.speaker is not None:
+            try:
+                self.speaker._model()
+            except Exception as e:
+                print(f"[호출어 수집] 화자 모델 미리 로드 실패 — 첫 샘플에서 다시 시도: {e}")
+        if not self._custom:
+            return
+        import wake_head
+
+        try:
+            bank = wake_head.load_bank()
+        except (FileNotFoundError, ValueError) as e:
+            if epoch != self.epoch or not self.active:
+                return                      # 앞 회차의 준비다 — 지금 수집을 건드리지 않는다
+            print(f"[호출어 수집] 부정 뱅크를 읽지 못했습니다({wake_head.NEG_BANK}) — {type(e).__name__}: {e}")
+            self._reject("이 PC 에 호출어 학습 자료가 없어 새 이름을 등록할 수 없어요.",
+                         f"부정 뱅크 {type(e).__name__}")
+            self.cancel()                   # 더 불러도 결과가 같다
+            return
+        if epoch == self.epoch:
+            self._bank = bank
+
+    def on_word_changed(self, word):
+        """수집 중에 설정 호출어가 바뀌었다 → 모은 샘플을 버리고 새 이름으로 다시 받는다 (버렸으면 True).
+
+        그냥 두면 옛 이름으로 5개를 다 모아 확정한 뒤에야 설정과 다른 것이 드러나, 부른 5번이 통째로 버려진다."""
+        if not self.active or not isinstance(word, str) or word == self.wake_text:
+            return False
+        old = self.wake_text
+        self.wake_text = word
+        self.epoch += 1                     # 돌고 있는 학습·저장은 회차를 보고 스스로 접는다
+        self._samples, self._embs, self._scores = [], [], []
+        self._fails = self._word_fails = 0
+        self._saving, self._saved = False, None
+        self._head, self._training, self._bank = None, False, None
+        print(f'[호출어 수집] 설정이 "{old}" → "{word}" 로 바뀌었다 — 모은 샘플을 버리고 다시 받는다')
+        self._reject(f'호출어가 "{word}" 로 바뀌었어요. 새 이름으로 다시 {WAKE_TOTAL}번 불러주세요.', "호출어 변경")
+        self._start_prepare()
+        return True
+
+    @property
+    def _custom(self):
+        """사용자 지정 호출어인가 — 고정 모델이 모르는 단어라 발음 확인 수단과 헤드 학습이 갈린다."""
+        from brain import WAKE_MODEL_WORD
+
+        return self.wake_text != WAKE_MODEL_WORD
 
     # ── 메인 루프가 VAD 발화마다 호출 (수집 중엔 brain 대신 여기로) ──
     def on_utter(self, audio_i16, t_utter=None):
         if not self.active:
             return                          # t_utter 는 안 쓴다 — 호출어 수집엔 무를 문장이 없다. 호출부를 하나로 두려고 받아만 둔다
         self.last_at = time.monotonic()     # 진행이 있었다 — 방치 시계를 민다
+        if self._training:
+            # 5개는 이미 모였고 헤드를 학습하는 중이다 — 새 샘플로도, 저장 재시도로도 쓰지 않는다
+            print("[호출어 수집] 헤드 학습 중 — 이 발화는 세지 않는다")
+            return
         if self._saving:
             # 유효한 5개는 이미 모였고 저장만 실패한 상태다 — 여섯 번째 샘플로 받지 않고 저장을 다시 시도한다
             print("[호출어 수집] 저장 재시도 — 모은 샘플은 그대로 쓴다")
             self._finish(self.epoch)
             return
-        from brain import WAKE_THRESHOLD, speech_s, wake_clip, wake_clip_is_clean, wake_score_of
+        from brain import (WAKE_CLIP_PAD_S, WAKE_THRESHOLD, speech_s, speech_span, wake_clip,
+                           wake_clip_is_clean, wake_score_of)
 
         epoch = self.epoch
         audio = np.asarray(audio_i16, dtype=np.int16)
-        if self.wake_model is None:
-            self._reject("호출어 모델이 없어 등록할 수 없어요.", "시동어 모델 없음")
-            return
-        # 발음 확인은 실행 때와 같은 고정 모델로 한다 — 등록에서 받아 준 발음이 실행에서 안 걸리는 모순을 없앤다.
-        score, i_max, lead = wake_score_of(self.wake_model, audio)
-        if i_max is None:
-            self._reject(f"\"{self.wake_text}\" 로 들리지 않았어요. 또박또박 다시 불러주세요.",
-                         f"시동어 점수 {score:.2f} < {WAKE_THRESHOLD}", "MISMATCH")
-            return
-        clip, _, clip_end, certain = wake_clip(audio, i_max, lead)   # 자르는 규칙도 실행과 같다
+        custom = self._custom
+        if custom:
+            # 고정 모델은 "시아야" 만 알아 채점할 수 없다 — 구간은 말소리 그대로 잡고, 발음은 품질 검사 뒤 받아쓰기 모델이 본다.
+            span = speech_span(audio)
+            if span is None:
+                self._reject(REJECT_REASONS["TOO_SHORT"], "말소리 없음", "TOO_SHORT")
+                return
+            lo = max(0.0, span[0] - WAKE_CLIP_PAD_S)
+            clip_end = min(len(audio) / SR, span[1] + WAKE_CLIP_PAD_S)
+            clip, certain = audio[int(lo * SR):int(clip_end * SR)], True
+        else:
+            if self.wake_model is None:
+                self._reject("호출어 모델이 없어 등록할 수 없어요.", "시동어 모델 없음")
+                return
+            # 발음 확인은 실행 때와 같은 고정 모델로 한다 — 등록에서 받아 준 발음이 실행에서 안 걸리는 모순을 없앤다.
+            score, i_max, lead = wake_score_of(self.wake_model, audio)
+            if i_max is None:
+                self._reject(f"\"{self.wake_text}\" 로 들리지 않았어요. 또박또박 다시 불러주세요.",
+                             f"시동어 점수 {score:.2f} < {WAKE_THRESHOLD}", "MISMATCH")
+                return
+            clip, _, clip_end, certain = wake_clip(audio, i_max, lead)   # 자르는 규칙도 실행과 같다
         ok, why, code = wake_clip_is_clean(audio, clip, clip_end, certain)
         if not ok:
             self._reject(REJECT_REASONS.get(code, "또렷하게 다시 불러주세요."), why, code)
             return
+        if custom:
+            # 발음 확인도 실행과 같은 수단(받아쓰기 모델)으로 한다 — 기준만 등록 쪽이 느슨하다.
+            score = None if self.word_scorer is None else self.word_scorer(clip, self.wake_text)
+            if score is None:
+                self._reject("받아쓰기 모델을 쓸 수 없어 등록할 수 없어요.", "단어 확률 없음")
+                return
+            if score < WAKE_ENROLL_LOGPROB_MIN:
+                self._word_fails += 1
+                self._reject(f"\"{self.wake_text}\" 로 들리지 않았어요. 또박또박 다시 불러주세요.",
+                             f"단어 확률 {score:.2f} < {WAKE_ENROLL_LOGPROB_MIN}", "MISMATCH")
+                return
         if self.speaker is None:
             self._reject("목소리 분석을 쓸 수 없어 등록할 수 없어요.", "화자 모델 없음")
             return
@@ -1148,9 +1247,10 @@ class WakeEnroll:
         self._samples.append(clip)
         self._embs.append(emb)
         self._scores.append(score)
-        self._fails = 0
+        self._fails = self._word_fails = 0
         n = len(self._samples)
-        print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} (말소리 {speech_s(clip):.2f} s, 시동어 점수 {score:.2f})")
+        print(f"[호출어 수집] 샘플 {n}/{WAKE_TOTAL} (말소리 {speech_s(clip):.2f} s, "
+              f"{'단어 확률' if custom else '시동어 점수'} {score:.2f})")
         self._tx("wakeword_sample", {"n": n, "total": WAKE_TOTAL})
         if n >= WAKE_TOTAL:
             self._finish(epoch)
@@ -1168,16 +1268,50 @@ class WakeEnroll:
               f"다시 기다린다 (연속 {self._fails}회)")
         if self._fails >= REJECT_BUDGET + 1 and not self._saving:
             reason += " 계속 안 되면 조용한 곳에서 마이크에 조금 더 가까이 불러주세요."   # 저장 실패는 말하는 법과 무관하다
+        if self._word_fails >= WAKE_ENROLL_WORD_FAILS:
+            reason += " 이 호출어는 받아쓰기 모델이 잘 알아듣지 못해요. 다른 호출어를 골라 주세요."   # 더 불러도 안 된다
         data = {"n": n, "total": WAKE_TOTAL, "reason": reason}
         if code in REJECT_CODES:
             data["code"] = code
         self._tx("wakeword_rejected", data)
+
+    def _train_head(self, epoch):
+        """사용자 지정 호출어의 발음 판정 헤드를 모은 샘플로 학습한다 (스레드 — CPU 3초 안팎이라 메인 루프를 막지 않는다).
+
+        끝나면 회차를 다시 보고 늦은 결과는 버린 뒤 저장 절차로 넘어간다. 실패는 저장 실패와 같게 다룬다 —
+        _saving 이 남아 있어 다음 발화가 학습부터 다시 시도한다."""
+        import wake_head
+
+        t0 = time.monotonic()
+        head, fail = None, None
+        try:
+            bank = self._bank if self._bank is not None else wake_head.load_bank()
+        except (FileNotFoundError, ValueError) as e:
+            print(f"[호출어 수집] 부정 뱅크를 읽지 못했습니다({wake_head.NEG_BANK}) — {type(e).__name__}: {e}")
+            fail = ("호출어 학습 자료가 없어 등록을 마치지 못했어요.", f"부정 뱅크 {type(e).__name__}")
+        else:
+            try:
+                head = wake_head.train_head(self._samples, bank)
+                print(f"[호출어 수집] 헤드 학습 {time.monotonic() - t0:.1f} s")
+            except Exception as e:
+                print(f"[호출어 수집] 헤드 학습 실패 — {type(e).__name__}: {e}")
+                fail = ("등록본을 만들지 못했어요. 잠시 후 다시 불러주세요.", f"헤드 학습 실패 {type(e).__name__}")
+        if epoch != self.epoch:
+            print("[호출어 수집] 이전 회차의 헤드 학습 — 적용하지 않습니다")
+            return                          # _training 은 새 회차가 이미 껐다 — 여기서 건드리면 그 회차를 망친다
+        self._training = False
+        if fail:
+            self._reject(*fail)
+            return
+        self._head = (epoch, head)
+        self._finish(epoch)
 
     def _finish(self, epoch):
         """5개로 템플릿을 만들어 서버·로컬에 저장한 뒤에야 확정한다.
 
         서버를 먼저 저장해 로컬 저장 실패 시 다운로드로 복구할 수 있게 한다.
         실패하면 같은 5개로 다시 시도하고, 모두 저장된 뒤 wakeword_done을 보낸다.
+        사용자 지정 호출어는 저장 전에 발음 판정 헤드를 학습한다 (한 회차에 한 번).
         """
         from speaker import WakeTemplate
 
@@ -1189,8 +1323,20 @@ class WakeEnroll:
             self._reject("등록본을 저장하지 못했어요. 잠시 후 다시 불러주세요.", "템플릿 저장소 없음")
             return
         self._saving = True                 # 여기부터 들어오는 발화는 샘플이 아니라 저장 재시도다
+        head = None
+        if self._custom:
+            if self._head is None or self._head[0] != epoch:
+                self._training = True
+                print("[호출어 수집] 헤드 학습 시작")
+                # 5/5 뒤 몇 초 동안 화면에 아무 변화가 없고 그 사이 말한 것도 세지 않는다 — 기다릴 이유를 알린다.
+                # 계약에 학습 단계 이벤트가 없어 AI 소유 채널인 notice 로 보낸다 (BE 프로토콜 §4.1).
+                self._tx("notice", {"message": "이름을 익히는 중이에요. 잠시만 기다려 주세요."})
+                self._trainer = threading.Thread(target=self._train_head, args=(epoch,), daemon=True)
+                self._trainer.start()
+                return                      # 학습이 끝나면 그 스레드가 여기로 다시 온다
+            head = self._head[1]
         template = WakeTemplate(self.wake_text, self._scores, np.asarray(self._embs, dtype=np.float32),
-                                len(self._embs))
+                                len(self._embs), head=head)
         # 쓰기 순번을 먼저 예약한다 — 큐에서 기다리던 이전 업로드가 이 등록본을 덮지 못하게.
         seq, generation = self.store.reserve_write()
         body = template.npz_bytes()
@@ -1216,5 +1362,5 @@ class WakeEnroll:
             return
         self.active = self._saving = False  # 확정 뒤 들어온 발화는 세지 않는다
         print(f"[호출어 수집] 확정 — 호출어 \"{self.wake_text}\", 기준 {template.base_n}개, "
-              f"시동어 점수 {[round(s, 2) for s in template.scores]}")
+              f"{'단어 확률' if self._custom else '시동어 점수'} {[round(s, 2) for s in template.scores]}")
         self._tx("wakeword_done", {})

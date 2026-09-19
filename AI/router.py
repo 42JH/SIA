@@ -134,7 +134,8 @@ def volume_level(c):
 DEFAULT_PROMPT = ("시아야. " + " ".join(f"{a} 열어줘. {a} 켜줘." for a in APPS_KO) + " "
                   + " ".join(f"{ws[0]}." for ws, _, _ in MEDIA_KO)
                   + " 볼륨 올려줘. 볼륨 내려줘. 이거 저장해줘. 창 최대화. 다음 탭. 종료.")
-STT_PROMPT = (os.environ["STT_PROMPT"] or None) if "STT_PROMPT" in os.environ else DEFAULT_PROMPT
+STT_PROMPT_FIXED = "STT_PROMPT" in os.environ   # 환경변수로 준 프롬프트는 호출어가 바뀌어도 그대로 쓴다
+STT_PROMPT = (os.environ["STT_PROMPT"] or None) if STT_PROMPT_FIXED else DEFAULT_PROMPT
 
 # NOTE(튜닝): 흔한 동사("들어가" 등)는 오탐 실측 후 제거됨 — '유튜브 들어가줄래'가
 # end_session 으로 처리된 사례(2026-09-03). 부분 일치는 명시적 종료 표현만.
@@ -154,11 +155,23 @@ def _compact(text):
 
 class Router:
     def __init__(self, wake_word):
-        self.wakes = tuple(_compact(w) for w in
-                           WAKE_VARIANTS.get(wake_word, (wake_word,)))
         self._model = None
         self._load_lock = threading.Lock()
+        self._tok = None          # word_logprob 용 토크나이저 — 처음 쓸 때 한 번 만든다
+        self._word_tokens = {}    # 단어 → 토큰 후보 (공백 붙인 것, 안 붙인 것)
         self.last_logprob = None  # 직전 transcribe 의 세그먼트 최저 avg_logprob (환각 가드·로그용)
+        self.word, self.wakes, self.prompt = None, (), STT_PROMPT
+        self.set_wake(wake_word)
+
+    def set_wake(self, word):
+        """호출어가 바뀌면 부른다 — 사전 매칭의 호출어와 받아쓰기 프롬프트 맨 앞의 호출어를 함께 바꾼다.
+        프롬프트 맨 앞이 옛 호출어로 남으면 모델이 새 호출어를 옛 호출어로 받아 적는다.
+        빈 문자열·공백뿐인 단어는 무시하고 지금 호출어를 유지한다 — 빈 호출어는 사전 매칭이 모든 문장을 호출로 본다."""
+        if not word or not word.strip():
+            return
+        self.word = word
+        self.wakes = tuple(_compact(w) for w in WAKE_VARIANTS.get(word, (word,)))
+        self.prompt = STT_PROMPT if STT_PROMPT_FIXED else f"{word}." + DEFAULT_PROMPT[len("시아야."):]
 
     def _load(self, WhisperModel):
         if self._model is not None:
@@ -167,14 +180,23 @@ class Router:
         self.device, self.compute = STT_DEVICE, STT_COMPUTE
         try:
             if STT_DEVICE.startswith("cuda"):
-                import torch  # noqa: F401 — torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
-            self._model = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+                import torch  # noqa: F401 — CUDA 빌드 torch 가 cublas64_12/cudnn64_9 DLL 경로를 등록해 ctranslate2 가 GPU 를 잡는다(별도 CUDA 설치 불필요)
+            m = WhisperModel(MODEL_NAME, device=STT_DEVICE, compute_type=STT_COMPUTE)
+            if STT_DEVICE.startswith("cuda"):
+                # cuBLAS·cuDNN 은 모델 생성이 아니라 첫 연산에서 로드된다 — 생성만 보고 GPU 를 채택하면
+                # CPU 전용 torch 환경에서 발화마다 "cublas64_12.dll is not found" 로 죽고, self._model 이
+                # 이미 차 있어 아래 CPU 폴백이 영영 안 탄다(9/18 팀원 전원 재현: GPU 는 4050~4070 로 멀쩡한데
+                # requirements.txt 의 torch==2.11.0 이 PyPI 윈도우 휠이라 CPU 전용이었다).
+                import numpy as np
+
+                list(m.transcribe(np.zeros(4000, np.float32), language="ko", beam_size=1)[0])
+            self._model = m
         except Exception as e:
             if not STT_DEVICE.startswith("cuda"):
                 raise
-            # GPU 는 보이는데 로드가 실패하는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
+            # GPU 는 보이는데 쓸 수 없는 환경(CPU 전용 torch 라 cuDNN/cuBLAS DLL 이 없음 등) — 발화마다 수 초짜리
             # 재시도 대신 CPU small 로 한 번에 내려간다. 팀원 노트북 셋업 차이를 여기서 흡수.
-            print(f"STT GPU 로드 실패 → CPU 폴백: {str(e)[:120]}")
+            print(f"STT GPU 사용 불가 → CPU 폴백: {str(e)[:120]}")
             self.device, self.compute = "cpu", "int8"
             self._model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
         print(f"STT 모델 로드 ({MODEL_NAME}, {self.device}/{self.compute}, beam {STT_BEAM}, {time.monotonic() - t0:.1f}s)")
@@ -200,11 +222,50 @@ class Router:
         t0 = time.monotonic()
         a = np.asarray(audio_i16, dtype=np.float32) / 32768.0
         segments, _ = self._model.transcribe(a, language="ko", beam_size=STT_BEAM,
-                                             condition_on_previous_text=False, initial_prompt=STT_PROMPT)
+                                             condition_on_previous_text=False, initial_prompt=self.prompt)
         segments = list(segments)
         text = "".join(s.text for s in segments).strip()
         self.last_logprob = min((s.avg_logprob for s in segments), default=None)
         return text, time.monotonic() - t0
+
+    def word_logprob(self, audio_i16, word, detail=False):
+        """발화에 word 가 들어 있는 정도 → 평균 로그 확률 (0 에 가까울수록 그 단어).
+
+        받아 적게 하지 않고, 같은 모델에게 word 의 글자 조각(토큰)을 강제로 맞춰 보게 해 각 조각의 확률을 읽는다.
+        받아쓰기로 확인하면 짧은 단독 호출을 인사말("잘했어요" 등)로 바꿔 적어 실제 호출 41개 중 28개만 통과했고,
+        단어 확률로는 37개가 통과했다. 무관한 말은 두 방식 모두 0건이었다.
+        프롬프트는 주지 않는다 — 받아쓰기 확인에서 프롬프트가 결과를 호출어 쪽으로 끌어 다른 호출어("시아야")의
+        오통과를 늘렸다. 단어 앞 공백 유무에 따라 토큰이 달라 두 후보 중 높은 값을 쓴다. transcribe 의 통계(last_logprob)는 건드리지 않는다.
+
+        detail=True 면 (평균, 마지막 조각) 을 돌려준다. 끝음절이 빠진 말("철수야" 에 대한 "철수")은 앞 조각이 잘 맞아
+        평균으로는 묻히고 마지막 조각만 폭락한다 — 실측 예 [-0.12, -0.00, -0.07, -11.27], 평균 -2.87."""
+        import numpy as np
+        from faster_whisper import WhisperModel
+        from faster_whisper.audio import pad_or_trim
+
+        if not word or not word.strip():
+            raise ValueError("확인할 단어가 비어 있습니다")
+        with self._load_lock:
+            self._load(WhisperModel)
+            cands = self._word_tokens.get(word)
+            if cands is None:
+                if self._tok is None:
+                    from faster_whisper.tokenizer import Tokenizer
+
+                    m = self._model
+                    self._tok = Tokenizer(m.hf_tokenizer, m.model.is_multilingual, task="transcribe", language="ko")
+                cands = self._word_tokens[word] = (self._tok.encode(" " + word), self._tok.encode(word))
+        m = self._model
+        f = m.feature_extractor(np.asarray(audio_i16, np.float32) / 32768.0)
+        enc = m.encode(pad_or_trim(f))
+        frames = min(f.shape[-1], 3000)   # 인코더는 30 s(3000프레임)까지만 본다 — 그보다 긴 발화는 앞 30 s 만 맞춘다
+
+        def lp(c):
+            p = m.model.align(enc, self._tok.sot_sequence, [c], frames)[0].text_token_probs[:len(c)]   # 끝의 종료 토큰은 뺀다
+            return np.log(np.maximum(np.asarray(p), 1e-9))
+
+        best = max((lp(c) for c in cands), key=lambda v: v.mean())
+        return (float(best.mean()), float(best[-1])) if detail else float(best.mean())
 
     def _residual(self, c, name):
         """호출어·앱 이름을 뺀 나머지 — 군말뿐인지 판단용."""
@@ -297,6 +358,46 @@ def selftest():
     assert r.route("다음 영상", True)["media_key"] == "next"
     assert r.route("수고하셨습니다", True)["action"] == "end_session"
     r.last_logprob = -1.5; assert r.route("다음곡", True) is None; r.last_logprob = None  # 환각 가드: 신뢰도 낮으면 승격
+    # 호출어 변경 — 사전 매칭과 프롬프트 맨 앞이 새 호출어를 따른다 (STT_PROMPT 환경변수가 없을 때)
+    r.set_wake("철수야")
+    assert r.wakes == ("철수야",)
+    assert STT_PROMPT_FIXED or r.prompt.startswith("철수야. ")
+    hit = r.route("철수야 계산기 열어줘", False)
+    assert hit and hit["action"] == "open_app" and hit["wake_heard"]
+    assert r.route("시아야 계산기 열어줘", False) is None               # 옛 호출어로는 세션 밖에서 안 잡힌다
+    r.set_wake("시아야")
+    assert r.prompt == STT_PROMPT and (STT_PROMPT_FIXED or r.prompt == DEFAULT_PROMPT)   # "시아야"면 글자까지 그대로
+    assert r.wakes == WAKE_VARIANTS["시아야"]
+    r.set_wake("  "); assert r.word == "시아야" and r.route("계산기 열어줘", False) is None  # 빈 호출어는 무시 — 모든 문장이 호출이 되면 안 된다
+
+    # GPU 채택 판정: 생성이 아니라 "첫 연산까지" 통과해야 한다. cuBLAS 는 지연 로드라
+    # 생성은 DLL 이 없어도 늘 성공하고, 그때 GPU 를 채택해 버리면 폴백이 영영 안 탄다(9/18).
+    class _FakeWhisper:
+        broken_gpu = True  # cuda 일 때만 첫 연산에서 터진다 — 실제 cuBLAS 누락과 같은 모양
+
+        def __init__(self, name, device="cpu", compute_type="int8"):
+            self.device = device
+
+        def transcribe(self, *a, **k):
+            if self.device.startswith("cuda") and _FakeWhisper.broken_gpu:
+                raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+            return iter(()), None
+
+    g = globals()
+    saved = (g["STT_DEVICE"], g["STT_COMPUTE"])
+    try:
+        g["STT_DEVICE"], g["STT_COMPUTE"] = "cuda", "float16"
+        broken = Router("시아야")
+        broken._load(_FakeWhisper)
+        assert (broken.device, broken.compute) == ("cpu", "int8"), (broken.device, broken.compute)
+        assert broken._model.device == "cpu"          # 폴백 모델로 교체됐다 (망가진 cuda 모델을 들고 있지 않다)
+        _FakeWhisper.broken_gpu = False
+        good = Router("시아야")
+        good._load(_FakeWhisper)
+        assert (good.device, good.compute) == ("cuda", "float16"), (good.device, good.compute)
+    finally:
+        _FakeWhisper.broken_gpu = True
+        g["STT_DEVICE"], g["STT_COMPUTE"] = saved
     print("selftest ok")
 
 

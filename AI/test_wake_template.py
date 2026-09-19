@@ -32,8 +32,8 @@ def unit(k):
     return emb
 
 
-def template(k=0):
-    return WakeTemplate("시아야", (0.99,), np.stack([unit(k)] * 5), 5)
+def template(k=0, word="시아야"):
+    return WakeTemplate(word, (0.99,), np.stack([unit(k)] * 5), 5)
 
 
 def settle(check):
@@ -178,12 +178,17 @@ def test_wake_only_run_skips_command_processing():
                 audio = np.concatenate([head, np.full(16000, 2000, np.int16), silence]) if attached else np.concatenate([head, silence])
                 with patch("brain.wake_score_of", return_value=(0.99, peak, 0)), patch("brain.log_utterance") as log:
                     utter(brain, audio=audio)
-                if owner and not attached:
+                if owner and not attached and not active:
                     assert log.call_args.kwargs["gate"] == "wake_only"
                     brain.speaker.verify.assert_not_called()
                     assert any(c.args[0] == "네, 듣고 있어요" for c in brain.overlay.toast.call_args_list)
                     assert not brain._accum.n_joined
                     # 세션은 BE 소유가 됐다(-320) — BE 가 없으면 로컬로 세션을 열지 않는다.
+                elif active:
+                    # 세션 안에서는 호출어를 다시 보지 않는다 (BE 프로토콜 §8.2) — 게이트는 화자 인증 하나다.
+                    # 이름만 다시 부른 발화도 그 게이트를 지나야 "네, 듣고 있어요" 로 답한다.
+                    assert log.call_args.kwargs["gate"] == "speaker_reject"
+                    brain.speaker.verify.assert_called_once()
                 elif attached:
                     brain.speaker.verify.assert_called_once()
                     assert log.call_args.kwargs["gate"] == "speaker_reject"
@@ -411,6 +416,40 @@ def test_wake_template_store():
         assert settle(lambda: store._local_sha() == sha_a)
         store.close()
 
+
+def test_wake_template_word_change_needs_reenrollment():
+    """호출어를 바꾸면 이전 등록본은 쓰지 않는다 — 서버 등록본이 하나뿐이라(BE 프로토콜 §3.3)
+    되돌려도 재등록해야 하고, 로컬에도 등록본 파일 하나만 남는다."""
+    sent = []
+    with tempfile.TemporaryDirectory() as directory:
+        store = WakeTemplateStore(Path(directory) / "wake.npz", link=SimpleNamespace(rt={"port": 1}))
+        store.put = lambda url, body, ctype: sent.append(body)
+        try:
+            assert store.on_settings({"wakeWord": "시아야"})
+            assert not store.on_settings({"wakeWord": " 시아야 "}), "공백만 다른 값은 같은 호출어다"
+            assert store.commit(template(), "등록 확정")
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                assert store.on_settings({"wakeWord": "철수야"})
+            assert "다시 등록" in out.getvalue()
+            assert not store.current.matches_setting("철수야"), "옛 등록본을 새 호출어에 쓰면 안 된다"
+
+            assert store.commit(template(1, "철수야"), "등록 확정")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                assert store.on_settings({"wakeWord": "시아야"})
+            assert "다시 등록" in out.getvalue(), "되돌려도 복원하지 않는다"
+            assert store.current.wake_text == "철수야" and not store.current.matches_setting("시아야")
+
+            # 받는 자리에서 다듬으므로 공백이 붙은 새 호출어도 다듬어진 값으로 남는다
+            assert store.on_settings({"wakeWord": " 철수야 "}) and store.wake_word() == "철수야"
+
+            files = sorted(p.relative_to(directory).as_posix() for p in Path(directory).rglob("*") if p.is_file())
+            assert files == ["wake.npz"], files
+            assert not sent, "설정 변경만으로 서버에 쓰지 않는다"
+        finally:
+            store.close()
 
 def test_wake_enroll_local_failure_recovers_from_server():
     """서버에 저장한 뒤 로컬 준비·교체가 실패해도, 같은 서버 참조로 복구하고 등록을 마칠 수 있다."""

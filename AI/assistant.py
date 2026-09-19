@@ -165,6 +165,29 @@ def run_check(camera_idx):
     print(f"카메라: {'OK' if ok else '실패'}")
 
 
+def pick_wake_stream(word, template, siaya_stream):
+    """설정 호출어에 맞는 상시 추론 → (스트림 또는 None, 로그 문구).
+
+    "시아야" 는 고정 모델 스트림(siaya_stream)을 그대로 쓰고, 다른 호출어는 등록 때 학습한 헤드로 듣는다.
+    헤드가 없으면(등록 전이거나 등록본이 다른 호출어의 것) None — 상시 추론 없이 조각을 모두 brain 에 넘기고,
+    brain 이 재등록을 안내한다."""
+    from brain import WAKE_MODEL_WORD
+
+    if word == WAKE_MODEL_WORD:
+        if siaya_stream is None:
+            return None, f'[상시 추론] "{word}" 모델 파일이 없어 상시 추론 없이 돕니다'
+        return siaya_stream, f'[상시 추론] "{word}" 모델로 전환'
+    if template is None or not template.has_head or not template.matches_setting(word):
+        return None, f'[상시 추론] "{word}" 등록 전 — 상시 추론 없이 돕니다'
+    try:
+        from wake_head import HeadStream
+
+        stream = HeadStream(template.head)   # 특징 추출기 로드 + 무음 2 s — 약 0.1 s
+    except Exception as e:
+        return None, f'[상시 추론] "{word}" 헤드를 올리지 못해 상시 추론 없이 돕니다 ({type(e).__name__}: {e})'
+    return stream, f'[상시 추론] "{word}" 헤드로 전환 (임계 {stream.threshold})'
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-actions", action="store_true", help="판단만 하고 실행은 안 함")
@@ -267,6 +290,7 @@ def main():
                   wake_template=wake_store)
     if link and link.wake:
         link.wake.wake_model = brain.wake  # 등록의 발음 확인도 실행과 같은 고정 모델로
+        link.wake.word_scorer = brain.word_logprob  # 사용자 지정 호출어는 실행과 같은 받아쓰기 모델로
     if link and link.voice:
         link.voice.stt = brain.ensure_router  # 낭독이 화면의 문장인지 확인할 받아쓰기 — 1단 라우터와 같은 모델을 나눠 쓴다
     brain.start()
@@ -276,16 +300,21 @@ def main():
     # (유튜브 배경 실측: 시간당 제출 372 → 0.5, 화면 캡처 490 → 1.5, LISTENING 25.6 % → 0 %.)
     # 모델은 brain 것과 따로 만든다 — 상시 추론은 앞 소리의 문맥을 들고 있어 한 인스턴스를 나눠 쓰면 서로 망친다.
     # 모델 파일이 없으면 None — 조각 완성 뒤 채점하는 예전 경로로 돈다.
-    from brain import WAKE_MODEL, WAKE_THRESHOLD, load_wake_model
+    from brain import WAKE_MODEL, WAKE_MODEL_WORD, WAKE_THRESHOLD, load_wake_model
     from voice import WAKE_CUT_S, WAKE_FOLLOW_S, WakeStream
 
-    wake_stream = None
+    siaya_stream = None
     stream_model = load_wake_model()
     if stream_model is not None:
-        wake_stream = WakeStream(stream_model, WAKE_MODEL.stem, WAKE_THRESHOLD)
-        print(f"시동어 상시 추론 켜짐 (임계 {WAKE_THRESHOLD}, 하한 {wake_stream.threshold_lo}) — 세션 밖 호출어 없는 조각은 버립니다")
+        siaya_stream = WakeStream(stream_model, WAKE_MODEL.stem, WAKE_THRESHOLD)
+        print(f"시동어 상시 추론 켜짐 (임계 {WAKE_THRESHOLD}, 하한 {siaya_stream.threshold_lo}) — 세션 밖 호출어 없는 조각은 버립니다")
     else:
         print("시동어 모델 파일이 없어 상시 추론 없이 돕니다 — 조각이 끝난 뒤 통째로 채점합니다")
+    # 호출어 설정·등록본이 바뀌면(wake_store.generation) 메인 루프가 다시 골라 voice.wake_stream 을 바꾼다.
+    wake_word, wake_template, wake_gen = wake_store.snapshot()
+    wake_stream, wake_msg = pick_wake_stream(wake_word, wake_template, siaya_stream)
+    if wake_word != WAKE_MODEL_WORD:
+        print(wake_msg)   # "시아야" 는 위에서 이미 알렸다
 
     voice_events = collections.deque(maxlen=16)
     voice = VoiceListener(voice_events, on_reset=brain.reset_audio, wake_stream=wake_stream,
@@ -490,8 +519,12 @@ def main():
                         except Exception as exc:
                             print(f"[BE] 신규 제스처 동기화 실패: {exc}")
                     elif event_type == "gesture_removed":
-                        name = data.get("name")
-                        remote_refs = {gid: ref for gid, ref in remote_refs.items() if ref.get("name") != name}
+                        # Backend identifies the removed template by id. Names are
+                        # display/mapping values and may change, so deleting by
+                        # name can leave a stale NPZ in the local cache.
+                        removed_id = data.get("id")
+                        if removed_id is not None:
+                            remote_refs.pop(str(removed_id), None)
                         try:
                             remote_custom = sync_gesture_store(link, remote_cache, list(remote_refs.values()))
                             active_custom = remote_custom if remote_custom.n else custom
@@ -532,6 +565,18 @@ def main():
                 # VAD 가 블록마다 재 둔 rms 를 그대로 흘린다 — 등록 중에도 계속 보낸다(§5.5).
                 # 카메라 미리보기처럼 프레임 처리 분기에 묶으면 등록·촬영 중에 파형이 멎는다.
                 mic_preview.tick(voice.seg.last_rms, now)
+
+            # --- 상시 추론 교체: 호출어 설정·등록본이 바뀌면 그 호출어에 맞는 스트림으로 ---
+            if wake_store.generation != wake_gen:
+                wake_word, wake_template, wake_gen = wake_store.snapshot()
+                new_stream, wake_msg = pick_wake_stream(wake_word, wake_template, siaya_stream)  # 생성은 잠금 밖에서
+                if new_stream is not wake_stream:
+                    with voice._lock:   # 마이크 스레드는 이 잠금 안에서 feed·reset 한다
+                        if new_stream is not None and new_stream is siaya_stream:
+                            new_stream.reset()   # 다른 호출어를 듣는 동안 멈춰 있던 앞 문맥을 버린다
+                        voice.wake_stream = new_stream
+                    wake_stream = new_stream   # 아래 히트 로그·조각 거르기·LISTENING 표시·submit 도 새 스트림을 본다
+                    print(wake_msg)
 
             # --- 음성 이벤트 처리 ---
             from brain import active_window_title, foreground_hwnd
@@ -608,16 +653,19 @@ def main():
             from brain import is_youtube
 
             session_left = brain.session_left()
-            # 제스처 실행은 음성 ACTIVE 세션에서만 허용한다. 양손 미리보기는 예외로
-            # 감지 후보만 보여주며 실제 액션은 별도 가드에서 차단한다.
-            gesture_active = args.two_hand_preview or session_left > 0
+            session_active = session_left > 0
+            # 세션 필요 여부는 매크로 안의 도구에 따라 달라지며 Backend가 최종
+            # 판정한다. AI가 PASSIVE 상태에서 감지 자체를 막으면 context.get 같은
+            # 읽기 전용 매크로도 실행할 수 없으므로, recognition_start 이후에는
+            # gesture_exec를 보내고 Backend의 gesture_result를 따른다.
+            gesture_active = args.two_hand_preview or bool(link and link.gesture_ready)
             if gesture_active != was_gesture_active:
                 palm_motion_tracker.update([])
                 palm_motion.update(None, now)
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
                 was_gesture_active = gesture_active
-                print("[제스처] ACTIVE 세션 진입" if gesture_active else "[제스처] PASSIVE 세션 진입")
+                print("[제스처] 인식 활성" if gesture_active else "[제스처] 인식 대기")
 
             hand_start = time.perf_counter()
             hands = gest.hands(frame)
@@ -653,7 +701,7 @@ def main():
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
             if gesture_active and not registration_active:
                 custom_pose, custom_motion_event, custom_claimed, custom_dist = active_custom.update(
-                    hands, now, disabled_gestures
+                    hands, now, disabled_gestures, pose_landmarks=pose_landmarks
                 )
                 # 양손 정적/동적 커스텀도 1손 커스텀과 같은 exp(-거리) 관례로 신뢰도를
                 # 낸다 — 정적 매치는 raw_score를 덮어써 static_names 발동부에서 그대로
@@ -662,7 +710,8 @@ def main():
                 if custom_pose and custom_score is not None:
                     raw_score = custom_score
             else:
-                active_custom.update([], now, disabled_gestures)
+                active_custom.update([], now, disabled_gestures,
+                                     pose_landmarks=pose_landmarks)
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
                 custom_score = None
@@ -675,7 +724,7 @@ def main():
             else:
                 gesture = stable.update((custom_pose or "None") if custom_claimed else raw_gesture, now)
             if registration_active:
-                registration.tick(frame, hands, now)
+                registration.tick(frame, hands, now, pose_landmarks=pose_landmarks)
             elif gesture_preview:
                 gesture_preview.tick(frame, now)
             # 양손 벌리기/모으기는 우선 HUD·터미널 후보만 출력한다. 실측 후에만
@@ -831,7 +880,7 @@ def main():
                 overlay.set_state("THINKING")
             elif listening:
                 overlay.set_state("LISTENING")
-            elif gesture_active:
+            elif session_active:
                 suffix = f" {int(session_left)}s"
                 overlay.set_state("ACTIVE", suffix)
             else:
@@ -847,7 +896,7 @@ def main():
             # --- HUD 미리보기 ---
             hud = cv2.resize(frame, (480, 270))
             state = ("THINKING" if brain.busy else "LISTENING" if listening
-                     else f"ACTIVE {int(session_left)}s" if gesture_active
+                     else f"ACTIVE {int(session_left)}s" if session_active
                      else "IDLE")
             # 상태, 정적 손모양, 동적 이벤트를 같은 형식의 독립된 줄로 보여 준다.
             # 예: ACTIVE 12s / STATIC: Victory / DYNAMIC: Screen_Next

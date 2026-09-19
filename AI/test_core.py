@@ -1067,6 +1067,206 @@ def test_wake_enroll():
     assert len(store.committed) == 1 and [t for t, _ in link.sent][-1] == "wakeword_done"
 
 
+def test_wake_enroll_custom():
+    """사용자 지정 호출어 등록 — "시아야" 와 같은 절차를 타고 발음 확인만 받아쓰기 모델의 단어 확률로 갈린다.
+    5개가 모이면 판정 헤드를 학습해 등록본에 담고, 학습이 끝난 뒤에야 저장·확정한다. 학습 중 발화는 세지 않는다."""
+    import threading
+    from unittest.mock import patch
+
+    import wake_head
+    from speaker import WAKE_HEAD_DIM
+    from voice_bridge import WAKE_ENROLL_WORD_FAILS, WAKE_TOTAL, WakeEnroll
+
+    class FakeLink:
+        rt = {"port": 0}
+        def __init__(self): self.sent = []
+        def _send(self, o): self.sent.append((o["type"], o["data"]))
+
+    class FakeStore:
+        def __init__(self): self.committed, self.word, self.seq = [], "철수야", 0
+        def wake_word(self): return self.word
+        def reserve_write(self):
+            self.seq += 1
+            return self.seq, 0
+        def write_blob(self, body, seq):
+            puts.append(len(body))
+            return True
+        def commit(self, template, why, generation=None):
+            self.committed.append(template)
+            return template.npz_bytes(), 0, self.seq
+
+    class FakeSpeaker:
+        def _model(self): pass
+        def embed(self, a):
+            v = np.zeros(192, np.float32)
+            v[0] = 1.0
+            return v
+        def centroid_of_embs(self, embs):
+            c = np.asarray(embs).mean(axis=0)
+            return c / (np.linalg.norm(c) + 1e-9), 1.0
+
+    def clip(speech=0.8):
+        """앞뒤가 조용하고 가운데만 말소리 — 호출어 한 마디."""
+        return np.concatenate([np.zeros(6400, np.int16),
+                               np.full(int(speech * 16000), 1000, np.int16),
+                               np.zeros(9600, np.int16)])
+
+    from brain import WAKE_FRAME_S, WAKE_MODEL, WAKE_PAD_S, speech_span
+
+    def predict_clip(audio):
+        """"시아야" 회차용 고정 모델 대역 — 말소리가 끝나는 지점에 최고점을 찍는다."""
+        span = speech_span(audio)
+        peak = max(0, int(round(((span[1] if span else 1.0) + WAKE_PAD_S) / WAKE_FRAME_S)))
+        return [{WAKE_MODEL.stem: 0.99 if i == peak else 0.0} for i in range(peak + 1)]
+
+    head = (np.zeros(WAKE_HEAD_DIM, np.float32), np.float32(-1.5),
+            np.zeros(WAKE_HEAD_DIM, np.float32), np.ones(WAKE_HEAD_DIM, np.float32))
+    link, puts, store = FakeLink(), [], FakeStore()
+    lp, words, trains, bank_ok, hold = {"v": -2.0}, [], [], {"v": True}, {"v": None}
+
+    def scorer(audio, word):
+        words.append(word)
+        return lp["v"]
+
+    def fake_bank(path=None):
+        if not bank_ok["v"]:
+            raise FileNotFoundError(path)
+        return np.zeros((1000, 4), np.float16)      # train_head 대역이 보지 않는다
+
+    def fake_train(clips, bank_X, feats=None):
+        trains.append(len(clips))
+        if hold["v"]:                               # 학습을 붙잡아 그 사이 재시작을 재현한다
+            hold["v"][0].set()
+            assert hold["v"][1].wait(5)
+        return head
+
+    with patch.object(wake_head, "load_bank", fake_bank), patch.object(wake_head, "train_head", fake_train):
+        # ① 5개 통과 → 헤드를 학습해 담은 등록본으로 확정
+        we = WakeEnroll(link, FakeSpeaker(), store, None, scorer)
+        we.on_start()
+        for _ in range(WAKE_TOTAL):
+            we.on_utter(clip())
+        we._trainer.join(20)
+        assert [t for t, _ in link.sent].count("wakeword_sample") == WAKE_TOTAL
+        assert trains == [WAKE_TOTAL] and words == ["철수야"] * WAKE_TOTAL     # 등록 대상 호출어로 채점한다
+        assert ("notice", {"message": "이름을 익히는 중이에요. 잠시만 기다려 주세요."}) in link.sent, link.sent
+        assert [t for t, _ in link.sent][-1] == "wakeword_done" and not we.active
+        template = store.committed[0]
+        assert template.has_head and template.wake_text == "철수야" and len(puts) == 1
+        assert template.scores == (-2.0,) * WAKE_TOTAL                         # 기록은 단어 확률이다
+
+        # ② 단어 확률이 하한 미만이면 MISMATCH — 순번은 그대로, 하한 위(-4.3)는 통과
+        link.sent.clear()
+        we.on_start()
+        lp["v"] = -4.7
+        we.on_utter(clip())
+        assert link.sent == [("wakeword_rejected", {
+            "n": 1, "total": WAKE_TOTAL, "code": "MISMATCH",
+            "reason": '"철수야" 로 들리지 않았어요. 또박또박 다시 불러주세요.'})]
+        link.sent.clear()
+        lp["v"] = -4.3
+        we.on_utter(clip())
+        assert link.sent == [("wakeword_sample", {"n": 1, "total": WAKE_TOTAL})]
+
+        # ③ 받아쓰기 모델이 없으면 code 없는 사유로 거절한다
+        link.sent.clear()
+        we.word_scorer = None
+        we.on_utter(clip())
+        assert link.sent == [("wakeword_rejected", {
+            "n": 2, "total": WAKE_TOTAL, "reason": "받아쓰기 모델을 쓸 수 없어 등록할 수 없어요."})]
+        we.word_scorer = scorer
+
+        # ④ 부정 뱅크가 없으면 한 번도 부르게 하지 않고 접는다 — 5번 부른 뒤에 실패를 알리지 않는다
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
+        bank_ok["v"] = False
+        we.on_start()
+        we._preload.join(20)
+        lp["v"] = -2.0
+        assert not we.active and not we._samples, "뱅크가 없으면 수집을 이어 가지 않는다"
+        assert link.sent == [("wakeword_rejected", {
+            "n": 1, "total": WAKE_TOTAL,
+            "reason": "이 PC 에 호출어 학습 자료가 없어 새 이름을 등록할 수 없어요."})], link.sent
+        we.on_utter(clip())
+        assert not we._samples and not trains, "접은 뒤 발화는 샘플이 아니다 — 명령으로 가야 한다"
+
+        bank_ok["v"] = True
+        we.on_start()
+        for _ in range(WAKE_TOTAL):
+            we.on_utter(clip())
+        we._trainer.join(20)
+        assert trains == [WAKE_TOTAL] and len(puts) == 1 and store.committed[0].has_head
+        assert [t for t, _ in link.sent][-1] == "wakeword_done"
+
+        # ④-2 수집 중에 설정 호출어가 바뀌면 모은 샘플을 버리고 새 이름으로 다시 받는다
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear(); words.clear()
+        we.on_start()
+        for _ in range(3):
+            we.on_utter(clip())
+        assert len(we._samples) == 3
+        store.word = "대길이"
+        assert we.on_word_changed(store.word) and not we.on_word_changed(store.word)
+        assert we.active and not we._samples and we.wake_text == "대길이"
+        assert link.sent[-1] == ("wakeword_rejected", {
+            "n": 1, "total": WAKE_TOTAL,
+            "reason": '호출어가 "대길이" 로 바뀌었어요. 새 이름으로 다시 5번 불러주세요.'}), link.sent[-1]
+        for _ in range(WAKE_TOTAL):
+            we.on_utter(clip())
+        we._trainer.join(20)
+        assert words == ["철수야"] * 3 + ["대길이"] * WAKE_TOTAL       # 바뀐 뒤로는 새 이름으로 채점한다
+        assert store.committed[0].wake_text == "대길이" and trains == [WAKE_TOTAL]
+        store.word = "철수야"
+
+        # ⑤ 학습 중에 재시작하면 그 결과는 새 회차에 반영하지 않는다 (학습 중 발화도 세지 않는다)
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
+        we.on_start()
+        for _ in range(WAKE_TOTAL - 1):
+            we.on_utter(clip())
+        hold["v"] = (threading.Event(), threading.Event())
+        we.on_utter(clip())                              # 5번째 → 학습 시작 → 매달린다
+        stale, gate = we._trainer, hold["v"]
+        assert gate[0].wait(5)
+        we.on_utter(clip())
+        assert len(we._samples) == WAKE_TOTAL            # 학습 중 발화는 샘플이 아니다
+        we.on_start()                                    # 매달린 사이 재시작 (회차가 올라간다)
+        hold["v"] = None
+        gate[1].set()
+        stale.join(5)
+        assert not stale.is_alive() and not store.committed and not puts
+        assert not any(t == "wakeword_done" for t, _ in link.sent)
+        for _ in range(WAKE_TOTAL):                      # 새 회차는 스스로 학습해 확정한다
+            we.on_utter(clip())
+        we._trainer.join(20)
+        assert len(store.committed) == 1 and len(puts) == 1
+        assert [t for t, _ in link.sent][-1] == "wakeword_done"
+
+        # ⑥ 단어 확률 미달이 이어지면 호출어를 바꾸라고 권한다 — 한 번 통과하면 셈이 풀린다
+        link.sent.clear()
+        we.on_start()
+        lp["v"] = -5.0
+        for _ in range(WAKE_ENROLL_WORD_FAILS):
+            we.on_utter(clip())
+        assert "다른 호출어를 골라 주세요" not in link.sent[0][1]["reason"]
+        assert "이 호출어는 받아쓰기 모델이 잘 알아듣지 못해요. 다른 호출어를 골라 주세요." in link.sent[-1][1]["reason"]
+        lp["v"] = -2.0
+        we.on_utter(clip())
+        lp["v"] = -5.0
+        link.sent.clear()
+        we.on_utter(clip())
+        assert "다른 호출어를 골라 주세요" not in link.sent[-1][1]["reason"]
+
+        # ⑦ "시아야" 는 고정 모델 그대로 — 헤드를 학습하지도, 단어 확률을 묻지도 않는다
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
+        n_words = len(words)
+        store.word = "시아야"
+        we.wake_model = SimpleNamespace(predict_clip=predict_clip)
+        we.on_start()
+        for _ in range(WAKE_TOTAL):
+            we.on_utter(clip())
+        assert not trains and len(words) == n_words       # 헤드 학습도, 단어 확률 질의도 없다
+        assert [t for t, _ in link.sent][-1] == "wakeword_done" and not we.active
+        assert len(store.committed) == 1 and store.committed[0].head is None
+
+
 def test_notice_data():
     """안내 문구 notice(207) — kind 없으면 message 만, confirm 은 kind·timeoutSec, unknown_command 는 transcript 동봉,
     값 없는 필드는 빠진다. _say 는 오버레이(60자 넘으면 패널)와 BE notice 송신을 한 번에 한다."""
@@ -1853,8 +2053,12 @@ def test_mic_preview():
 
 
 def test_llm_retry():
-    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 한 번만.
-    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다."""
+    """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 백오프 후.
+    503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다.
+
+    즉시 한 번만 재시도하면 같은 과부하 구간에 그대로 부딪힌다(9/18 실측: 503 두 번 연속으로
+    명령 소실). 회귀 지점은 셋 — 백오프가 실제로 들어가는가, 키 전환 뒤에도 재시도 기회가
+    남는가, 예산을 넘기면 멈추는가."""
     from unittest.mock import patch
 
     import brain
@@ -1888,17 +2092,51 @@ def test_llm_retry():
         resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
         assert resp == "OK" and ki == 1 and tries == 2 and made[-1] == "k2"
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), None])   # 503 → 같은 키로 한 번 더
-        c0.errors = [Exception("503 UNAVAILABLE")]
-        resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
-        assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+        with patch("brain.time.sleep") as slept:               # 503 → 같은 키로 백오프 후 재시도
+            c0 = FakeClient([Exception("503 UNAVAILABLE")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            assert resp == "OK" and ki == 0 and tries == 2 and c0.calls == 2
+            # 즉시 재시도는 같은 과부하에 그대로 부딪힌다 — 실제로 쉬어야 한다.
+            assert slept.call_args_list[0][0][0] == brain.TRANSIENT_BACKOFF_S[0], slept.call_args_list
 
-        c0 = FakeClient([Exception("503 UNAVAILABLE"), Exception("503 UNAVAILABLE")])
-        try:                                                   # 두 번째 503 은 올린다 (무한 재시도 금지)
-            brain.llm_generate(c0, ["p"], ["k1"], 0)
-            raise AssertionError("두 번째 일시 장애는 올라와야 한다")
-        except Exception as e:
-            assert "503" in str(e)
+        with patch("brain.time.sleep") as slept:                # 백오프는 점점 길어진다
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 3)
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1"], 0)
+            waits = [a[0][0] for a in slept.call_args_list]
+            assert resp == "OK" and tries == 4, (tries, waits)
+            assert waits == list(brain.TRANSIENT_BACKOFF_S), waits
+
+        with patch("brain.time.sleep"):                         # 횟수를 다 쓰면 올린다 (무한 재시도 금지)
+            c0 = FakeClient([Exception("503 UNAVAILABLE")] * 9)
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("재시도 한도를 넘긴 일시 장애는 올라와야 한다")
+            except Exception as e:
+                assert "503" in str(e)
+            assert c0.calls == len(brain.TRANSIENT_BACKOFF_S) + 1, c0.calls
+
+        # 키 전환 뒤 처음 만난 503 도 재시도 대상 — 예전엔 플래그가 남아 그대로 실패했다.
+        with patch("brain.time.sleep"):
+            plan = [[Exception("503 UNAVAILABLE")]]             # k2 클라이언트가 503 한 번
+            c0 = FakeClient([Exception("429 RESOURCE_EXHAUSTED")])
+            resp, c, ki, tries = brain.llm_generate(c0, ["p"], ["k1", "k2"], 0)
+            assert resp == "OK" and ki == 1 and tries == 3, (ki, tries)
+
+        # 예산을 넘기면 남은 횟수가 있어도 멈춘다 (타임아웃이 15초씩 먹는 경우).
+        with patch("brain.time.sleep"), patch.object(brain, "TRANSIENT_BUDGET_S", 0.1):
+            c0 = FakeClient([Exception("504 DEADLINE_EXCEEDED")])
+            try:
+                brain.llm_generate(c0, ["p"], ["k1"], 0)
+                raise AssertionError("예산을 넘기면 재시도하지 않는다")
+            except Exception as e:
+                assert "504" in str(e)
+            assert c0.calls == 1, c0.calls
+
+    # 사용자에게는 서버 원문 대신 행동 지침을 준다 — 데모 화면에 JSON 이 뜨면 안 된다.
+    msg = brain.friendly_error(Exception("503 UNAVAILABLE. {'error': {'code': 503}}"))
+    assert "503" not in msg and "혼잡" in msg, msg
+    assert "가득" in brain.friendly_error(Exception("429 RESOURCE_EXHAUSTED"))
+    assert "400" in brain.friendly_error(Exception("400 INVALID_ARGUMENT"))   # 모르는 건 원문 그대로
 
     assert brain.is_transient_error(Exception("503 UNAVAILABLE"))
     assert brain.is_transient_error(Exception("Read timed out"))
@@ -1940,6 +2178,275 @@ def test_wake_model_load():
         broken = Brain(Mock(), wake_template=store)
     assert broken.wake is None                                                      # 로드 실패는 숨기지 않는다
     assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
+
+
+def test_wake_head():
+    """사용자 지정 호출어 헤드 — 등록 녹음(합성 사인파 5개)으로 학습하면 그 녹음은 잡고 무음은 안 잡는다.
+    실시간 스트림은 임계 이상에서만, 1.5 s 에 한 번만 잡고, reset 뒤에는 새로 잡는다."""
+    from wake_head import (HEAD_DEBOUNCE_S, HEAD_DIM, HEAD_STREAM_THRESHOLD, HEAD_UTTER_THRESHOLD,
+                           HeadStream, _features, _synthetic, score_utterance, train_head)
+
+    # 두 임계는 따로다 — 상시 추론은 말하는 도중 최근 16프레임만 보아 같은 호출도 낮게 나온다(실측 0.114~0.933).
+    # 하나로 합치면 상시 추론이 진짜 호출을 놓치거나, 발화 채점이 배경 말소리를 다 받아들인다.
+    assert HEAD_STREAM_THRESHOLD < HEAD_UTTER_THRESHOLD
+    assert HeadStream.__init__.__defaults__ == (HEAD_STREAM_THRESHOLD,)
+    assert score_utterance.__defaults__ == (HEAD_UTTER_THRESHOLD,)
+
+    af = _features()
+    clips, bank = _synthetic(af)
+    head = train_head(clips, bank, af)
+    assert [v.shape for v in head] == [(HEAD_DIM,), (), (HEAD_DIM,), (HEAD_DIM,)], "헤드는 (W, b, mu, sd)"
+    for clip in clips:
+        top, end = score_utterance(af, head, clip)
+        assert top > 0.5, f"학습한 녹음을 못 잡음: {top}"
+        assert 0 < end <= len(clip) / 16000 + 1.0, f"끝 시각은 발화 기준 초여야 함: {end}"
+    top, end = score_utterance(af, head, np.zeros(32000, np.int16))
+    assert top < 0.1 and end is None, f"무음을 잡음: {top}"
+    assert train_head(clips, bank, af)[0].tobytes() == head[0].tobytes(), "같은 녹음이면 같은 헤드여야 함"
+
+    # 스트림 판정 규칙은 점수를 고정한 헤드로 본다 (W=0 이라 입력과 무관하게 sigmoid(b))
+    zeros, ones = np.zeros(HEAD_DIM, np.float32), np.ones(HEAD_DIM, np.float32)
+    block = np.zeros(480, np.int16)
+    loud = HeadStream((zeros, np.float32(5.0), zeros, ones))
+    hits = [loud.feed(block, i * 0.25) for i in range(14)]          # 0 ~ 3.25 s
+    hits = [h for h in hits if h]
+    assert [h[1] for h in hits] == [0.0, HEAD_DEBOUNCE_S, 2 * HEAD_DEBOUNCE_S], f"1.5 s 간격으로만 잡아야 함: {hits}"
+    assert hits[0][0] == "wake_live" and hits[0][2] == 0.993 and loud.threshold_lo == loud.threshold
+    loud.reset()
+    assert loud.last_score == 0.0 and loud.feed(block, 3.5), "reset 뒤에는 직전 히트와 무관하게 새로 잡아야 함"
+    quiet = HeadStream((zeros, np.float32(-5.0), zeros, ones))
+    assert not any(quiet.feed(block, i * 0.25) for i in range(14)) and 0 < quiet.last_score < 0.1
+
+
+def test_wake_template_head():
+    """호출어 등록 파일의 헤드 칸 — 있으면 같은 값으로 돌아오고, 없으면 파일이 이전과 바이트까지 같다
+    (본문 비교로 재업로드를 건너뛰는 동기화가 깨지지 않게). 헤드 칸이 깨졌거나 일부만 있으면 읽지 않는다."""
+    import io
+
+    import speaker
+    import wake_head
+    from speaker import EMBED_DIM, WAKE_SR, WAKE_TEMPLATE_VERSION, WakeTemplate
+
+    # 두 파일이 같은 값을 따로 들고 있다 — 한쪽만 바뀌면 등록 때 만든 헤드를 읽을 때 거절한다
+    assert wake_head.HEAD_EXTRACTOR == speaker.WAKE_HEAD_EXTRACTOR, "헤드 특징 이름이 wake_head 와 speaker 에서 달라짐"
+    assert wake_head.HEAD_DIM == speaker.WAKE_HEAD_DIM, "헤드 차원이 wake_head 와 speaker 에서 달라짐"
+
+    emb = np.zeros(EMBED_DIM, np.float32)
+    emb[0] = 1.0
+    embs = np.stack([emb] * 5)
+    rng = np.random.default_rng(0)
+    head = (rng.standard_normal(1536).astype(np.float32), np.float32(-1.5),
+            rng.standard_normal(1536).astype(np.float32), rng.uniform(0.5, 2, 1536).astype(np.float32))
+    with_head = WakeTemplate("철수야", (0.9,) * 5, embs, 5, head=head)
+    back = WakeTemplate.read(io.BytesIO(with_head.npz_bytes()))
+    assert back.has_head and back.wake_text == "철수야", "헤드 있는 파일을 헤드째 읽어야 함"
+    assert all(np.array_equal(a, b) for a, b in zip(back.head, head)), "헤드 값이 저장 전과 같아야 함"
+
+    plain = WakeTemplate("시아야", (0.99,) * 5, embs, 5)
+    assert not plain.has_head and not WakeTemplate.read(io.BytesIO(plain.npz_bytes())).has_head
+    with np.load(io.BytesIO(plain.npz_bytes()), allow_pickle=False) as data:
+        assert data.files == ["version", "extractor", "sr", "wake_text", "scores", "embs", "base_n"], data.files
+    before = io.BytesIO()
+    np.savez(before, version=WAKE_TEMPLATE_VERSION, extractor=plain.extractor, sr=WAKE_SR,
+             wake_text=plain.wake_text, scores=np.asarray(plain.scores, dtype=np.float32),
+             embs=plain.embs, base_n=plain.base_n)   # 헤드 칸을 넣기 전의 저장 방식 그대로
+    assert plain.npz_bytes() == before.getvalue(), "헤드 없는 파일은 이전과 바이트까지 같아야 함"
+
+    with np.load(io.BytesIO(with_head.npz_bytes()), allow_pickle=False) as data:
+        fields = dict(data)
+    sd_zero = fields["head_sd"].copy()
+    sd_zero[3] = 0.0
+    nan_w = fields["head_W"].copy()
+    nan_w[0] = np.nan
+    cases = {"sd 에 0": fields | {"head_sd": sd_zero},
+             "head_W 만 있음": {k: v for k, v in fields.items() if k == "head_W" or not k.startswith("head_")},
+             "W 에 NaN": fields | {"head_W": nan_w},
+             "b 가 스칼라 아님": fields | {"head_b": np.zeros(2, np.float32)},
+             "mu 차원 다름": fields | {"head_mu": np.zeros(96, np.float32)},
+             "다른 특징": fields | {"head_extractor": "other"}}
+    for name, case in cases.items():
+        buf = io.BytesIO()
+        np.savez(buf, **case)
+        try:
+            WakeTemplate.read(io.BytesIO(buf.getvalue()))
+        except ValueError:
+            continue
+        raise AssertionError(f"깨진 헤드를 받아들임: {name}")
+
+
+def test_word_logprob():
+    """받아쓰기 모델의 단어 확률 — 토큰 후보(앞 공백 있음·없음) 중 큰 값을 돌려주고, 끝의 종료 토큰은 평균에 넣지 않는다.
+    빈 단어는 거절하고, 같은 단어의 토큰 후보는 한 번만 만든다. whisper 는 올리지 않고 대역을 쓴다."""
+    from router import Router
+
+    encoded = []
+    tokens = {" 철수야": [1, 2], "철수야": [3], " 영희야": [4], "영희야": [5, 6]}
+    probs = {(1, 2): [0.5, 0.5, 0.01], (3,): [0.1, 0.01],             # 마지막 값 = 종료 토큰
+             (4,): [0.05, 0.01], (5, 6): [0.9, 0.9, 0.01]}
+
+    class FakeTok:
+        sot_sequence = (0,)
+        def encode(self, text):
+            encoded.append(text)
+            return tokens[text]
+
+    def align(enc, sot, batch, frames):
+        assert enc.shape == (80, 3000) and frames == 100, "30 s 로 채운 특징과 실제 프레임 수를 넘겨야 함"
+        return [SimpleNamespace(text_token_probs=probs[tuple(batch[0])])]
+
+    r = Router("시아야")
+    r._model = SimpleNamespace(feature_extractor=lambda audio: np.zeros((80, len(audio) // 160), np.float32),
+                               encode=lambda f: f, model=SimpleNamespace(align=align))
+    r._tok = FakeTok()
+    audio = np.zeros(16000, np.int16)
+    assert abs(r.word_logprob(audio, "철수야") - np.log(0.5)) < 1e-6, "공백 붙인 후보가 더 크면 그 값"
+    assert abs(r.word_logprob(audio, "영희야") - np.log(0.9)) < 1e-6, "공백 없는 후보가 더 크면 그 값"
+    assert r.word_logprob(audio, "철수야") == r.word_logprob(audio, "철수야")
+    assert encoded == [" 철수야", "철수야", " 영희야", "영희야"], f"토큰 후보는 단어마다 한 번만 만들어야 함: {encoded}"
+    assert r.last_logprob is None, "transcribe 의 통계를 건드리면 안 됨"
+    for bad in ("", "   "):
+        try:
+            r.word_logprob(audio, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"빈 단어를 받아들임: {bad!r}")
+
+
+def test_head_stream_warmup():
+    """상시 추론 헤드는 만들 때와 reset 뒤에 무음 2 s 를 먼저 흘린다 — openWakeWord 는 특징 버퍼를 무작위 잡음으로
+    채워, 그대로 들으면 1.3 s 안에 헛히트가 난다. 창 16프레임이 모두 무음이면 무음을 더 흘려도 창이 그대로다."""
+    from wake_head import HEAD_DIM, HeadStream
+
+    zeros, ones = np.zeros(HEAD_DIM, np.float32), np.ones(HEAD_DIM, np.float32)
+    hs = HeadStream((zeros, np.float32(-5.0), zeros, ones))
+    silence = np.zeros(32000, np.int16)
+
+    def settled():
+        before = np.asarray(hs.af.get_features(16))
+        hs.af(silence)
+        return np.allclose(before, hs.af.get_features(16), atol=1e-3)
+
+    assert settled(), "만든 직후 창이 무음이어야 함"
+    noise = (np.random.default_rng(0).standard_normal(16000) * 3000).astype(np.int16)
+    for i in range(0, 16000, 480):
+        hs.feed(noise[i:i + 480], i / 16000)
+    hs.reset()
+    assert hs.last_score == 0.0 and settled(), "reset 뒤에도 창이 무음이어야 함"
+    hs.af.reset()   # 무음을 흘리지 않은 openWakeWord 의 reset 만으로는 창이 무음이 아니다 — 위 검사가 헛돌지 않는다는 확인
+    assert not settled(), "무작위 초기 버퍼가 그대로면 창이 달라져야 함"
+
+
+def _custom_wake_run(word="철수야", head=True, lp=-2.0, last=-1.0, speaker=True, audio=None, t_end=1.2,
+                     session=False):
+    """사용자 지정 호출어 한 발화를 실제 run() 으로 돌린다. 헤드 채점·단어 확률·목소리 임베딩만 대역이다.
+    → (마지막 로그 필드, wakeword_detected 수, score_utterance 대역, wake_score_of 대역, brain, 안내 문구들)"""
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import Mock, patch
+
+    from brain import Brain
+    from speaker import EMBED_DIM, WakeTemplate
+    from test_usage_events import PROFILE, assistant, utter
+    from voice_bridge import WakeTemplateStore
+
+    emb = np.zeros(EMBED_DIM, np.float32)
+    emb[0] = 1.0
+    zeros = np.zeros(1536, np.float32)
+    head = (zeros, np.float32(0.0), zeros, np.ones(1536, np.float32)) if head else None
+    if audio is None:   # 단독 호출 — 말소리 0.39~1.2 s
+        audio = np.concatenate([np.zeros(6400, np.int16), np.full(12800, 1000, np.int16), np.zeros(9600, np.int16)])
+    with tempfile.TemporaryDirectory() as directory, assistant(profile=PROFILE if speaker else None) as (brain, link, _):
+        store = WakeTemplateStore(Path(directory) / "wake.npz")
+        try:
+            store.commit(WakeTemplate(word, (0.9,) * 5, np.stack([emb] * 5), 5, head=head), "등록")
+            store.on_settings({"wakeWord": word})
+            brain.wake_template, brain.wake = store, Mock()   # 고정 모델 자리 — run() 이 reset() 을 부른다(-326)
+            brain._wake_ok = Brain._wake_ok.__get__(brain)
+            if speaker:
+                brain.speaker.embed = lambda _: emb
+            brain.word_logprob = Mock(return_value=(lp, last) if lp is not None else (None, None))
+            brain._head_features = Mock()
+            link.session_until_mono = 100.0 if session else 0.0   # utter() 의 t_utter=10.0 기준
+            with patch("brain.score_utterance", return_value=(0.97, t_end)) as score, \
+                    patch("brain.wake_score_of", return_value=(0.99, 27, 0)) as oww, \
+                    patch("brain.log_utterance") as log:
+                utter(brain, audio=audio)
+            wakes = [c for c in link._send.call_args_list if c.args[0]["type"] == "wakeword_detected"]
+            toasts = [c.args[0] for c in brain.overlay.toast.call_args_list]
+            return log.call_args.kwargs, len(wakes), score, oww, brain, toasts
+        finally:
+            store.close()
+
+
+def test_custom_wake_gate():
+    """"시아야" 가 아닌 호출어 — 헤드 → 목소리 → 받아쓰기 모델의 단어 확률을 모두 넘어야 세션을 연다.
+    헤드 없는 등록본은 채점 없이 재등록을 안내하고, 받아쓰기 모델을 못 쓰면 열지 않는다. "시아야" 는 고정 모델 경로 그대로다."""
+    from brain import WAKE_FRAME_S, WAKE_PAD_S, WAKE_WORD_AFTER_S
+
+    log, wakes, score, oww, brain, toasts = _custom_wake_run()
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_only", "ok", 1), f"셋 다 통과하면 세션을 열어야 함: {log}"
+    assert log["wake_score"] == 0.97 and log["wake_word_lp"] == -2.0 and not oww.called
+    segment, word = brain.word_logprob.call_args.args
+    end = round((1.2 + WAKE_PAD_S) / WAKE_FRAME_S) * WAKE_FRAME_S - WAKE_PAD_S
+    assert word == "철수야" and len(segment) == int((end + WAKE_WORD_AFTER_S) * 16000), "호출어 끝 부근만 확인해야 함"
+
+    for speaker in (True, False):   # --no-speaker 여도 단어 확률은 본다
+        log, wakes, *_ = _custom_wake_run(lp=-5.0, speaker=speaker)
+        assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "word_mismatch", 0), f"단어 확률 미달: {log}"
+        assert log["wake_word_lp"] == -5.0
+
+    # 세션 안에서는 호출어가 아니어도 버리지 않는다 — 짧은 명령("크롬 켜줘")이 단독 호출 후보로 잘못
+    # 분류돼 단어 확률에서 떨어져도 명령 경로로 가야 한다 (화자 게이트는 그대로 지난다).
+    log, wakes, *_ = _custom_wake_run(lp=-5.0, session=True)
+    assert (log["gate"], log["wake_why"]) != ("wake_reject", "word_mismatch"), f"세션 안 명령을 버렸다: {log}"
+    assert log["wake_why"] == "in_session" and wakes == 0, log
+
+    # 헤드가 호출어를 못 찾으면 끝 시각 자리에 None 이 온다. 세션 안 명령에는 호출어가 없으니 늘 이쪽이다.
+    # 위 검사들은 score_utterance 를 항상 (0.97, 1.2) 로 대역해 None 경로를 한 번도 지나지 않았고,
+    # 그래서 세션 안 명령이 로그 직전에 죽던 버그를 놓쳤다.
+    log, wakes, *_ = _custom_wake_run(lp=-5.0, session=True, t_end=None)
+    assert log["wake_why"] == "in_session" and log["gate"] in ("router", "llm"), log
+    assert log["queue_s"] < 60, log   # 발화 종료 시각 기준이라 대기 시간은 작아야 한다
+
+    log, wakes, score, _, brain, toasts = _custom_wake_run(head=False)
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "head_missing", 0), log
+    assert not score.called and not brain.word_logprob.called, "헤드가 없으면 채점하지 않아야 함"
+    assert "호출어를 다시 등록해 주세요" in toasts
+
+    # 끝음절이 안 들린 발화(예: "철수야" 를 "철수" 로)는 평균이 통과해도 막는다 — 끝 조각 점수로 가른다
+    log, wakes, *_ = _custom_wake_run(lp=-2.0, last=-6.0)
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "word_mismatch", 0), log
+    assert log["wake_word_last"] == -6.0 and log["wake_word_lp"] == -2.0   # 평균은 통과했고 끝 조각에서 걸렸다
+
+    log, wakes, *_, toasts = _custom_wake_run(lp=None)
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_reject", "stt_unavailable", 0), log
+    assert "받아쓰기 모델을 쓸 수 없어 호출어를 확인하지 못했습니다" in toasts
+
+    log, wakes, score, oww, brain, _ = _custom_wake_run(word="시아야", head=False)
+    assert (log["gate"], log["wake_why"], wakes) == ("wake_only", "ok", 1), f'"시아야" 는 고정 모델 경로: {log}'
+    assert oww.called and not score.called and not brain.word_logprob.called
+
+
+def test_custom_wake_prompt_and_clip():
+    """현재 호출어가 LLM 프롬프트·1단 라우터에 들어가고, 헤드의 끝 시각을 프레임 번호로 바꿔 자른 호출어 구간이
+    끝 시각 + WAKE_CLIP_TAIL_S 를 넘지 않는다 (뒤에 이어진 명령이 목소리 확인에 섞이지 않게)."""
+    from brain import WAKE_CLIP_TAIL_S, WAKE_WORD, build_prompt
+
+    for session, pending in ((False, None), (True, None), (True, "창을 닫을까요?")):
+        default = build_prompt(session, pending)
+        assert default == build_prompt(session, pending, wake_word=WAKE_WORD), "안 넘기면 지금 문구 그대로"
+        custom = build_prompt(session, pending, wake_word="철수야")
+        assert '"철수야"' not in default and custom == default.replace(f'"{WAKE_WORD}"', '"철수야"'), "호출어만 바뀌어야 함"
+
+    command = np.concatenate([np.zeros(6400, np.int16), np.full(41600, 1000, np.int16), np.zeros(9600, np.int16)])  # 0.4~3.0 s 쉬지 않고 말함
+    for k in (15, 18, 25, 30, 37):
+        t_end = (76 * 160 + 1280 * k) / 16000 - 1.0          # score_utterance 가 내는 끝 시각
+        for audio in (command, None):
+            if audio is None and k != 18:
+                continue                                      # 단독 호출은 말소리가 끝나는 1.2 s 에서만
+            log, _, _, _, brain, _ = _custom_wake_run(audio=audio, t_end=t_end)
+            assert log["seg_t1"] <= round(t_end + WAKE_CLIP_TAIL_S, 2), (k, t_end, log["seg_t1"])
+    assert brain.router.word == "철수야", "1단 라우터도 현재 호출어로 맞춰야 함"
 
 
 def test_brain_paused_drops_already_queued_utterance():
@@ -1994,7 +2501,14 @@ if __name__ == "__main__":
     test_speaker_accum()
     test_voice_bridge()
     test_wake_enroll()
+    test_wake_enroll_custom()
     test_wake_model_load()
+    test_wake_head()
+    test_wake_template_head()
+    test_word_logprob()
+    test_head_stream_warmup()
+    test_custom_wake_gate()
+    test_custom_wake_prompt_and_clip()
     test_brain_paused_drops_already_queued_utterance()
     test_notice_data()
     test_be_dom_text()
@@ -2015,4 +2529,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 42/42 통과")
+    print("OK - 50/50 통과")
