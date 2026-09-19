@@ -543,7 +543,7 @@ class VoiceSession:
             router = self.stt() if self.stt else None
             if router is None:
                 return True, "받아쓰기 없음", 1.0
-            text, sec = router.transcribe(audio)
+            text, sec, logprob = router.transcribe(audio)
         except Exception as e:
             print(f"[화자 등록] 받아쓰기 실패 — 문장 확인을 건너뛴다: {e}")
             return True, "받아쓰기 실패", 1.0
@@ -551,7 +551,6 @@ class VoiceSession:
 
         heard = _compact(text)
         sim = max(similar(heard, _compact(s)) for s in SENTENCES)
-        logprob = router.last_logprob
         print(f"[화자 등록] 받아쓰기 {sec:.1f} s \"{text}\" — 등록 문장과 가장 닮은 정도 {sim:.2f}"
               + (f", 받아쓰기 신뢰도 {logprob:.2f}" if logprob is not None else ""))
         return sim >= VOICE_MIN_TEXT_SIM, f"등록 문장과 닮은 정도 {sim:.2f} < {VOICE_MIN_TEXT_SIM}", sim

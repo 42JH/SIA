@@ -213,7 +213,7 @@ def test_wake_only_preserves_confirmation_and_shadow():
     for shadow in (False, True):
         with assistant() as (brain, link, _):
             brain.wake = SimpleNamespace(reset=lambda: None)
-            brain.router.transcribe.return_value = ("시아야", 0.1)
+            brain.router.transcribe.return_value = ("시아야", 0.1, -0.3)
             if not shadow:
                 brain._pending = Pending("닫을까요?", "test", 100.0, 0, (0.0, {}), 0.0, 0)
             with patch("brain.wake_score_of", return_value=(0.99, peak, 0)), patch("brain.WAKE_SHADOW", shadow), patch.object(brain, "_execute", return_value=None):

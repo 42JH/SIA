@@ -197,18 +197,18 @@ def run_tier1():
     for d in dirs:
         expected = json.loads((d / "expected.json").read_text(encoding="utf-8"))
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
-        text, sec = r.transcribe(_load_audio(d))
+        text, sec, logprob = r.transcribe(_load_audio(d))
         lat.append(sec)
-        hit = r.route(text, True)  # brain 은 게이트(호출어·세션)를 통과한 발화만 라우터에 넘기므로(-211 이후) 라우팅 정확도도 그 기준으로 잰다
+        hit = r.route(text, True, logprob)  # brain 은 게이트(호출어·세션)를 통과한 발화만 라우터에 넘기므로(-211 이후) 라우팅 정확도도 그 기준으로 잰다
         in_scope = expected.get("is_command", True) and expected.get("action") in TIER1_ACTIONS
         if hit:
             ok, bad = match(expected, hit)
             hit_ok += ok; hit_bad += not ok
             mark = "정답" if ok else "오답 — " + "; ".join(bad)
-            print(f"[즉시:{mark}] {d.name} ({sec:.2f}s lp={r.last_logprob:.2f}) {text!r}")
+            print(f"[즉시:{mark}] {d.name} ({sec:.2f}s lp={logprob:.2f}) {text!r}")
         else:
             miss += in_scope; escal += not in_scope
-            print(f"[{'미스(1단 범위인데 승격)' if in_scope else '승격(정상)'}] {d.name} ({sec:.2f}s lp={r.last_logprob:.2f}) {text!r}")
+            print(f"[{'미스(1단 범위인데 승격)' if in_scope else '승격(정상)'}] {d.name} ({sec:.2f}s lp={logprob:.2f}) {text!r}")
     total = len(dirs)
     print(f"\n총 {total}건 — 즉시 처리 {hit_ok + hit_bad} (정답 {hit_ok} / 오답 {hit_bad}), "
           f"정상 승격 {escal}, 미스 {miss}")
@@ -251,8 +251,8 @@ def run_draft():
         if not d.is_dir() or (d / "expected.json").exists() or (d / "expected.draft.json").exists():
             continue
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
-        text, _ = r.transcribe(_load_audio(d))
-        hit = r.route(text, meta.get("session", False))
+        text, _, logprob = r.transcribe(_load_audio(d))
+        hit = r.route(text, meta.get("session", False), logprob)
         if hit:  # 라우터가 확신한 고정 명령 — 라벨 통째로 초안
             draft = {k: v for k, v in hit.items()
                      if k in ("is_command", "action", "app", "media_key")}
