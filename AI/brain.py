@@ -422,25 +422,52 @@ class SpeakerAccum:
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._items = []   # (조각을 받은 시각, 말소리만 남긴 오디오) 오래된 순
+        self._cleared_through = float("-inf")
         self.n_joined = 0  # 마지막 offer 가 이어붙인 조각 수 (로그용, 이어붙임이 없었으면 0)
 
-    def clear(self):
-        self._items = []
-        self.n_joined = 0
+    def clear(self, through=None):
+        """through 이 없으면 전체, 있으면 그 시각까지 시작한 조각만 버린다."""
+        with self._lock:
+            if through is None:
+                self._items = []
+                self._cleared_through = float("-inf")
+            else:
+                self._cleared_through = max(self._cleared_through, through)
+                self._items = [it for it in self._items if it[0] > self._cleared_through]
+            self.n_joined = 0
 
-    def offer(self, piece, sim, t):
-        """조각 하나를 받아 (앞서 모아 둔 조각들 + 이번 조각) 을 이어붙인 오디오를 돌려준다.
-
-        조각이 기준(유사도·말소리 길이)에 못 미치면 None 이고 버퍼도 건드리지 않는다 —
-        타인이나 소음이 본인 조각에 업혀 통과하는 것을 막는다. t 는 발화 시작 시각(모노토닉)."""
-        if sim is None or sim < SPEAKER_ACCUM_MIN_SIM or len(piece) < SPEAKER_ACCUM_MIN_SPEECH_S * 16000:
+    def _offer(self, piece, sim, t):
+        if (sim is None or sim < SPEAKER_ACCUM_MIN_SIM
+                or len(piece) < SPEAKER_ACCUM_MIN_SPEECH_S * 16000):
             return None
-        self._items = [it for it in self._items if t - it[0] <= SPEAKER_ACCUM_MAX_AGE_S]  # 오래된 조각 먼저 버림
-        pieces = [it[1] for it in self._items] + [piece]
-        self._items = (self._items + [(t, piece)])[-SPEAKER_ACCUM_N:]
+        prior = sorted((it for it in self._items
+                        if 0 <= t - it[0] <= SPEAKER_ACCUM_MAX_AGE_S), key=lambda it: it[0])
+        pieces = [it[1] for it in prior] + [piece]
+        if t > self._cleared_through:
+            latest = max([t] + [it[0] for it in self._items])
+            self._items = sorted((it for it in self._items + [(t, piece)]
+                                  if latest - it[0] <= SPEAKER_ACCUM_MAX_AGE_S), key=lambda it: it[0])[-SPEAKER_ACCUM_N:]
         self.n_joined = len(pieces)
         return np.concatenate(pieces)
+
+    def offer(self, piece, sim, t):
+        """조각을 시간순으로 보관하고, 현재 시각까지의 조각만 이어붙인다."""
+        with self._lock:
+            return self._offer(piece, sim, t)
+
+    def reverify(self, piece, sim, t, verify):
+        """offer→재검증→통과 시 현재 발화까지 clear를 한 트랜잭션으로 처리한다."""
+        with self._lock:
+            combined = self._offer(piece, sim, t)
+            if combined is None:
+                return None
+            n_joined = self.n_joined
+            ok, accum_sim = verify(combined)
+            if ok:
+                self.clear(t)
+            return ok, accum_sim, n_joined
 
 
 def load_api_keys():
@@ -792,9 +819,6 @@ class Brain(threading.Thread):
     # 돌리면 청크가 섞여 진짜 호출어 점수가 임계 아래로 내려간다(불러도 무반응).
     _wake_lock = threading.Lock()
     _head_feats = None     # 사용자 지정 호출어 헤드용 특징 추출기 — 첫 사용 때 만든다
-    _head_top = None       # 이번 발화의 헤드 최고점 (콘솔 확인 줄용)
-    _wake_word_lp = None   # 이번 발화의 호출어 단어 확률 — 확인하지 않았으면 None (로그용)
-    _wake_word_last = None   # 그 단어의 마지막 글자 조각 점수 (로그용)
     # 제스처 등록 중에는 메인 루프가 이걸 True로 켜서 새 발화를 큐에 안 쌓는다 — 카메라 프리뷰·제스처 실행이
     # 등록 중 멈추는 것과 같은 이유. 등록 중 우연히 호출어 비슷한 소리가 잡혀 세션이 열리는 걸 막는다.
     paused = False
@@ -822,6 +846,7 @@ class Brain(threading.Thread):
         self._pending = None  # (확인 질문, 종류, 만료 시각, 대상, 원래 명령의 완료 통계, 질문 시각)
         self._client = None
         self.router = None        # 1단 로컬 라우터 — 첫 발화 때 lazy load
+        self._router_fails = 0
         self._router_dead = False  # 임포트 실패 시 재시도하지 않음
         self._keys = load_api_keys()
         self._key_i = 0
@@ -1043,8 +1068,8 @@ class Brain(threading.Thread):
             self._wake_notified = key
             self._say(message)
 
-    def _wake_ok(self, audio, i_max, lead, oww_pass):
-        """호출어 인증 → (통과 여부, 사유, 유사도, 구간 시작 s, 구간 끝 s).
+    def _wake_ok(self, audio, i_max, lead, oww_pass, head_top=None):
+        """호출어 인증 → (통과 여부, 사유, 유사도, 구간 시작 s, 구간 끝 s, 단어 확률, 끝 조각 확률).
 
         시동어 모델과 등록자 유사도를 모두 통과해야 세션을 연다.
         템플릿이 없거나 손상됐거나 판정 중 바뀌면 거절한다.
@@ -1054,45 +1079,45 @@ class Brain(threading.Thread):
         store = self.wake_template
         if store is None:
             self._wake_notice("no_store", "호출어 등록본을 읽을 수 없어 세션을 열 수 없습니다.")
-            return False, "no_store", None, None, None
+            return False, "no_store", None, None, None, None, None
         word, template, generation = store.snapshot()
         if word != WAKE_MODEL_WORD:
-            return self._custom_wake_ok(audio, i_max, oww_pass, store, word, template, generation)
+            return self._custom_wake_ok(audio, i_max, oww_pass, store, word, template, generation, head_top)
         if self.wake is None:
             self._wake_notice("no_model", "호출어 모델이 없어 세션을 열 수 없습니다 — openwakeword 설치가 필요합니다")
-            return False, "no_wake_model", None, None, None
+            return False, "no_wake_model", None, None, None, None, None
         if not oww_pass:
-            return False, "no_candidate", None, None, None
+            return False, "no_candidate", None, None, None, None, None
         if template is None:
             broken = store.load_error
             self._wake_notice("no_template",
                               "호출어 등록본이 손상됐습니다 — 앱에서 호출어를 다시 등록해 주세요." if broken
                               else "호출어를 먼저 등록해 주세요 — 앱의 이름 불러보기에서 5번 부르면 됩니다.")
-            return False, "template_broken" if broken else "template_missing", None, None, None
+            return False, "template_broken" if broken else "template_missing", None, None, None, None, None
         if not template.matches_setting(word):
             self._wake_notice("stale_template",
                               f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
-            return False, "template_stale", None, None, None
+            return False, "template_stale", None, None, None, None, None
         clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max, lead)
         if self.speaker is None:
-            return True, "content_only", None, clip_t0, clip_t1  # --no-speaker로 화자 인증을 끈 상태
+            return True, "content_only", None, clip_t0, clip_t1, None, None  # --no-speaker로 화자 인증을 끈 상태
         try:
             emb = self.speaker.embed(clip)
         except Exception as e:
             print(f"[호출어 목소리 판정 실패] {e}")
-            return False, "embed_failed", None, clip_t0, clip_t1
+            return False, "embed_failed", None, clip_t0, clip_t1, None, None
         sim = template.similarity(emb)
         if sim is None or sim < WAKE_TEMPLATE_MIN_SIM:
             print(f"[호출어 목소리 불일치] 유사도 {sim} < {WAKE_TEMPLATE_MIN_SIM}")
-            return False, "speaker", sim, clip_t0, clip_t1
+            return False, "speaker", sim, clip_t0, clip_t1, None, None
         if not store.still_current(generation):
             # 판정하는 사이 템플릿이 교체·삭제됐다 (재등록·서버 삭제·프로필 전환).
             print("[호출어 판정 폐기] 판정 도중 템플릿이 바뀌었습니다 — 세션을 열지 않습니다")
-            return False, "template_changed", sim, clip_t0, clip_t1
+            return False, "template_changed", sim, clip_t0, clip_t1, None, None
         self._wake_notified = None
-        return True, "ok", sim, clip_t0, clip_t1
+        return True, "ok", sim, clip_t0, clip_t1, None, None
 
-    def _custom_wake_ok(self, audio, i_max, oww_pass, store, word, template, generation):
+    def _custom_wake_ok(self, audio, i_max, oww_pass, store, word, template, generation, head_top):
         """"시아야" 가 아닌 호출어의 인증 — _wake_ok 와 같은 반환. oww_pass·i_max 는 run 이 등록본의 헤드로 채점한 결과다.
 
         헤드는 느슨한 앞문이다 (다른 말의 절반이 통과한다). 그 뒤 등록 목소리 유사도(14 ms)를 먼저 보고,
@@ -1103,16 +1128,16 @@ class Brain(threading.Thread):
             self._wake_notice("no_template",
                               "호출어 등록본이 손상됐습니다 — 앱에서 호출어를 다시 등록해 주세요." if broken
                               else "호출어를 먼저 등록해 주세요 — 앱의 이름 불러보기에서 5번 부르면 됩니다.")
-            return False, "template_broken" if broken else "template_missing", None, None, None
+            return False, "template_broken" if broken else "template_missing", None, None, None, None, None
         if not template.matches_setting(word):
             self._wake_notice("stale_template",
                               f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
-            return False, "template_stale", None, None, None
+            return False, "template_stale", None, None, None, None, None
         if not template.has_head:
             self._wake_notice("head_missing", "호출어를 다시 등록해 주세요")
-            return False, "head_missing", None, None, None
+            return False, "head_missing", None, None, None, None, None
         if not oww_pass:
-            return False, "no_candidate", None, None, None
+            return False, "no_candidate", None, None, None, None, None
         clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max)
         sim = None
         if self.speaker is not None:
@@ -1120,37 +1145,37 @@ class Brain(threading.Thread):
                 emb = self.speaker.embed(clip)
             except Exception as e:
                 print(f"[호출어 목소리 판정 실패] {e}")
-                return False, "embed_failed", None, clip_t0, clip_t1
+                return False, "embed_failed", None, clip_t0, clip_t1, None, None
             sim = template.similarity(emb)
             if sim is None or sim < WAKE_TEMPLATE_MIN_SIM:
                 print(f"[호출어 목소리 불일치] 유사도 {sim} < {WAKE_TEMPLATE_MIN_SIM}")
-                return False, "speaker", sim, clip_t0, clip_t1
+                return False, "speaker", sim, clip_t0, clip_t1, None, None
         end = i_max * WAKE_FRAME_S - WAKE_PAD_S   # 호출어가 끝난 시각 (wake_clip 과 같은 환산)
         lo = max(0, int((end - WAKE_WORD_BEFORE_S) * 16000))
         hi = min(len(audio), int((end + WAKE_WORD_AFTER_S) * 16000))
         lp, last = self.word_logprob(audio[lo:hi], word.strip(), detail=True)
-        self._wake_word_lp = None if lp is None else round(lp, 3)
-        self._wake_word_last = None if last is None else round(last, 3)
+        word_lp = None if lp is None else round(lp, 3)
+        word_last = None if last is None else round(last, 3)
 
         def num(v):
             return "-" if v is None else f"{v:.2f}"
 
-        print(f'[호출어 확인] "{word}" 헤드 {num(self._head_top)} · 단어 확률 {num(lp)} (기준 {WAKE_WORD_LOGPROB_MIN})'
+        print(f'[호출어 확인] "{word}" 헤드 {num(head_top)} · 단어 확률 {num(lp)} (기준 {WAKE_WORD_LOGPROB_MIN})'
               f" · 끝 조각 {num(last)} (기준 {WAKE_WORD_LAST_MIN})"
               f" · 목소리 {num(sim) if self.speaker is not None else '확인 안 함'}")
         if lp is None:
             self._wake_notice("stt_unavailable", "받아쓰기 모델을 쓸 수 없어 호출어를 확인하지 못했습니다")
-            return False, "stt_unavailable", sim, clip_t0, clip_t1
+            return False, "stt_unavailable", sim, clip_t0, clip_t1, word_lp, word_last
         if lp < WAKE_WORD_LOGPROB_MIN:
-            return False, "word_mismatch", sim, clip_t0, clip_t1
+            return False, "word_mismatch", sim, clip_t0, clip_t1, word_lp, word_last
         if last < WAKE_WORD_LAST_MIN:
             # 단어의 끝이 안 들렸다 — "철수야" 를 "철수" 로 부른 쪽이다. 사유는 같고, 로그의 wake_word_last 로 갈라 본다.
-            return False, "word_mismatch", sim, clip_t0, clip_t1
+            return False, "word_mismatch", sim, clip_t0, clip_t1, word_lp, word_last
         if not store.still_current(generation):
             print("[호출어 판정 폐기] 판정 도중 템플릿이 바뀌었습니다 — 세션을 열지 않습니다")
-            return False, "template_changed", sim, clip_t0, clip_t1
+            return False, "template_changed", sim, clip_t0, clip_t1, word_lp, word_last
         self._wake_notified = None
-        return True, "ok" if self.speaker is not None else "content_only", sim, clip_t0, clip_t1
+        return True, "ok" if self.speaker is not None else "content_only", sim, clip_t0, clip_t1, word_lp, word_last
 
     def _head_features(self):
         """사용자 지정 호출어 헤드용 특징 추출기 — run 스레드만 쓰고 한 번 만들어 재사용한다.
@@ -1175,7 +1200,8 @@ class Brain(threading.Thread):
                     if self.router is None:
                         self.router = Router(self._wake_word())
             except Exception as e:
-                self._router_dead = True
+                with self._router_lock:
+                    self._router_dead = True
                 print(f"1단 라우터 비활성 (faster-whisper 미설치?): {e}")
                 return None
         word = self._wake_word()
@@ -1293,8 +1319,8 @@ class Brain(threading.Thread):
             # reset 불필요(실측 점수차 0). 활성 세션 중엔 호출어가 필요 없으니 통과시키되
             # 점수는 계속 기록한다. WAKE_SHADOW=1이면 판정만 로그하고 흐름은 그대로.
             wake_score, i_max, lead, oww_pass = None, None, 0, False
+            wake_word_lp, wake_word_last = None, None
             wake_why, wake_sim, seg_t0, seg_t1 = "in_session", None, None, None
-            self._head_top = self._wake_word_lp = self._wake_word_last = None
             store = self.wake_template
             word, template, _ = store.snapshot() if store is not None else (WAKE_MODEL_WORD, None, None)
             if word != WAKE_MODEL_WORD:
@@ -1313,7 +1339,7 @@ class Brain(threading.Thread):
                     except Exception as e:
                         print(f"[호출어 헤드 채점 실패] {type(e).__name__}: {e}")
                         top, head_end = 0.0, None
-                    wake_score = self._head_top = round(top, 3)
+                    wake_score = round(top, 3)
                     if head_end is not None:
                         i_max = round((head_end + WAKE_PAD_S) / WAKE_FRAME_S)
                     oww_pass = i_max is not None
@@ -1336,9 +1362,10 @@ class Brain(threading.Thread):
             if in_session:
                 wake_ok, wake_why = True, "in_session"
             else:
-                wake_ok, wake_why, wake_sim, seg_t0, seg_t1 = self._wake_ok(audio, i_max, lead, oww_pass)
+                wake_ok, wake_why, wake_sim, seg_t0, seg_t1, wake_word_lp, wake_word_last = \
+                    self._wake_ok(audio, i_max, lead, oww_pass, wake_score)
                 if wake_ok:
-                    accum.clear()  # 세션 밖에서 새로 부른 것 — 앞선 호출에서 남은 조각은 버린다
+                    accum.clear(t_utter)  # 이 호출보다 먼저 시작한 조각만 역할이 끝났다
                     be = self._be()
                     with self._audio_lock:
                         stale = generation != self._audio_generation
@@ -1351,7 +1378,7 @@ class Brain(threading.Thread):
                         self._say("네, 듣고 있어요")
                         log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
                                       wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                      wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
+                                      wake_word_lp=wake_word_lp, wake_word_last=wake_word_last,
                                       wake_live=live_score, wake_cut=live_cut,
                                       seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
                         return  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
@@ -1360,7 +1387,7 @@ class Brain(threading.Thread):
                           + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
                     log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
                                   wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                  wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
+                                  wake_word_lp=wake_word_lp, wake_word_last=wake_word_last,
                                   wake_live=live_score, wake_cut=live_cut,
                                   seg_t0=seg_t0, seg_t1=seg_t1,
                                   session=in_session, **audio_stats(audio))
@@ -1374,20 +1401,20 @@ class Brain(threading.Thread):
                 ok, sim = self.speaker.verify(spk_audio, profile)
                 if not ok and sim is not None:
                     # 185: 단독으로 거부된 짧은 조각을 모아 뒀다가 이번 발화 앞에 이어붙여 한 번 더 본다.
-                    # "시아야" 한 마디는 말소리가 0.7 s 뿐이라 등록된 본인도 대부분 여기서 걸린다.
-                    # 유사도를 아예 재지 못한 인증 오류(sim None)는 이 재판정에 넣지 않는다 — 목소리를
-                    # 확인하지 못한 발화를 조각에 업혀 통과시키면 게이트를 우회하는 길이 된다.
-                    combined = accum.offer(speech_part(spk_audio), sim, t_utter)
-                    if combined is not None:
-                        accum_n = accum.n_joined
-                        ok, accum_sim = self.speaker.verify(combined, profile)
+                    # 유사도를 아예 재지 못한 인증 오류(sim None)는 누적 재판정에 넣지 않는다.
+                    retried = accum.reverify(
+                        speech_part(spk_audio), sim, t_utter,
+                        lambda combined: self.speaker.verify(combined, profile))
+                    if retried is not None:
+                        ok, accum_sim, accum_n = retried
                         if ok:
                             sim = accum_sim  # 이어붙여 통과했으니 기록도 재판정 유사도로 남긴다.
                         elif accum_sim is None:
                             sim = None  # 재판정이 오류로 끝났다 — 타인이라는 근거가 아니므로 아래 오류 분기로.
+                elif ok:
+                    accum.clear(t_utter)  # 더 나중에 시작한 발화 조각은 보존한다
                 if ok:
                     self._speaker_error_notified = False
-                    accum.clear()  # 통과했으니 모아 둔 조각은 역할이 끝났다
                     # 통과한 발화를 보이스 재생 샘플로 올리지 않는다 — "내 목소리" 에서는 등록 때 읽은 마지막 문장이 들려야 한다
                 elif sim is None:
                     # 인증 오류 — 목소리를 확인하지 못했을 뿐 타인의 발화라는 근거는 없다.
@@ -1424,7 +1451,7 @@ class Brain(threading.Thread):
                 # 호출어 판정을 다시 하지는 않는다 (게이트는 위 화자 인증 하나다).
                 self._say("네, 듣고 있어요")
                 log_utterance(gate="wake_only", wake_why=wake_why, wake_score=wake_score,
-                              wake_sim=None, wake_word_lp=self._wake_word_lp, wake_word_last=self._wake_word_last,
+                              wake_sim=None, wake_word_lp=wake_word_lp, wake_word_last=wake_word_last,
                               wake_live=live_score, wake_cut=live_cut,
                               speaker_sim=round(sim, 3) if sim is not None else None,
                               seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
@@ -1524,18 +1551,22 @@ class Brain(threading.Thread):
         if self.ensure_router() is None:
             return None
         try:
-            text, sec = self.router.transcribe(audio)
-            hit = self.router.route(text, True)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
+            text, sec, logprob = self.router.transcribe(audio)
+            hit = self.router.route(text, True, logprob)  # 여기 오는 발화는 호출어(openwakeword+템플릿)·세션 게이트를 이미 통과했다(-211) — 전사에서 "시아야"가 뭉개져도 라우터가 다시 막지 않는다
             if lat is not None:
-                lat["stt_s"], lat["stt_lp"] = round(sec, 2), self.router.last_logprob
-            self._router_fails = 0
+                lat["stt_s"], lat["stt_lp"] = round(sec, 2), logprob
+            with self._router_lock:
+                self._router_fails = 0
+                self._router_dead = False
             print(f"[1단 {sec:.2f}s] {text!r} → {hit['action'] if hit else '승격'}")
             return hit or (text or None)
         except Exception as e:
-            self._router_fails += 1
-            if self._router_fails >= 3:  # 모델 로드가 계속 실패하는 환경 — 발화마다 수 초 재시도하지 않고 LLM 단독으로
-                self._router_dead = True
-            print(f"[1단 오류 → 승격] {e}" + (" — 3회 연속 실패, 1단 라우터 비활성" if self._router_dead else ""))
+            with self._router_lock:
+                self._router_fails += 1
+                if self._router_fails >= 3:  # 모델 로드가 계속 실패하는 환경 — 발화마다 수 초 재시도하지 않고 LLM 단독으로
+                    self._router_dead = True
+                dead = self._router_dead
+            print(f"[1단 오류 → 승격] {e}" + (" — 3회 연속 실패, 1단 라우터 비활성" if dead else ""))
             return None
 
     # --- LLM 호출 (로컬 VLM으로 교체하려면 이 메서드만) ---

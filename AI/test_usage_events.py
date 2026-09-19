@@ -56,11 +56,12 @@ def assistant(profile=PROFILE, act=True):
         brain = Brain(Mock(), act=act, speaker=speaker, link=link)
         # 호출어 개인화 판정은 test_wake_template 이 따로 본다. 여기서는 "시동어 후보가 나오면 통과"로 고정해
         # 통계·실행 경로만 남긴다 — 실제 판정은 STT·임베딩 모델을 부른다.
-        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (
-            (True, "ok", 0.9, 0.0, 1.4) if oww_pass else (False, "no_candidate", None, None, None))
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass, head_top=None: (
+            (True, "ok", 0.9, 0.0, 1.4, None, None) if oww_pass
+            else (False, "no_candidate", None, None, None, None, None))
         brain._client = object()
         brain.router = Router("시아야")
-        brain.router.transcribe = Mock(return_value=("시아야 계산기 열어줘", 0.5))
+        brain.router.transcribe = Mock(return_value=("시아야 계산기 열어줘", 0.5, -0.3))
         brain._ask = Mock(return_value=command("answer"))
         clock = SimpleNamespace(now=12.0)
         with patch("brain.time.monotonic", side_effect=lambda: clock.now):
@@ -77,7 +78,7 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
         pass
 
     if result is not None:
-        brain.router.transcribe.return_value = ("시아야 이거 해줘", 0.5)  # 실제 라우터에서 LLM 승격
+        brain.router.transcribe.return_value = ("시아야 이거 해줘", 0.5, -0.3)  # 실제 라우터에서 LLM 승격
         brain._ask.return_value = result
     brain.submit(audio, None, None, t_utter=started, target_hwnd=hwnd)
     with patch("brain.time.sleep", side_effect=Done):
@@ -454,7 +455,7 @@ def test_media_and_session_end_router_paths():
     for text, action, tool in (("시아야 음소거 해줘", "media", "media.mute_toggle"),
                                ("이제 그만", "end_session", None)):
         with assistant() as (brain, link, _):
-            brain.router.transcribe.return_value = (text, 0.5)
+            brain.router.transcribe.return_value = (text, 0.5, -0.3)
             utter(brain)
             assert len(events(link, "voice")) == 1
             assert events(link, "voice")[0]["accuracy"] == 1.0  # 1단 라우터 명령도 정확도에 든다
@@ -511,7 +512,7 @@ def test_unexecuted_actions_and_local_mode():
         brain.link = None
         # 세션은 BE 소유다(-320) — BE 가 없으면 세션도 없어 모든 발화가 호출어 게이트를 탄다.
         # 여기 주제는 "BE 없이도 answer 문구는 나간다" 이므로 게이트만 통과시킨다.
-        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
+        brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
         utter(brain, command("answer"))
         assert not events(link)
         assert brain.overlay.toast.call_args.args[0] == "완료"

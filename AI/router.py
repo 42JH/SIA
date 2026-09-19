@@ -159,7 +159,6 @@ class Router:
         self._load_lock = threading.Lock()
         self._tok = None          # word_logprob 용 토크나이저 — 처음 쓸 때 한 번 만든다
         self._word_tokens = {}    # 단어 → 토큰 후보 (공백 붙인 것, 안 붙인 것)
-        self.last_logprob = None  # 직전 transcribe 의 세그먼트 최저 avg_logprob (환각 가드·로그용)
         self.word, self.wakes, self.prompt = None, (), STT_PROMPT
         self.set_wake(wake_word)
 
@@ -203,7 +202,7 @@ class Router:
 
     def warm(self):
         """모델 로드 + 무음 1초 추론 — 첫 명령이 로드 1.4s·CUDA 워밍업을 떠안지 않게(팀원 실측 9/16).
-        transcribe() 를 거치지 않아 last_logprob·호출 통계를 건드리지 않는다."""
+        transcribe() 를 거치지 않아 호출 통계를 건드리지 않는다."""
         import numpy as np
         from faster_whisper import WhisperModel
 
@@ -213,7 +212,7 @@ class Router:
         list(segments)
 
     def transcribe(self, audio_i16):
-        """발화 오디오 → (텍스트, 소요 초). 모델은 첫 호출 때 로드."""
+        """발화 오디오 → (텍스트, 소요 초, 세그먼트 최저 avg_logprob). 모델은 첫 호출 때 로드."""
         import numpy as np
         from faster_whisper import WhisperModel
 
@@ -225,8 +224,8 @@ class Router:
                                              condition_on_previous_text=False, initial_prompt=self.prompt)
         segments = list(segments)
         text = "".join(s.text for s in segments).strip()
-        self.last_logprob = min((s.avg_logprob for s in segments), default=None)
-        return text, time.monotonic() - t0
+        logprob = min((s.avg_logprob for s in segments), default=None)
+        return text, time.monotonic() - t0, logprob
 
     def word_logprob(self, audio_i16, word, detail=False):
         """발화에 word 가 들어 있는 정도 → 평균 로그 확률 (0 에 가까울수록 그 단어).
@@ -235,7 +234,7 @@ class Router:
         받아쓰기로 확인하면 짧은 단독 호출을 인사말("잘했어요" 등)로 바꿔 적어 실제 호출 41개 중 28개만 통과했고,
         단어 확률로는 37개가 통과했다. 무관한 말은 두 방식 모두 0건이었다.
         프롬프트는 주지 않는다 — 받아쓰기 확인에서 프롬프트가 결과를 호출어 쪽으로 끌어 다른 호출어("시아야")의
-        오통과를 늘렸다. 단어 앞 공백 유무에 따라 토큰이 달라 두 후보 중 높은 값을 쓴다. transcribe 의 통계(last_logprob)는 건드리지 않는다.
+        오통과를 늘렸다. 단어 앞 공백 유무에 따라 토큰이 달라 두 후보 중 높은 값을 쓴다.
 
         detail=True 면 (평균, 마지막 조각) 을 돌려준다. 끝음절이 빠진 말("철수야" 에 대한 "철수")은 앞 조각이 잘 맞아
         평균으로는 묻히고 마지막 조각만 폭락한다 — 실측 예 [-0.12, -0.00, -0.07, -11.27], 평균 -2.87."""
@@ -274,11 +273,11 @@ class Router:
             r = r.replace(w, "")
         return r
 
-    def route(self, text, session_active):
+    def route(self, text, session_active, logprob):
         """텍스트 → 액션 dict 또는 None(승격). 게이트: 호출어 또는 활성 세션."""
         if not text:
             return None
-        if self.last_logprob is not None and self.last_logprob < STT_MIN_LOGPROB:
+        if logprob is not None and logprob < STT_MIN_LOGPROB:
             return None  # 전사 신뢰도 낮음(환각 의심) — 즉시 실행 대신 LLM 승격
         c = _compact(text)
         if any(_compact(d) in c for d in DEICTIC) or any(a in c for a in ASK):
@@ -316,59 +315,59 @@ class Router:
 
 def selftest():
     r = Router("시아야")
-    hit = r.route("시아야 계산기 열어줘", False)
+    hit = r.route("시아야 계산기 열어줘", False, None)
     assert hit and hit["action"] == "open_app" and hit["app"] == "calc" and hit["wake_heard"]
-    hit = r.route("음소거 해줘", True)  # 세션 중엔 호출어 없이도
+    hit = r.route("음소거 해줘", True, None)  # 세션 중엔 호출어 없이도
     assert hit and hit["action"] == "media" and hit["media_key"] == "mute"
-    assert r.route("계산기 열어줘", False) is None       # 호출어도 세션도 없음 → 승격
-    assert r.route("시아야 이거 저장해줘", False) is None  # 지시어 → 승격
-    assert r.route("시아야 이 문서 요약해줘", False) is None  # 생성 필요 → 승격
-    assert r.route("시아야 아까 그 파일 다시 띄워봐", False) is None  # 사전 밖 → 승격
-    hit = r.route("이제 그만", True)
+    assert r.route("계산기 열어줘", False, None) is None       # 호출어도 세션도 없음 → 승격
+    assert r.route("시아야 이거 저장해줘", False, None) is None  # 지시어 → 승격
+    assert r.route("시아야 이 문서 요약해줘", False, None) is None  # 생성 필요 → 승격
+    assert r.route("시아야 아까 그 파일 다시 띄워봐", False, None) is None  # 사전 밖 → 승격
+    hit = r.route("이제 그만", True, None)
     assert hit and hit["action"] == "end_session"
-    assert r.route("그만", False) is None  # 세션 없는 '그만'은 승격
+    assert r.route("그만", False, None) is None  # 세션 없는 '그만'은 승격
     # 2026-09-15 실측 미스에서 추가: 조사·군말 사이 볼륨, 종료 인사 우선, 틀어/시작해
-    assert r.route("볼륨 좀 올려줘", True)["media_key"] == "volup"
-    assert r.route("볼륨을 팔십까지 올려줘", True)["media_key"] == "volset"  # 값이 있으면 절대값(9/16 팀원 실측)
-    assert r.route("소리 줄여줄래", True)["media_key"] == "voldown"
-    assert r.route("시작해줘", True)["media_key"] == "playpause"
-    assert r.route("노래 틀어줘", True)["media_key"] == "playpause"
-    assert r.route("크롬 틀어줘", True)["action"] == "open_app"          # 앱 이름이 있으면 열기가 우선
-    assert r.route("시아야 메모장 해줄래?", False)["app"] == "notepad"   # 앱 이름 + 군말 → 열기(실측 미스)
-    assert r.route("메모장 해줄래?", True)["action"] == "open_app"
-    assert r.route("시아야 크롬", False)["action"] == "open_app"
-    assert r.route("메모장 저장해줘", True) is None                     # 다른 동사 → 승격
-    assert r.route("시아야 크롬 펴줘", False)["app"] == "chrome"        # 동사 오인식(켜줘→펴줘) — 앱 이름이 닻
-    assert r.route("시아야 크롬 닫아줘", False) is None                 # 닫기 표지 → 승격
-    assert r.route("크롬 탭 닫아", True) is None
-    assert r.route("메모장에 적어줘", True) is None                     # 열기와 무관한 동사 → 승격
-    assert r.route("메모장 띠워줘", True)["app"] == "notepad"          # 띄워→띠워(자모 0.8)
+    assert r.route("볼륨 좀 올려줘", True, None)["media_key"] == "volup"
+    assert r.route("볼륨을 팔십까지 올려줘", True, None)["media_key"] == "volset"  # 값이 있으면 절대값(9/16 팀원 실측)
+    assert r.route("소리 줄여줄래", True, None)["media_key"] == "voldown"
+    assert r.route("시작해줘", True, None)["media_key"] == "playpause"
+    assert r.route("노래 틀어줘", True, None)["media_key"] == "playpause"
+    assert r.route("크롬 틀어줘", True, None)["action"] == "open_app"          # 앱 이름이 있으면 열기가 우선
+    assert r.route("시아야 메모장 해줄래?", False, None)["app"] == "notepad"   # 앱 이름 + 군말 → 열기(실측 미스)
+    assert r.route("메모장 해줄래?", True, None)["action"] == "open_app"
+    assert r.route("시아야 크롬", False, None)["action"] == "open_app"
+    assert r.route("메모장 저장해줘", True, None) is None                     # 다른 동사 → 승격
+    assert r.route("시아야 크롬 펴줘", False, None)["app"] == "chrome"        # 동사 오인식(켜줘→펴줘) — 앱 이름이 닻
+    assert r.route("시아야 크롬 닫아줘", False, None) is None                 # 닫기 표지 → 승격
+    assert r.route("크롬 탭 닫아", True, None) is None
+    assert r.route("메모장에 적어줘", True, None) is None                     # 열기와 무관한 동사 → 승격
+    assert r.route("메모장 띠워줘", True, None)["app"] == "notepad"          # 띄워→띠워(자모 0.8)
     for bad in ("크롬 느려", "크롬은요", "계산기 어디", "탐색기 말고", "크롬 봐", "크롬이 안 돼"):
-        assert r.route(bad, True) is None, bad                       # 검토 지적: 짧은 잔여만으로 열면 오탐
+        assert r.route(bad, True, None) is None, bad                       # 검토 지적: 짧은 잔여만으로 열면 오탐
     assert similar("켜줘", "펴줘") >= 0.7 and similar("켜", "꺼") < 0.7
-    hit = r.route("소리 80까지 높여줘", True)                           # 절대값(팀원 실측: 한 단계만 올라감)
+    hit = r.route("소리 80까지 높여줘", True, None)                           # 절대값(팀원 실측: 한 단계만 올라감)
     assert hit["media_key"] == "volset" and hit["level"] == 80
-    assert r.route("볼륨을 팔십으로 맞춰줘", True)["level"] == 80
-    assert r.route("볼륨 십오", True)["level"] == 15 and r.route("소리 백으로", True)["level"] == 100
-    assert r.route("볼륨 두 칸 올려줘", True)["media_key"] == "volup"     # 수량 표현은 한 단계
-    assert r.route("소리 80번지까지 높여줘", True)["level"] == 80          # 숫자·조사 사이 군말(TTS 실측)
-    assert r.route("볼륨 3 올려", True)["media_key"] == "volup"           # 조사 없는 숫자는 절대값이 아니다
-    assert r.route("볼륨 올려줘", True)["media_key"] == "volup"
-    assert r.route("다음 영상에서 만나요", True)["action"] == "end_session"  # 인사 > 다음영상(next)
-    assert r.route("다음 영상", True)["media_key"] == "next"
-    assert r.route("수고하셨습니다", True)["action"] == "end_session"
-    r.last_logprob = -1.5; assert r.route("다음곡", True) is None; r.last_logprob = None  # 환각 가드: 신뢰도 낮으면 승격
+    assert r.route("볼륨을 팔십으로 맞춰줘", True, None)["level"] == 80
+    assert r.route("볼륨 십오", True, None)["level"] == 15 and r.route("소리 백으로", True, None)["level"] == 100
+    assert r.route("볼륨 두 칸 올려줘", True, None)["media_key"] == "volup"     # 수량 표현은 한 단계
+    assert r.route("소리 80번지까지 높여줘", True, None)["level"] == 80          # 숫자·조사 사이 군말(TTS 실측)
+    assert r.route("볼륨 3 올려", True, None)["media_key"] == "volup"           # 조사 없는 숫자는 절대값이 아니다
+    assert r.route("볼륨 올려줘", True, None)["media_key"] == "volup"
+    assert r.route("다음 영상에서 만나요", True, None)["action"] == "end_session"  # 인사 > 다음영상(next)
+    assert r.route("다음 영상", True, None)["media_key"] == "next"
+    assert r.route("수고하셨습니다", True, None)["action"] == "end_session"
+    assert r.route("다음곡", True, -1.5) is None  # 환각 가드: 신뢰도 낮으면 승격
     # 호출어 변경 — 사전 매칭과 프롬프트 맨 앞이 새 호출어를 따른다 (STT_PROMPT 환경변수가 없을 때)
     r.set_wake("철수야")
     assert r.wakes == ("철수야",)
     assert STT_PROMPT_FIXED or r.prompt.startswith("철수야. ")
-    hit = r.route("철수야 계산기 열어줘", False)
+    hit = r.route("철수야 계산기 열어줘", False, None)
     assert hit and hit["action"] == "open_app" and hit["wake_heard"]
-    assert r.route("시아야 계산기 열어줘", False) is None               # 옛 호출어로는 세션 밖에서 안 잡힌다
+    assert r.route("시아야 계산기 열어줘", False, None) is None               # 옛 호출어로는 세션 밖에서 안 잡힌다
     r.set_wake("시아야")
     assert r.prompt == STT_PROMPT and (STT_PROMPT_FIXED or r.prompt == DEFAULT_PROMPT)   # "시아야"면 글자까지 그대로
     assert r.wakes == WAKE_VARIANTS["시아야"]
-    r.set_wake("  "); assert r.word == "시아야" and r.route("계산기 열어줘", False) is None  # 빈 호출어는 무시 — 모든 문장이 호출이 되면 안 된다
+    r.set_wake("  "); assert r.word == "시아야" and r.route("계산기 열어줘", False, None) is None  # 빈 호출어는 무시 — 모든 문장이 호출이 되면 안 된다
 
     # GPU 채택 판정: 생성이 아니라 "첫 연산까지" 통과해야 한다. cuBLAS 는 지연 로드라
     # 생성은 DLL 이 없어도 늘 성공하고, 그때 GPU 를 채택해 버리면 폴백이 영영 안 탄다(9/18).
@@ -414,5 +413,5 @@ if __name__ == "__main__":
         t = np.arange(sr * 2) / sr
         audio = (np.sin(2 * np.pi * 440 * t) * 3000).astype(np.int16)
         for i in range(3):
-            text, sec = r.transcribe(audio)
-            print(f"{i + 1}회: {sec:.2f}s → {text!r}")
+            text, sec, logprob = r.transcribe(audio)
+            print(f"{i + 1}회: {sec:.2f}s lp={logprob} → {text!r}")

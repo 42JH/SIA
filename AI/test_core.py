@@ -527,6 +527,109 @@ def test_speaker_accum():
     assert len(b.offer(p2, 0.40, SPEAKER_ACCUM_MAX_AGE_S + 1)) == len(p2)  # 20 s 지난 조각은 이어붙임에서 빠짐
 
 
+def test_speaker_accum_transaction_is_serialized():
+    """한 발화의 offer→재검증→clear 중 다른 발화가 같은 누적기를 바꾸지 않는다."""
+    from unittest.mock import patch
+
+    from test_usage_events import AUDIO, PROFILE, assistant
+
+    with assistant() as (brain, _, _):
+        accum = brain._accum
+        accum.offer(AUDIO, 0.3, 8.0)
+        brain._try_router = lambda *a, **k: {"action": "test"}
+        brain._execute = lambda *a, **k: None
+        first_reverify = threading.Event()
+        second_initial = threading.Event()
+        second_reverify = threading.Event()
+        release = threading.Event()
+        calls = {}
+        second_lengths = []
+
+        def verify(audio, profile):
+            assert profile is PROFILE
+            name = threading.current_thread().name
+            calls[name] = calls.get(name, 0) + 1
+            if name == "first" and calls[name] == 2:
+                first_reverify.set()
+                assert release.wait(2)
+                return True, 0.8
+            if name == "second":
+                second_lengths.append(len(audio))
+                (second_initial if calls[name] == 1 else second_reverify).set()
+            return False, 0.3
+
+        brain.speaker.verify.side_effect = verify
+
+        def handle(name, audio, started):
+            threading.current_thread().name = name
+            brain._handle(audio, None, None, started, 0, 12.0, None, False,
+                          0, accum, PROFILE)
+
+        first_audio = AUDIO.copy()
+        second_audio = np.full_like(AUDIO, 2000)
+        with patch("brain.log_utterance"):
+            first = threading.Thread(target=handle, args=("first", first_audio, 10.0))
+            second = threading.Thread(target=handle, args=("second", second_audio, 11.0))
+            first.start()
+            assert first_reverify.wait(2)
+            second.start()
+            assert second_initial.wait(2)
+            assert not second_reverify.wait(0.1), "다른 발화가 누적 재검증 도중 offer 했다"
+            release.set()
+            first.join(2)
+            second.join(2)
+
+        assert not first.is_alive() and not second.is_alive()
+        assert second_lengths == [len(AUDIO), len(AUDIO)], "첫 발화의 clear 전에 두 번째 조각이 섞였다"
+        old = brain._accum
+        brain.reset_audio()
+        assert brain._accum is not old
+        assert len(brain._accum.offer(AUDIO, 0.3, 12.0)) == len(AUDIO)
+
+
+def test_speaker_accum_uses_utterance_time_order():
+    """늦게 처리된 과거 발화는 미래 조각을 쓰거나 지우지 않고, 결합은 시작 시각 순이다."""
+    from brain import SpeakerAccum
+
+    accum = SpeakerAccum()
+    p10 = np.full(8000, 10, np.int16)
+    p11 = np.full(8000, 11, np.int16)
+    p12 = np.full(8000, 12, np.int16)
+    accum.offer(p11, 0.3, 11.0)  # 미래 발화가 먼저 처리된다
+    verified = []
+    result = accum.reverify(p10, 0.3, 10.0,
+                            lambda audio: verified.append(audio.copy()) or (True, 0.8))
+    assert result == (True, 0.8, 1)
+    assert np.array_equal(verified[0], p10), "t=10 재검증에 t=11 조각이 섞였다"
+    combined = accum.offer(p12, 0.3, 12.0)
+    assert np.array_equal(combined[:len(p11)], p11), "보존한 t=11 조각이 사라졌거나 순서가 바뀌었다"
+    assert np.array_equal(combined[len(p11):], p12), "결합 오디오가 발화 시작 시각 순서가 아니다"
+
+
+def test_speaker_accum_does_not_revive_cleared_past():
+    """통과로 삭제된 과거 발화가 늦게 끝나도 누적 버퍼에 되살아나지 않는다."""
+    from brain import SpeakerAccum
+
+    accum = SpeakerAccum()
+    p10 = np.full(8000, 10, np.int16)
+    p11 = np.full(8000, 11, np.int16)
+    p12 = np.full(8000, 12, np.int16)
+
+    assert accum.reverify(p11, 0.3, 11.0, lambda _audio: (True, 0.8)) == (True, 0.8, 1)
+    assert accum._cleared_through == 11.0
+    assert accum.reverify(p10, 0.3, 10.0, lambda _audio: (False, 0.1)) == (False, 0.1, 1)
+    accum.clear(10.0)  # 늦은 발화가 통과해 clear해도 워터마크는 내려가지 않는다
+    assert accum._cleared_through == 11.0
+    verified = []
+    assert accum.reverify(p12, 0.3, 12.0,
+                          lambda audio: verified.append(audio.copy()) or (False, 0.1)) == (False, 0.1, 1)
+    assert np.array_equal(verified[0], p12), "삭제된 t=10 조각이 C 재검증에 되살아났다"
+
+    accum.clear()
+    assert accum._cleared_through == float("-inf")
+    assert np.array_equal(accum.offer(p10, 0.3, 10.0), p10)
+
+
 def test_mouse_subpixel_accumulator():
     from main import Mouse
     m = Mouse(enabled=False)  # 로그만 — 실제 마우스 안 건드림
@@ -902,9 +1005,9 @@ def test_voice_bridge():
 
     # 화면의 문장이 아니라 다른 말을 읽으면 MISMATCH 로 무른다 — 받아쓰기(1단 라우터)를 빌려 쓴다
     class FakeRouter:                                          # transcribe 만 흉내 내는 대역 — 진짜 받아쓰기는 돌리지 않는다
-        def __init__(self): self.text, self.last_logprob = "", -0.3
+        def __init__(self): self.text, self.logprob = "", -0.3
         def warm(self): pass
-        def transcribe(self, audio): return self.text, 0.1
+        def transcribe(self, audio): return self.text, 0.1, self.logprob
 
     heard = FakeRouter()
     vs.stt = lambda: heard
@@ -923,12 +1026,12 @@ def test_voice_bridge():
     # 받아쓰기 신뢰도가 낮다고 봐주지는 않는다 — 봐주면 whisper 가 못 알아들은 엉뚱한 발화까지 통과한다
     link.sent.clear()
     vs.on_collect("t11", 2)
-    heard.text, heard.last_logprob = "골프.", -1.7
+    heard.text, heard.logprob = "골프.", -1.7
     utter(loud(7))
     utter(loud(7))
     assert link.sent == [] and vs._mismatch == 1 and spk.embeds == 1 and vs._n == 2   # 앞서 쓴 예산 1회 그대로
     # 읽다가 틀린 정도면 사유를 보내고 다시 기다린다. 예산(2회)이 떨어지면 받되 판독은 낮음 — 등록에 갇히지 않게
-    heard.text, heard.last_logprob = "여름이 지나자 배짱이가 울었다", -0.3   # 마이크 실측에서 0.65 로 나온 갈래
+    heard.text, heard.logprob = "여름이 지나자 배짱이가 울었다", -0.3   # 마이크 실측에서 0.65 로 나온 갈래
     utter(loud(7))
     assert [d.get("code") for t, d in link.sent] == ["MISMATCH"] and vs._mismatch == 2
     utter(loud(7))
@@ -1596,7 +1699,7 @@ def test_tier1_does_not_queue_behind_llm():
     brain._pending = brain.speaker = brain.wake = brain.link = brain.wake_template = None
     brain._accum = SpeakerAccum()
     brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
-    brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4)
+    brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
 
     slow_in, hold = threading.Event(), threading.Event()
     order = []
@@ -1649,6 +1752,102 @@ def test_tier1_does_not_queue_behind_llm():
         assert brain._drain(5)
         assert order == ["빠름", "느림"], order
         assert brain.busy == 0
+
+
+def test_router_logprob_is_per_utterance():
+    """교차 완료된 두 STT 결과가 각자 logprob로만 즉시 실행/LLM 승격된다."""
+    from brain import Brain
+    from router import Router
+
+    brain = Brain.__new__(Brain)
+    brain.router = Router("시아야")
+    brain._router_dead = False
+    brain._router_fails = 0
+    brain.ensure_router = lambda: brain.router
+    high_started = threading.Event()
+    low_done = threading.Event()
+
+    def transcribe(audio):
+        if audio[0] == 1:
+            high_started.set()
+            assert low_done.wait(2)
+            return "다음곡", 0.1, -0.2
+        assert high_started.wait(2)
+        low_done.set()
+        return "다음곡", 0.2, -2.0
+
+    brain.router.transcribe = transcribe
+    results, latency = {}, {1: {}, 2: {}}
+
+    def run(key):
+        results[key] = brain._try_router(np.array([key], np.int16), 0.0, latency[key])
+
+    high = threading.Thread(target=run, args=(1,))
+    low = threading.Thread(target=run, args=(2,))
+    high.start()
+    low.start()
+    high.join(2)
+    low.join(2)
+    assert not high.is_alive() and not low.is_alive()
+    assert results[1]["media_key"] == "next"
+    assert results[2] == "다음곡", "저신뢰도 발화는 즉시 실행하지 않고 LLM 초안으로 승격해야 함"
+    assert latency[1]["stt_lp"] == -0.2 and latency[2]["stt_lp"] == -2.0
+
+
+def test_router_failure_counter_is_atomic():
+    """겹친 성공이 실패 스레드가 읽은 옛 카운터로 덮이지 않고, 이후 연속 실패만 센다."""
+    from brain import Brain
+
+    old_read = threading.Event()
+    release_failure = threading.Event()
+    success_routed = threading.Event()
+
+    class PausingCounter:
+        def __init__(self, value):
+            self.value = value
+
+        def __iadd__(self, amount):
+            old_read.set()
+            assert release_failure.wait(2)
+            return self.value + amount
+
+    class Router:
+        def transcribe(self, audio):
+            if audio[0] == 0:
+                raise RuntimeError("stt failed")
+            return "다음곡", 0.1, -0.2
+
+        def route(self, text, session_active, logprob):
+            success_routed.set()
+            return {"action": "media", "media_key": "next"}
+
+    brain = Brain.__new__(Brain)
+    brain.router = Router()
+    brain._router_dead = False
+    brain._router_fails = PausingCounter(1)
+    brain.ensure_router = lambda: brain.router
+    failed = threading.Thread(target=brain._try_router, args=(np.array([0]), 0.0))
+    succeeded = threading.Thread(target=brain._try_router, args=(np.array([1]), 0.0))
+    failed.start()
+    assert old_read.wait(2)
+    succeeded.start()
+    assert success_routed.wait(2)
+    release_failure.set()
+    failed.join(2)
+    succeeded.join(2)
+    assert not failed.is_alive() and not succeeded.is_alive()
+    assert brain._router_fails == 0 and not brain._router_dead, "옛 실패 값이 성공 뒤에 복원됐다"
+
+    def fail(_audio):
+        raise RuntimeError("stt failed")
+
+    brain.router.transcribe = fail
+    brain._try_router(np.array([0]), 0.0)
+    assert brain._router_fails == 1 and not brain._router_dead
+    brain._try_router(np.array([0]), 0.0)
+    assert brain._router_fails == 2 and not brain._router_dead
+    brain._try_router(np.array([0]), 0.0)
+    assert brain._router_fails == 3 and brain._router_dead
 
 
 def test_answer_never_lands_on_an_unheard_question():
@@ -1781,7 +1980,7 @@ def test_wake_scoring_is_serialized_and_reset():
     b._try_router = lambda *a, **k: {"action": "test"}
     b._execute = lambda *a, **k: None
     # 호출어 게이트는 통과시킨다 — 이 검사의 주제는 채점이 겹치느냐다.
-    b._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4)
+    b._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
 
     with patch("brain.log_utterance"), patch("brain.EVAL_CAPTURE", False):
         for _ in range(4):
@@ -2303,7 +2502,6 @@ def test_word_logprob():
     assert abs(r.word_logprob(audio, "영희야") - np.log(0.9)) < 1e-6, "공백 없는 후보가 더 크면 그 값"
     assert r.word_logprob(audio, "철수야") == r.word_logprob(audio, "철수야")
     assert encoded == [" 철수야", "철수야", " 영희야", "영희야"], f"토큰 후보는 단어마다 한 번만 만들어야 함: {encoded}"
-    assert r.last_logprob is None, "transcribe 의 통계를 건드리면 안 됨"
     for bad in ("", "   "):
         try:
             r.word_logprob(audio, bad)
@@ -2427,6 +2625,80 @@ def test_custom_wake_gate():
     assert oww.called and not score.called and not brain.word_logprob.called
 
 
+def test_custom_wake_diagnostics_are_per_utterance():
+    """병렬 호출어의 헤드·단어 확률이 각 발화 콘솔과 log_utterance에만 남는다."""
+    import io
+    from contextlib import redirect_stdout
+    from unittest.mock import patch
+
+    from brain import Brain
+    from test_usage_events import AUDIO, assistant
+
+    template = SimpleNamespace(has_head=True, head=object(), matches_setting=lambda word: True)
+    store = SimpleNamespace(snapshot=lambda: ("철수야", template, 1), wake_word=lambda: "철수야",
+                            still_current=lambda generation: True)
+    first_in_word = threading.Event()
+    allow_first = threading.Event()
+    second_in_say = threading.Event()
+    allow_second = threading.Event()
+
+    with assistant(profile=None) as (brain, _, _):
+        brain.link = None
+        brain.wake_template = store
+        brain._wake_ok = Brain._wake_ok.__get__(brain)
+        brain._head_features = lambda: object()
+
+        def word_logprob(*_args, **_kwargs):
+            if threading.current_thread().name == "first":
+                first_in_word.set()
+                assert allow_first.wait(2)
+                return -1.0, -0.1
+            assert first_in_word.wait(2)
+            return -2.0, -0.2
+
+        def say(*_args, **_kwargs):
+            if threading.current_thread().name == "second":
+                second_in_say.set()
+                assert allow_second.wait(2)
+
+        brain.word_logprob = word_logprob
+        brain._say = say
+
+        def score(_features, _head, audio):
+            return (0.91, 1.0) if audio[0] == 1 else (0.82, 1.0)
+
+        def handle(name, audio, started):
+            threading.current_thread().name = name
+            brain._handle(audio, None, None, started, 0, 12.0, None, False,
+                          0, brain._accum, None)
+
+        first_audio, second_audio = AUDIO.copy(), AUDIO.copy()
+        first_audio[0], second_audio[0] = 1, 2
+        output = io.StringIO()
+        with redirect_stdout(output), patch("brain.score_utterance", side_effect=score), \
+                patch("brain.wake_only", return_value=True), patch("brain.speech_s", return_value=0.5), \
+                patch("brain.log_utterance") as log:
+            first = threading.Thread(target=handle, args=("first", first_audio, 10.0))
+            second = threading.Thread(target=handle, args=("second", second_audio, 11.0))
+            first.start()
+            assert first_in_word.wait(2)
+            second.start()
+            assert second_in_say.wait(2)
+            allow_first.set()
+            first.join(2)
+            allow_second.set()
+            second.join(2)
+
+        assert not first.is_alive() and not second.is_alive()
+        logs = {call.kwargs["wake_score"]: call.kwargs for call in log.call_args_list}
+        assert 0.91 in logs and 0.82 in logs, (logs, output.getvalue())
+        assert (logs[0.91]["wake_word_lp"], logs[0.91]["wake_word_last"]) == (-1.0, -0.1)
+        assert (logs[0.82]["wake_word_lp"], logs[0.82]["wake_word_last"]) == (-2.0, -0.2)
+        console = output.getvalue()
+        assert '헤드 0.91 · 단어 확률 -1.00' in console
+        assert '헤드 0.82 · 단어 확률 -2.00' in console
+
+
 def test_custom_wake_prompt_and_clip():
     """현재 호출어가 LLM 프롬프트·1단 라우터에 들어가고, 헤드의 끝 시각을 프레임 번호로 바꿔 자른 호출어 구간이
     끝 시각 + WAKE_CLIP_TAIL_S 를 넘지 않는다 (뒤에 이어진 명령이 목소리 확인에 섞이지 않게)."""
@@ -2499,6 +2771,9 @@ if __name__ == "__main__":
     test_speech_s()
     test_speaker_input_lead()
     test_speaker_accum()
+    test_speaker_accum_transaction_is_serialized()
+    test_speaker_accum_uses_utterance_time_order()
+    test_speaker_accum_does_not_revive_cleared_past()
     test_voice_bridge()
     test_wake_enroll()
     test_wake_enroll_custom()
@@ -2508,6 +2783,7 @@ if __name__ == "__main__":
     test_word_logprob()
     test_head_stream_warmup()
     test_custom_wake_gate()
+    test_custom_wake_diagnostics_are_per_utterance()
     test_custom_wake_prompt_and_clip()
     test_brain_paused_drops_already_queued_utterance()
     test_notice_data()
@@ -2518,6 +2794,8 @@ if __name__ == "__main__":
     test_user_data_survives_a_frozen_restart()
     test_be_results_do_not_leak_between_threads()
     test_tier1_does_not_queue_behind_llm()
+    test_router_logprob_is_per_utterance()
+    test_router_failure_counter_is_atomic()
     test_inflight_cap_waits_for_one_slot_not_everyone()
     test_answer_never_lands_on_an_unheard_question()
     test_second_confirm_does_not_clobber_the_first()
@@ -2529,4 +2807,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 50/50 통과")
+    print("OK - 56/56 통과")
