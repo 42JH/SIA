@@ -15,6 +15,10 @@
     --popup-line: #d7e0e9;
     --popup-surface: #f4f7fa;
     --popup-top: 16px;
+    /* 오버레이 창은 주 모니터 "물리" 크기 전체로 뜬다(lib.rs) — 작업표시줄이 차지하는
+       영역까지 창 안에 포함되므로, 16px만 주면 작업표시줄(기본 높이 약 48px)에
+       가려진다. 여백 16px + 작업표시줄 여유분 48px = 64px로 띄워서 그 위에 뜨게 한다. */
+    --popup-bottom: 64px;
     --popup-width: min(360px, calc(100vw - 24px));
     --popup-min-height: 50px;
     --popup-padding: 12px 16px;
@@ -78,7 +82,7 @@
   /* 하단 진행상태 영역(listening/session_countdown/boot) — BootToast.module.css .toast 위치를 그대로 가져옴 */
   #progress {
     right: 16px;
-    bottom: 16px;
+    bottom: var(--popup-bottom);
     width: min(300px, calc(100vw - 24px));
   }
 
@@ -188,45 +192,77 @@
   }
 
   // --- 상단 토스트 (1회성 알림) ---
+  // notice/tool_result/gesture_result/... 가 전부 이 #toast 하나를 공유하다 보니,
+  // 짧은 간격으로 여러 이벤트가 오면 앞선 알림이 화면에 반영되기도 전에 덮어써지는
+  // 문제가 있었다. 큐에 쌓아뒀다가 하나씩 순서대로(끝까지 보여준 뒤 다음 것) 처리한다.
+
+  const toastQueue = [];
+  let toastActive = false;
 
   function clearToastTimers() {
     clearTimeout(toastHideTimer); toastHideTimer = null;
     clearInterval(toastRingTimer); toastRingTimer = null;
   }
 
-  function hideToast() {
-    clearToastTimers();
-    toastEl.classList.remove("visible");
-  }
-
-  function showToast(html, autoHideMs) {
-    clearToastTimers();
+  function renderToast(html) {
     toastEl.innerHTML = html;
     // 리플로우 한 번 강제해야 opacity/transform 전환이 재생됨(연속 알림 대비)
     toastEl.classList.remove("visible");
     void toastEl.offsetWidth;
     toastEl.classList.add("visible");
-    if (autoHideMs) toastHideTimer = setTimeout(hideToast, autoHideMs);
   }
 
-  function showToastWithCountdown(icon, message, totalSec) {
-    let remaining = totalSec;
-    const render = () => showToast(
-      `<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p>${ringHtml(remaining, totalSec, true)}</div>`,
-      null,
-    );
-    render();
-    toastRingTimer = setInterval(() => {
-      remaining -= 1;
-      if (remaining <= 0) { hideToast(); return; }
+  // 현재 표시 중인 토스트를 끝내고 큐에 다음 항목이 있으면 이어서 보여준다.
+  function finishToast() {
+    clearToastTimers();
+    toastEl.classList.remove("visible");
+    toastActive = false;
+    advanceToastQueue();
+  }
+
+  function advanceToastQueue() {
+    if (toastActive || toastQueue.length === 0) return;
+    toastActive = true;
+    const job = toastQueue.shift();
+    job();
+  }
+
+  // autoHideMs가 없으면(progress 등 자동으로 안 사라지는 지속 상태) 큐를 막지 않도록
+  // 즉시 다음 항목으로 넘어간다 — 화면 자체는 다음 렌더가 있을 때까지 그대로 유지된다.
+  function queueToast(html, autoHideMs) {
+    toastQueue.push(() => {
+      renderToast(html);
+      if (autoHideMs) {
+        toastHideTimer = setTimeout(finishToast, autoHideMs);
+      } else {
+        toastActive = false;
+        advanceToastQueue();
+      }
+    });
+    advanceToastQueue();
+  }
+
+  function queueToastWithCountdown(icon, message, totalSec, afterRenderHtml) {
+    toastQueue.push(() => {
+      let remaining = totalSec;
+      const render = () => {
+        renderToast(`<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p>${ringHtml(remaining, totalSec, true)}</div>`);
+        if (afterRenderHtml) toastEl.querySelector(".row")?.insertAdjacentHTML("afterend", afterRenderHtml);
+      };
       render();
-    }, 1000);
+      toastRingTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) { finishToast(); return; }
+        render();
+      }, 1000);
+    });
+    advanceToastQueue();
   }
 
   function handleNotice(data) {
     const message = typeof data.message === "string" ? data.message : "";
     if (data.kind === "confirm") {
-      showToastWithCountdown("trash", message, CONFIRM_TIMEOUT_SEC);
+      queueToastWithCountdown("trash", message, CONFIRM_TIMEOUT_SEC);
       return;
     }
     if (data.kind === "choices") {
@@ -234,19 +270,23 @@
       const list = Array.isArray(data.choices)
         ? `<ol class="summaryList">${data.choices.map((c) => `<li>${esc(c.label)}${c.detail ? ` <span class="caption">— ${esc(c.detail)}</span>` : ""}</li>`).join("")}</ol>`
         : "";
-      showToastWithCountdown("question" /* falls back to default icon */, message, data.timeoutSec ?? CHOICE_TIMEOUT_SEC);
-      if (list) toastEl.querySelector(".row")?.insertAdjacentHTML("afterend", `<div class="detailContent">${list}</div>`);
+      queueToastWithCountdown(
+        "question" /* falls back to default icon */,
+        message,
+        data.timeoutSec ?? CHOICE_TIMEOUT_SEC,
+        list ? `<div class="detailContent">${list}</div>` : null,
+      );
       return;
     }
     if (data.kind === "unknown_command") {
       const transcript = data.transcript
         ? `<div class="transcriptBlock"><span class="caption">인식된 말</span><p class="transcript">"${esc(data.transcript)}"</p></div>`
         : "";
-      showToast(`<div class="detailContent"><div class="row">${iconHtml("question")}<p class="message">${esc(message)}</p></div>${transcript}</div>`, DETAIL_HIDE_MS);
+      queueToast(`<div class="detailContent"><div class="row">${iconHtml("question")}<p class="message">${esc(message)}</p></div>${transcript}</div>`, DETAIL_HIDE_MS);
       return;
     }
     if (data.kind === "progress") {
-      showToast(`<div class="row">${iconHtml("spinner")}<p class="message">${esc(message || "실행 중...")}</p></div>`, null);
+      queueToast(`<div class="row">${iconHtml("spinner")}<p class="message">${esc(message || "실행 중...")}</p></div>`, null);
       return;
     }
     if (data.kind === "summary" || Array.isArray(data.items)) {
@@ -254,28 +294,28 @@
       const list = items.length
         ? `<ol class="summaryList">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>`
         : `<p class="caption">요약 중</p>`;
-      showToast(`<div class="detailContent"><div class="row">${iconHtml("summary")}<p class="message">${esc(message)}</p></div>${list}</div>`, SUMMARY_HIDE_MS);
+      queueToast(`<div class="detailContent"><div class="row">${iconHtml("summary")}<p class="message">${esc(message)}</p></div>${list}</div>`, SUMMARY_HIDE_MS);
       return;
     }
     const icon = data.kind === "success" ? "check" : "info";
-    showToast(`<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p></div>`, AUTO_HIDE_MS);
+    queueToast(`<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p></div>`, AUTO_HIDE_MS);
   }
 
   function handleToolResult(data) {
     if (data.caller === "GESTURE" || data.outcome === "EXECUTED" || !data.message) return;
-    showToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
   }
 
   function handleGestureResult(data) {
     if (!data.message) return;
-    showToast(`<div class="row">${iconHtml(data.ok ? "check" : "warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
+    queueToast(`<div class="row">${iconHtml(data.ok ? "check" : "warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
   }
 
   function handleCaptureSaved(data) {
     const src = typeof data.url === "string" && data.url.startsWith("/api/captures/")
       ? `http://127.0.0.1:8080${data.url}` : null;
     const dims = data.width && data.height ? `<span class="caption">${data.width} × ${data.height}</span>` : "";
-    showToast(
+    queueToast(
       `<div class="captureContent"><span class="icon">${iconSvg("check")}</span>` +
       (src ? `<img class="captureImage" src="${esc(src)}" alt="저장된 화면 캡처" />` : "") +
       `<div class="captureMeta"><p class="message">${esc(data.path)}</p>${dims}</div></div>`,
@@ -285,12 +325,12 @@
 
   function handleVoiceRejected(data) {
     if (!data.message) return;
-    showToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
   }
 
   function handleError(data) {
     if (!data.message) return;
-    showToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
   }
 
   // --- 하단 진행상태 (listening / session_countdown / boot, 지속 상태) ---
