@@ -108,7 +108,7 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
         {state === 'hit' && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><img src={moleHitImage} alt="잡힌 두더지" /><span className={styles.lock}><i /><b>HIT!</b></span></div>}
       </div>;
     })}</div>
-    {!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><span>◎</span><h2>두더지 잡기를 시작할까요?</h2><p>시작 버튼을 누른 뒤 나타나는 두더지의 코를 바라보세요.</p><div><button onClick={onCancel}>취소</button><button className={styles.startPrimary} onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></div></section></div>}
+    {!introDone && <div className={styles.startBackdrop}><section className={`${styles.startModal}`} role="dialog" aria-modal="true"><span>◎</span><h2>두더지 잡기를 시작할까요?</h2><p>시작 버튼을 누른 뒤 나타나는 두더지의 코를 바라보세요.</p><div><button onClick={onCancel}>취소</button><button className={styles.startPrimary} onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></div></section></div>}
     {!ready && <p className={styles.connectionError} role="alert">연결 또는 화면 상태를 확인한 후 측정을 중단하고 다시 시도해주세요.</p>}
   </div>;
 }
