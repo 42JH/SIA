@@ -135,18 +135,18 @@ class GestureRuntimeTests(unittest.TestCase):
             for no_actions in (True, False):
                 if True:  # be_gesture_only 는 제거됐다 — 이 분기는 no_actions 만 본다
                     with self.subTest(line=branch.lineno, no_actions=no_actions):
-                        link, overlay, foreground = Mock(), Mock(), Mock(return_value=123)
-                        env = dict(link=link, overlay=overlay, foreground_hwnd=foreground,
+                        link, said, foreground = Mock(), Mock(), Mock(return_value=123)
+                        env = dict(link=link, foreground_hwnd=foreground,
                                    args=SimpleNamespace(no_actions=no_actions),
                                    be_target=('Victory', 'youtube'), name='Victory',
                                    dynamic_event='Screen_Next', context='youtube', now=10,
                                    usage_events=[], uuid=Mock(), custom_score=None,
-                                   time=SimpleNamespace(time=lambda: 10), print=Mock())
+                                   time=SimpleNamespace(time=lambda: 10), print=said)
                         exec(code, env)
                         if no_actions:
                             link.send_event.assert_not_called()
                             foreground.assert_not_called()
-                            overlay.toast.assert_called_once()
+                            said.assert_called_once()   # 화면이 아니라 콘솔로 (-333)
                         else:
                             link.send_event.assert_called_once_with(
                                 'gesture_exec', {'name': 'Victory', 'hwnd': 123, 'context': 'youtube'})

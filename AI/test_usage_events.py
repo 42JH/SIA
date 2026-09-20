@@ -53,7 +53,7 @@ def assistant(profile=PROFILE, act=True):
             if tool == "explorer.items" else (True, {})))
         speaker = None if profile is None else SimpleNamespace(
             snapshot=Mock(return_value=profile), verify=Mock(return_value=(True, 0.87654)))
-        brain = Brain(Mock(), act=act, speaker=speaker, link=link)
+        brain = Brain(act=act, speaker=speaker, link=link)
         # 호출어 개인화 판정은 test_wake_template 이 따로 본다. 여기서는 "시동어 후보가 나오면 통과"로 고정해
         # 통계·실행 경로만 남긴다 — 실제 판정은 STT·임베딩 모델을 부른다.
         brain._wake_ok = lambda audio, i_max, lead, oww_pass, head_top=None: (
@@ -88,7 +88,7 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
             pass
     assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"   # run() 은 띄우기만 한다(-320)
     assert brain.busy == 0
-    assert fails == any(str(call.args[0]).startswith("오류:") for call in brain.overlay.toast.call_args_list)
+    assert fails == any(str(m).startswith("오류:") for m in brain.said)
 
 
 def events(link, kind=None):
@@ -405,8 +405,7 @@ def test_eval_capture_does_not_break_utterance():
             utter(brain_obj, command("open_app", app="calc"))
         cap.assert_called_once()
         assert cap.call_args.args[5] is None  # dom 은 이 시점에 아직 없다(2단에서 BE 로 가져온다)
-        assert not any(str(c.args[0]).startswith("오류:")
-                       for c in brain_obj.overlay.toast.call_args_list)
+        assert not any(str(m).startswith("오류:") for m in brain_obj.said)
 
 
 def test_confirmation_records_original_task_only_after_approval():
@@ -505,7 +504,7 @@ def test_unexecuted_actions_and_local_mode():
         link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
         utter(brain, command("web_search", query="실패"))
         # BE 가 이유를 말해 줬으면 그대로 전한다 — '연결 안 됨'으로 뭉뚱그리면 원인을 못 찾는다
-        assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 검색 실패"
+        assert brain.said[-1] == "'실패' 검색 — 검색 실패"
         assert not events(link, "command")
         assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):
@@ -515,7 +514,7 @@ def test_unexecuted_actions_and_local_mode():
         brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
         utter(brain, command("answer"))
         assert not events(link)
-        assert brain.overlay.toast.call_args.args[0] == "완료"
+        assert brain.said[-1] == "완료"
 
 
 def test_verified_utterance_keeps_enrolled_voice_sample():

@@ -1397,26 +1397,21 @@ def test_notice_data():
         "message": "명령을 이해하지 못했습니다.", "kind": "unknown_command", "transcript": "어쩌구"}
     assert notice_data("x", None, transcript="", timeoutSec=None) == {"message": "x"}
 
-    class Overlay:
-        def __init__(self): self.calls = []
-        def toast(self, m, s=None): self.calls.append(("toast", m, s))
-        def panel(self, m): self.calls.append(("panel", m))
-
     class Link:
         def __init__(self): self.sent = []
         def _send(self, o): self.sent.append(o)
 
-    b = Brain.__new__(Brain)                                   # __init__ 없이 — 오버레이·BE 만 가짜로 끼운다
-    b.overlay, link = Overlay(), Link()
+    b = Brain.__new__(Brain)                                   # __init__ 없이 — 안내 로그·BE 만 가짜로 끼운다
+    b.said, link = [], Link()
     b._be = lambda: link
     b._say("창을 닫을까요?", "confirm", 12.0, timeoutSec=12)
-    assert b.overlay.calls[-1] == ("toast", "창을 닫을까요?", 12.0)
+    assert b.said[-1] == "창을 닫을까요?"   # 화면은 FE 가 그린다 — AI 는 말한 것만 남긴다(-333)
     assert link.sent[-1] == {"type": "notice", "data": {"message": "창을 닫을까요?", "kind": "confirm", "timeoutSec": 12}}
     b._say("가" * 61)
-    assert b.overlay.calls[-1] == ("panel", "가" * 61) and link.sent[-1]["data"] == {"message": "가" * 61}
-    b._be = lambda: None                                       # BE 미접속 — 오버레이만
+    assert b.said[-1] == "가" * 61 and link.sent[-1]["data"] == {"message": "가" * 61}
+    b._be = lambda: None                                       # BE 미접속 — 콘솔에만 남는다
     b._say("취소했습니다")
-    assert b.overlay.calls[-1] == ("toast", "취소했습니다", None) and len(link.sent) == 2
+    assert b.said[-1] == "취소했습니다" and len(link.sent) == 2
 
 
 def test_be_dom_text():
@@ -1459,7 +1454,7 @@ def test_mcp_delegation():
 
     def brain_with(ctx):
         b = Brain.__new__(Brain)
-        b.overlay = Mock()
+        b.said = []
         be = FakeBE(ctx)
         b._be = lambda: be
         return b, be
@@ -1531,7 +1526,7 @@ def test_app_ref_resolution():
     from brain import Brain
 
     b = Brain.__new__(Brain)
-    b.overlay = Mock()
+    b.said = []
     apps = [{"ref": "app:calc", "name": "계산기"},
             {"ref": "app:google-chrome", "name": "Google Chrome"},
             {"ref": "app:notepad", "name": "메모장"}]
@@ -1544,7 +1539,7 @@ def test_app_ref_resolution():
     assert b._app_ref("paint", "그림판") == "app:mspaint-x"         # 표시 이름 일치
 
     b2 = Brain.__new__(Brain)                                      # BE 미접속이면 빈 목록
-    b2.overlay, b2._be, b2._apps = Mock(), (lambda: None), None
+    b2.said, b2._be, b2._apps = [], (lambda: None), None
     assert b2._app_ref("calc", "계산기") is None
 
 
@@ -1594,7 +1589,7 @@ def test_save_crop_paths():
 
     def run(result):
         b = Brain.__new__(Brain)
-        b.overlay, b._pending, b._apps = Mock(), None, None
+        b.said, b._pending, b._apps = [], None, None
         b.act, b._be = True, (lambda: None)
         b._audio_lock, b._audio_generation = threading.Lock(), 0
         b.calls, b.said = [], []
@@ -1671,7 +1666,7 @@ def test_be_results_do_not_leak_between_threads():
             return True, {"path": f"/out/{tool}.bin"}
 
     b = Brain.__new__(Brain)
-    b.link, b.overlay = FakeBE(), Mock()
+    b.link, b.said = FakeBE(), []
     got, tools = {}, ("files.save", "screen.capture_region", "app.launch", "volume.set")
 
     def worker(tool):
@@ -1714,7 +1709,7 @@ def test_tier1_does_not_queue_behind_llm():
     brain._client = object()
     brain._pending = brain.speaker = brain.wake = brain.link = brain.wake_template = None
     brain._accum = SpeakerAccum()
-    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    brain.said = []
     brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
 
     slow_in, hold = threading.Event(), threading.Event()
@@ -1905,7 +1900,7 @@ def test_second_confirm_does_not_clobber_the_first():
     from brain import Brain, Pending
 
     b = Brain.__new__(Brain)
-    b._audio_lock, b.overlay, b.link = threading.RLock(), Mock(), None
+    b._audio_lock, b.said, b.link = threading.RLock(), [], None
     said = []
     b._say = lambda msg, *a, **k: said.append(msg)
 
@@ -1991,7 +1986,7 @@ def test_wake_scoring_is_serialized_and_reset():
     b._client = object()
     b._pending = b.speaker = b.link = b.wake_template = None
     b._accum = B.SpeakerAccum()
-    b.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    b.said = []
     b.wake = FakeModel()
     b._try_router = lambda *a, **k: {"action": "test"}
     b._execute = lambda *a, **k: None
@@ -2100,7 +2095,7 @@ def test_user_data_survives_a_frozen_restart():
     onefile 은 매 실행마다 새 임시 폴더에 풀고 끝나면 지운다. `Path(__file__).parent` 는
     그 폴더를 가리키므로, 온보딩이 쓰는 wake/speaker/calib npz 를 거기 두면 앱을 끌 때
     같이 사라진다 — 켤 때마다 온보딩을 다시 해야 한다. 자산은 거기서 읽는 게 맞고(번들이
-    거기로 풀린다) 사용자 데이터만 %APPDATA%\SIA 로 나간다.
+    거기로 풀린다) 사용자 데이터만 %APPDATA% 아래로 나간다.
     """
     import io as _io
     import sys
@@ -2181,7 +2176,7 @@ def test_media_seek():
 
     def run(key, ref, ok=True):
         b = Brain.__new__(Brain)
-        b.overlay, b.calls, b.said = Mock(), [], []
+        b.calls, b.said = [], []
         b._win_ref = lambda hwnd: ref
         b._say = lambda msg, *a, **k: b.said.append(msg)
 
@@ -2376,7 +2371,7 @@ def test_wake_model_load():
         return model
 
     with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=[]):
-        no_key = Brain(Mock())
+        no_key = Brain()
     assert no_key.wake is model and not no_key.enabled and len(loads) == 1  # 키 없이도 모델은 올라온다
 
     enroll = WakeEnroll(Mock(), None, None)
@@ -2384,13 +2379,13 @@ def test_wake_model_load():
     assert enroll.wake_model is model and len(loads) == 1   # 등록도 같은 인스턴스 — 다시 로드하지 않는다
 
     with patch.object(brain_mod, "load_wake_model", fake_loader),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()) as client:
-        with_key = Brain(Mock())
+        with_key = Brain()
     assert with_key.wake is model and with_key.enabled and client.call_count == 1  # 키가 있는 흐름은 그대로
     assert len(loads) == 2                                                          # Brain 하나당 한 번
 
     store = SimpleNamespace(snapshot=lambda: (WAKE_MODEL_WORD, None, 0))
     with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=[]):
-        broken = Brain(Mock(), wake_template=store)
+        broken = Brain(wake_template=store)
     assert broken.wake is None                                                      # 로드 실패는 숨기지 않는다
     assert broken._wake_ok(None, 0, 0, True)[:2] == (False, "no_wake_model")         # 세션도 열리지 않는다
 
@@ -2586,7 +2581,7 @@ def _custom_wake_run(word="철수야", head=True, lp=-2.0, last=-1.0, speaker=Tr
                     patch("brain.log_utterance") as log:
                 utter(brain, audio=audio)
             wakes = [c for c in link._send.call_args_list if c.args[0]["type"] == "wakeword_detected"]
-            toasts = [c.args[0] for c in brain.overlay.toast.call_args_list]
+            toasts = list(brain.said)
             return log.call_args.kwargs, len(wakes), score, oww, brain, toasts
         finally:
             store.close()
@@ -2748,7 +2743,7 @@ def test_brain_paused_drops_already_queued_utterance():
     from brain import Brain
 
     with patch.object(brain_mod, "load_wake_model", return_value=None),             patch.object(brain_mod, "load_api_keys", return_value=["key"]),             patch("google.genai.Client", return_value=object()):
-        b = Brain(Mock())
+        b = Brain()
     b.submit(b"\x00" * 100, None, None, t_utter=0.0)  # paused=False일 때 정상적으로 큐잉
     assert len(b.queue) == 1
     b.paused = True                                    # 등록이 막 시작된 상황을 흉내낸다
