@@ -74,7 +74,7 @@ class OcclusionTests(unittest.TestCase):
         self.assertEqual(link.sent[-1][0], 'reg_rejected', link.sent[-1])
         reason = link.sent[-1][1]['reason']
         self.assertNotIn('손 개수가 바뀌었습니다', reason)
-        self.assertIn('오래 놓쳤습니다', reason)
+        self.assertIn('일정 시간 확인하지 못했습니다', reason)
 
     def test_edge_occlusion_now_tolerated_as_hands_meeting_at_start_or_end(self):
         """맨 앞(또는 끝) 한 프레임만 손이 하나로 잡히는 건, 이제 "손을 맞댄 채

@@ -20,6 +20,7 @@ MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
 PREFIX_DISTANCE = 0.16
 PREFIX_MIN_MOTION = 0.08
 DIRECTION_MIN_MOTION = 0.10
+DIRECTION_TOLERANCE_DEG = 30.0
 DIRECTION_NAMES_8 = (
     "RIGHT", "DOWN_RIGHT", "DOWN", "DOWN_LEFT",
     "LEFT", "UP_LEFT", "UP", "UP_RIGHT",
@@ -308,6 +309,75 @@ def motion_direction_8(sequence, count, min_motion=DIRECTION_MIN_MOTION):
     return DIRECTION_NAMES_8[sector]
 
 
+def motion_direction_angle(sequence, count, min_motion=DIRECTION_MIN_MOTION):
+    """Return the continuous end-to-end wrist angle, or None if too small."""
+    points = np.asarray(sequence, dtype=np.float32)
+    if points.ndim != 4 or count not in (1, 2):
+        return None
+    start = points[0, :count, 0].mean(axis=0)
+    end = points[-1, :count, 0].mean(axis=0)
+    delta = end - start
+    if float(np.linalg.norm(delta)) < min_motion:
+        return None
+    return float(np.arctan2(delta[1], delta[0]))
+
+
+def motion_direction_difference(a, b, count):
+    """Smallest absolute movement-angle difference in degrees."""
+    angle_a = motion_direction_angle(a, count)
+    angle_b = motion_direction_angle(b, count)
+    if angle_a is None or angle_b is None:
+        return None
+    delta = np.arctan2(np.sin(angle_a - angle_b), np.cos(angle_a - angle_b))
+    return abs(float(np.degrees(delta)))
+
+
+def motion_directions_compatible(a, b, count,
+                                 tolerance_deg=DIRECTION_TOLERANCE_DEG):
+    """Compare continuous angles so an 8-sector boundary is not a hard wall."""
+    difference = motion_direction_difference(a, b, count)
+    return difference is None or difference <= tolerance_deg
+
+
+def swipe_direction_8(sequence, count, min_motion=DIRECTION_MIN_MOTION,
+                      min_efficiency=0.70):
+    """Return an 8-way direction only for a reasonably straight hand swipe.
+
+    This applies the same displacement/path rule to vertical, horizontal and
+    diagonal movement.  Curved or backtracking custom motions continue through
+    normal template matching instead of being reduced to their end direction.
+    """
+    points = np.asarray(sequence, dtype=np.float32)
+    if points.ndim != 4 or count not in (1, 2):
+        return None
+    wrists = points[:, :count, 0].mean(axis=1)
+    delta = wrists[-1] - wrists[0]
+    displacement = float(np.linalg.norm(delta))
+    if displacement < min_motion:
+        return None
+    path_length = float(np.linalg.norm(np.diff(wrists, axis=0), axis=1).sum())
+    if path_length <= 1e-6 or displacement / path_length < min_efficiency:
+        return None
+    return motion_direction_8(points, count, min_motion=min_motion)
+
+
+def swipe_trajectory_distance(a, b, count):
+    """Compare swipe paths independently of speed and travel distance."""
+    direction_a = swipe_direction_8(a, count)
+    direction_b = swipe_direction_8(b, count)
+    if (direction_a is None or direction_b is None
+            or not motion_directions_compatible(a, b, count)):
+        return float('inf')
+    wrists_a = np.asarray(a, dtype=np.float32)[:, :count, 0].mean(axis=1)
+    wrists_b = np.asarray(b, dtype=np.float32)[:, :count, 0].mean(axis=1)
+    wrists_a = wrists_a - wrists_a[:1]
+    wrists_b = wrists_b - wrists_b[:1]
+    travel_a = max(float(np.linalg.norm(wrists_a[-1])), 1e-6)
+    travel_b = max(float(np.linalg.norm(wrists_b[-1])), 1e-6)
+    delta = wrists_a / travel_a - wrists_b / travel_b
+    return float(np.sqrt(np.mean(np.sum(delta ** 2, axis=-1))))
+
+
 def motion_comparison(a, b, count):
     """동적 중복/실행/후보 검사 공통 점수. 한 특징 차이가 평균에 묻히지 않게 한다.
 
@@ -317,7 +387,8 @@ def motion_comparison(a, b, count):
     """
     direction_a = motion_direction_8(a, count)
     direction_b = motion_direction_8(b, count)
-    if direction_a is not None and direction_b is not None and direction_a != direction_b:
+    if (direction_a is not None and direction_b is not None
+            and not motion_directions_compatible(a, b, count)):
         return dict(
             landmark=float('inf'), shape=float('inf'), rotation=float('inf'),
             wrist=float('inf'), separation=float('inf'), score=float('inf'),
@@ -348,6 +419,18 @@ def motion_comparison(a, b, count):
         alternate = compare(mirrored, True)
         if alternate['score'] < result['score']:
             result = alternate
+    swipe_trajectory = swipe_trajectory_distance(a, b, count)
+    if np.isfinite(swipe_trajectory):
+        # Travel distance and speed naturally vary between repeated swipes, so
+        # use the normalized wrist path.  The path alone is insufficient:
+        # otherwise an open-palm swipe and a fist swipe in the same direction
+        # become duplicates.  Preserve the rotation-normalized finger-shape
+        # distance as an independent requirement.
+        swipe_score = max(swipe_trajectory, result['shape'])
+        if swipe_score < result['score']:
+            result.update(score=swipe_score, score_source="SWIPE_TRAJECTORY_SHAPE",
+                          swipe_trajectory=swipe_trajectory,
+                          swipe_direction=swipe_direction_8(a, count))
     return result
 
 

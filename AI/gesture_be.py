@@ -24,7 +24,9 @@ from custom_motion import (
     encode_pose_sequence, encode_world_sequence, normalize_arm_pose,
     ordered_landmarks, ordered_world_landmarks, read_templates,
     trim_motion_frames, template_bytes as encode_template_bytes,
-    matching_distance, motion_matching_distance, motion_direction_8, TRACKING_GRACE_S,
+    matching_distance, motion_comparison, motion_features, motion_matching_distance,
+    motion_direction_8, motion_direction_difference, swipe_trajectory_distance,
+    DIRECTION_TOLERANCE_DEG, TRACKING_GRACE_S,
 )
 
 
@@ -1050,7 +1052,10 @@ class GestureRegistration:
                 if directions[i] is not None and directions[j] is not None:
                     print(f"[제스처 회차 방향] tempId={self.temp_id} takes={i+1},{j+1} "
                           f"directions={directions[i]},{directions[j]}")
-                    if directions[i] != directions[j]:
+                    angle_difference = motion_direction_difference(
+                        sequences[i], sequences[j], hand_count)
+                    if (angle_difference is not None
+                            and angle_difference > DIRECTION_TOLERANCE_DEG):
                         raise ValueError(
                             f"{i+1}회차는 {labels[directions[i]]}, {j+1}회차는 "
                             f"{labels[directions[j]]} 방향으로 움직였습니다. "
@@ -1074,21 +1079,39 @@ class GestureRegistration:
                     )
 
     @staticmethod
+    def _dynamic_trajectory_distance(a, b, hand_count):
+        """Compare direction/path while ignoring pose and absolute travel."""
+        swipe_score = swipe_trajectory_distance(a, b, hand_count)
+        if np.isfinite(swipe_score):
+            return swipe_score
+        features_a = motion_features(a, hand_count)
+        features_b = motion_features(b, hand_count)
+        wrist_a = features_a["wrists"] - features_a["wrists"][:1]
+        wrist_b = features_b["wrists"] - features_b["wrists"][:1]
+        travel_a = max(float(np.linalg.norm(wrist_a[-1], axis=-1).mean()), 1e-6)
+        travel_b = max(float(np.linalg.norm(wrist_b[-1], axis=-1).mean()), 1e-6)
+        wrist_delta = np.linalg.norm(wrist_a / travel_a - wrist_b / travel_b, axis=-1)
+        wrist_score = float(np.max(np.sqrt(np.mean(wrist_delta ** 2, axis=0))))
+        separation_delta = features_a["separation"] / travel_a - features_b["separation"] / travel_b
+        separation_score = float(np.sqrt(np.mean(separation_delta ** 2)))
+        return max(wrist_score, separation_score)
+
+    @staticmethod
     def _dynamic_take_distance(a, b, hand_count):
         """Scale-normalized distance used only for repeat-take consistency.
 
-        A large swipe spans several palm lengths, so a small timing difference
-        creates a large absolute landmark error even when direction and path
-        are the same.  Duplicate/runtime matching keeps its strict absolute
-        distance; only the three attempts' consistency score is normalized by
-        their own movement magnitude.
+        Repeat takes naturally differ in travel distance and speed. Compare
+        hand shape/rotation as recorded, but normalize each wrist trajectory
+        by its own end-to-end travel before comparing the path. Duplicate and
+        runtime matching keep their strict absolute-distance score.
         """
-        raw = motion_matching_distance(a, b, hand_count)
-        still_a = np.repeat(a[:1], len(a), axis=0)
-        still_b = np.repeat(b[:1], len(b), axis=0)
-        magnitude = (distance(a, still_a, hand_count)
-                     + distance(b, still_b, hand_count)) / 2
-        return raw / max(1.0, magnitude)
+        comparison = motion_comparison(a, b, hand_count)
+        if not comparison["direction_match"]:
+            return float("inf")
+        trajectory_score = GestureRegistration._dynamic_trajectory_distance(
+            a, b, hand_count)
+        return max(comparison["shape"], comparison["rotation"],
+                   trajectory_score)
 
     def _validate_static_stability(self, take, spreads):
         """자연스러운 떨림은 허용하고 지속적인 손가락 모양 변화만 거부한다."""
@@ -1385,7 +1408,26 @@ class GestureRegistration:
                          if world_valid[take - 1] else None)
             candidates = self.custom_store.sequence_comparisons(
                 seq, self.motion, hand_count, world_sequence=world_seq)
-            score, name = ((candidates[0]['score'], candidates[0]['name']) if candidates
+            if self.motion == self.DYNAMIC:
+                # Registration duplicate checks must tolerate a user repeating
+                # the same path at a different speed or travel distance. Keep
+                # strict runtime scores intact and attach a registration-only
+                # normalized score to each existing dynamic template.
+                for candidate in candidates:
+                    index = candidate['template_index']
+                    # Normalize speed/travel variance, but never let a shared
+                    # path erase a real finger-shape difference.  A swipe is a
+                    # duplicate only when direction, trajectory and hand shape
+                    # are all sufficiently close.
+                    normalized = (max(
+                        self._dynamic_trajectory_distance(
+                            seq, self.custom_store.data['sequences'][index], hand_count),
+                        candidate['shape'],
+                    ) if candidate['direction_match'] else float('inf'))
+                    candidate['registration_score'] = min(candidate['score'], normalized)
+                candidates.sort(key=lambda item: item['registration_score'])
+            score, name = (((candidates[0].get('registration_score', candidates[0]['score'])),
+                            candidates[0]['name']) if candidates
                            else (float('inf'), None))
             self.comparison_diagnostics.append(dict(take=take, candidates=candidates))
             if candidates:
