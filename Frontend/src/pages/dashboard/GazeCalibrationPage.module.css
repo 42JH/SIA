@@ -2,16 +2,17 @@
 
 .page { min-height: 100vh; overflow-x: hidden; background: radial-gradient(circle at 52% 12%, rgb(114 165 226 / 10%), transparent 24%), #f4f8fd; color: var(--calib-navy); font-family: Pretendard, "Noto Sans KR", sans-serif; }
 .topbar { display: flex; height: 84px; box-sizing: border-box; align-items: center; padding: 0 56px; border-bottom: 1px solid #cad8e9; background: rgb(255 255 255 / 91%); }
-.topbar img { width: 120px; height: 48px; object-fit: contain; }
+.topbar img { width: 120px; height: 48px; object-fit: contain; object-position: center; }
 .shell { width: calc(100% - 96px); min-height: calc(100vh - 84px); box-sizing: border-box; margin: auto; padding: 22px 0 40px; }
-.pageTitle { display: flex; min-height: 104px; align-items: start; justify-content: space-between; }
-.pageTitle h1 { margin: 0; font-size: clamp(40px, 4vw, 60px); font-weight: 900; letter-spacing: -.055em; }
+.pageTitle { display: grid; min-height: 104px; grid-template-columns: minmax(0, 1fr) minmax(220px, 390px); align-items: start; column-gap: 28px; }
+.pageTitle > div { min-width: 0; }
+.pageTitle h1 { margin: 0; overflow: hidden; font-size: clamp(40px, 4vw, 60px); font-weight: 900; letter-spacing: -.055em; text-overflow: ellipsis; white-space: nowrap; }
 .pageTitle p { margin: 8px 0 0; color: var(--calib-blue); font-size: clamp(18px, 1.45vw, 24px); font-weight: 700; }
-.pageTitle > span { display: flex; width: 390px; align-items: center; gap: 12px; margin-top: 22px; color: #5d85c3; font-size: 11px; letter-spacing: .45em; }
-.pageTitle > span::after { height: 1px; flex: 1; background: #82a5dc; content: ""; }
-.pageTitle > span i { width: 9px; height: 9px; margin-left: -20px; border-radius: 50%; background: #5b82bd; }
-.techFrame { position: relative; border: 2px solid var(--calib-navy); background: #fff; clip-path: polygon(18px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.frameLine { position: absolute; top: 8px; left: 28px; width: 120px; height: 2px; background: var(--calib-line); }
+.pageTitle > span { display: flex; min-width: 0; width: 100%; align-items: center; gap: 10px; margin-top: 22px; overflow: hidden; color: #5d85c3; font-size: 11px; letter-spacing: .18em; white-space: nowrap; }
+.pageTitle > span::after { height: 1px; min-width: 24px; flex: 1 1 24px; background: #82a5dc; content: ""; }
+.pageTitle > span i { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: #5b82bd; }
+.techFrame { position: relative; border: 2px solid var(--calib-navy); border-radius: 8px; background: #fff; }
+.frameLine { display: none; }
 .primary { background: linear-gradient(135deg, #101f45, #243f79) !important; color: white !important; }
 .shell button, .preparing button { min-width: 172px; min-height: 58px; padding: 0 30px; border: 2px solid var(--calib-navy); border-radius: 5px; background: white; color: var(--calib-navy); font: inherit; font-size: 18px; font-weight: 800; cursor: pointer; }
 button:disabled { cursor: default; opacity: .45; }
@@ -23,15 +24,11 @@ button:disabled { cursor: default; opacity: .45; }
 .spinner { width: 72px; height: 72px; border: 5px solid #d7e3f3; border-top-color: var(--calib-blue); border-radius: 50%; animation: spin .9s linear infinite; }
 
 .positionFrame { height: calc(100vh - 302px); min-height: 470px; overflow: hidden; background: #0d2341; }
-.cameraPreview { position: absolute; z-index: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.cameraPreview { position: absolute; z-index: 0; width: 100%; height: 100%; object-fit: cover; }
 .cameraWaiting { position: absolute; z-index: 0; inset: 0; display: grid; place-items: center; color: #c7daf8; font-size: 18px; font-weight: 700; }
-.cameraShade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(rgb(110 157 226 / 20%) 1px, transparent 1px), linear-gradient(90deg, rgb(110 157 226 / 20%) 1px, transparent 1px), rgb(5 23 48 / 18%); background-size: 16.666% 33.333%; }
+.cameraShade { position: absolute; z-index: 1; inset: 0; background: rgb(5 23 48 / 18%); }
 .positionFrame .frameLine, .positionFrame .cornerMarks, .positionFrame > strong, .cameraError { z-index: 2; }
-.cornerMarks i { position: absolute; width: 30px; height: 30px; border-color: var(--calib-navy); border-style: solid; }
-.cornerMarks i:nth-child(1) { top: 38px; left: 56px; border-width: 5px 0 0 5px; }
-.cornerMarks i:nth-child(2) { top: 38px; right: 56px; border-width: 5px 5px 0 0; }
-.cornerMarks i:nth-child(3) { bottom: 38px; left: 56px; border-width: 0 0 5px 5px; }
-.cornerMarks i:nth-child(4) { right: 56px; bottom: 38px; border-width: 0 5px 5px 0; }
+.cornerMarks { display: none; }
 .positionFrame > strong { position: absolute; bottom: 8%; left: 50%; color: #d8e6ff; font-size: 21px; text-shadow: 0 1px 4px #061a37; transform: translateX(-50%); white-space: nowrap; }
 .cameraError { position: absolute; right: 24px; bottom: 20px; left: 24px; margin: 0; color: #fff; text-align: center; text-shadow: 0 1px 4px #061a37; }
 .positionProgress { width: calc(100% - 120px); height: 11px; margin: 30px 60px 0; border: 1px solid #a5bee1; border-radius: 8px; overflow: hidden; appearance: none; }
@@ -71,14 +68,14 @@ button:disabled { cursor: default; opacity: .45; }
 .resultActions button { min-width: 212px; }
 
 .completeFrame { position: relative; display: flex; width: 100%; height: calc(100vh - 250px); min-height: 0; box-sizing: border-box; margin: 0; padding-bottom: 24px; align-items: center; flex-direction: column; justify-content: center; }
-.completeIcon { display: grid; width: 120px; height: 120px; place-items: center; border: 3px solid var(--calib-navy); border-radius: 50%; font-size: 76px; font-weight: 300; }
+.completeIcon { display: grid; width: 120px; height: 120px; place-items: center; border: 3px solid var(--calib-navy); border-radius: 50%; font-size: 76px; font-weight: 300; line-height: 1; }
 .completeFrame h2 { margin: 28px 0 6px; font-size: 30px; }
 .completeFrame p { margin: 0 0 44px; color: var(--calib-copy); font-size: 18px; }
 .completeFrame button { position: absolute; right: 42px; bottom: 28px; min-width: 150px; }
 
 .backdrop { position: fixed; z-index: 2100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(12 28 58 / 78%); }
-.modal { width: min(560px, 100%); min-height: 280px; box-sizing: border-box; padding: 48px 52px 34px; border: 2px solid var(--calib-navy); background: #fff; text-align: center; clip-path: polygon(18px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.modalIcon { display: grid; width: 60px; height: 60px; place-items: center; margin: -18px auto 16px; border: 2px solid var(--calib-navy); border-radius: 50%; font-size: 38px; }
+.modal { position: relative; width: min(480px, calc(100vw - 48px)); min-height: 0; box-sizing: border-box; padding: 40px 36px 32px; border: 2px solid var(--calib-navy); border-radius: 8px; background: #fff; text-align: center; }
+.modalIcon { display: grid; width: 60px; height: 60px; place-items: center; margin: 0 auto 16px; border: 2px solid var(--calib-navy); border-radius: 50%; font-size: 32px; line-height: 1; }
 .modal h2 { margin: 0 0 15px; font-size: 25px; }
 .modal p { color: var(--calib-copy); font-size: 17px; line-height: 1.6; }
 .modal > div:last-child { display: flex; justify-content: center; gap: 12px; margin-top: 28px; }

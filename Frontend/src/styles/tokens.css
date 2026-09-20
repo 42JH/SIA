@@ -5,8 +5,8 @@
   --setup-panel: #f5f5f5;
   --setup-muted: #777;
   --setup-border: 1px solid #333;
-  --setup-card-width: 1080px;
-  --setup-card-height: 640px;
+  --setup-card-width: 920px;
+  --setup-card-height: 540px;
   --setup-card-padding: 36px;
   --setup-control-height: 44px;
   --setup-title-size: 18px;
@@ -20,8 +20,8 @@
   --setup-dialog-width: 440px;
   --setup-audio-height: 90px;
   --setup-video-height: 180px;
-  --setup-voice-card-width: 1080px;
-  --setup-voice-card-height: 640px;
+  --setup-voice-card-width: 920px;
+  --setup-voice-card-height: 540px;
   --onboarding-navy: #0b1f45;
   --onboarding-ink: #12244d;
   --onboarding-blue: #3d6ad6;

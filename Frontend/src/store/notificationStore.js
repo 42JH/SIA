@@ -29,7 +29,23 @@ function scheduleAutoHide(set, get, delay = AUTO_HIDE_MS) {
   }, delay);
 }
 
+function noticeKey(message) {
+  return String(message || '').replace(/\s+/g, '').replace(/했습니다|입니다|습니다|었습니다|해요|예요/g, '');
+}
+
+function isSameNotice(current, next) {
+  if (!current || !next) return false;
+  const a = noticeKey(current.message);
+  const b = noticeKey(next.message);
+  return Boolean(a && b && a === b);
+}
+
 function showTimed(set, get, notification, delay) {
+  const current = get().topNotification;
+  if (isSameNotice(current, notification)) {
+    scheduleAutoHide(set, get, delay);
+    return;
+  }
   clearHideTimer();
   set({ topNotification: notification });
   scheduleAutoHide(set, get, delay);
@@ -177,15 +193,18 @@ export const useNotificationStore = create((set, get) => ({
   },
 }));
 
-on("listening", () => useNotificationStore.getState().showListening());
-on("notice", (data) => useNotificationStore.getState().showNotice(data));
-on("tool_result", (data) => useNotificationStore.getState().showToolResult(data));
-on("gesture_result", (data) => useNotificationStore.getState().showGestureResult(data));
-on("capture_saved", (data) => useNotificationStore.getState().showCaptureSaved(data));
-on("voice_rejected", (data) => useNotificationStore.getState().showVoiceRejected(data));
-on("error", (data) => useNotificationStore.getState().showError(data));
-on("session_state", (data) => {
-  const store = useNotificationStore.getState();
-  store.updateSession(data);
-  if (data.state === "PASSIVE" && !data.reason) store.triggerBootToast();
-});
+const unsubNotify = [
+  on("listening", () => useNotificationStore.getState().showListening()),
+  on("notice", (data) => useNotificationStore.getState().showNotice(data)),
+  on("tool_result", (data) => useNotificationStore.getState().showToolResult(data)),
+  on("gesture_result", (data) => useNotificationStore.getState().showGestureResult(data)),
+  on("capture_saved", (data) => useNotificationStore.getState().showCaptureSaved(data)),
+  on("voice_rejected", (data) => useNotificationStore.getState().showVoiceRejected(data)),
+  on("error", (data) => useNotificationStore.getState().showError(data)),
+  on("session_state", (data) => {
+    const store = useNotificationStore.getState();
+    store.updateSession(data);
+    if (data.state === "PASSIVE" && !data.reason) store.triggerBootToast();
+  }),
+];
+if (import.meta.hot) import.meta.hot.dispose(() => unsubNotify.forEach((unsub) => unsub()));

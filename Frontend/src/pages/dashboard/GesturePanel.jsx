@@ -309,7 +309,7 @@ export default function GesturePanel() {
         onDelete={remove}
         deleting={deleting}
       />}
-      {confirmBulkDelete && <div className={styles.backdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>선택한 제스처 {selectedIds.length}개를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmBulkDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={removeSelected}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
+      {confirmBulkDelete && <div className={styles.backdrop}><div className={`${styles.confirm}`} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>선택한 제스처 {selectedIds.length}개를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmBulkDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={removeSelected}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
     </>
   );
 }
@@ -416,7 +416,7 @@ function GestureDetail({ gesture, tools, apps, appCatalog = [], onClose, onToggl
             </footer>
           </div>
         </div>
-        {confirmDelete && <div className={styles.innerBackdrop}><div className={styles.confirm} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>‘{displayName(gesture)}’ 제스처를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
+        {confirmDelete && <div className={styles.innerBackdrop}><div className={`${styles.confirm}`} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>‘{displayName(gesture)}’ 제스처를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
       </section>
     </div>
   );
@@ -831,7 +831,7 @@ export function GestureRegistration({ onClose, onSaved }) {
 }
 
 function CaptureTypeDialog({ onClose, onSelect }) {
-  return <div className={styles.captureTypeBackdrop} role="presentation" onMouseDown={onClose}><div className={styles.captureTypeDialog} role="dialog" aria-modal="true" aria-labelledby="capture-type-title" onMouseDown={(event) => event.stopPropagation()}><h3 id="capture-type-title">촬영 방식 선택</h3><p>등록할 제스처의 촬영 방식을 선택해주세요.</p><div><article><span className={styles.captureTypeIcon}><CameraIcon /></span><strong>정적 제스처 등록</strong><p>사진으로 촬영합니다.<br />3초 카운트다운 후 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('STATIC')}>사진으로 등록</button></article><article><span className={styles.captureTypeIcon}><CameraIcon video /></span><strong>동적 제스처 등록</strong><p>영상으로 촬영합니다.<br />3초 카운트다운 후 2초간 3회 반복</p><button className={styles.primary} onClick={() => onSelect('DYNAMIC')}>영상으로 등록</button></article></div></div></div>;
+  return <div className={styles.captureTypeBackdrop} role="presentation" onMouseDown={onClose}><div className={`${styles.captureTypeDialog}`} role="dialog" aria-modal="true" aria-labelledby="capture-type-title" onMouseDown={(event) => event.stopPropagation()}><h3 id="capture-type-title">촬영 방식 선택</h3><p>등록할 제스처의 촬영 방식을 선택해주세요.</p><div><article><span className={styles.captureTypeIcon}><CameraIcon /></span><strong>정적 제스처 등록</strong><p>사진으로 촬영합니다.<br />3초 카운트다운 후 3회 반복 촬영</p><button className={styles.primary} onClick={() => onSelect('STATIC')}>사진으로 등록</button></article><article><span className={styles.captureTypeIcon}><CameraIcon video /></span><strong>동적 제스처 등록</strong><p>영상으로 촬영합니다.<br />3초 카운트다운 후 2초간 3회 반복</p><button className={styles.primary} onClick={() => onSelect('DYNAMIC')}>영상으로 등록</button></article></div></div></div>;
 }
 
 function Review({ registration, onSelect, onRetry, onNext }) {

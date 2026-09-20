@@ -272,7 +272,7 @@ function FrameMarks() { return <i className={styles.frameLine} />; }
 function EyeIcon() { return <span className={styles.eyeIcon}><svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="34" /><path d="M20 40s8-11 20-11 20 11 20 11-8 11-20 11S20 40 20 40Z" /><circle cx="40" cy="40" r="6" /></svg></span>; }
 
 function ConfirmModal({ title, description, secondary, primary, onSecondary, onPrimary }) {
-  return <div className={styles.backdrop}><section className={styles.modal} role="dialog" aria-modal="true"><FrameMarks /><span className={styles.modalIcon}>!</span><h2>{title}</h2><p>{description}</p><div><button onClick={onSecondary}>{secondary}</button><button className={styles.primary} onClick={onPrimary}>{primary}</button></div></section></div>;
+  return <div className={styles.backdrop}><section className={`${styles.modal}`} role="dialog" aria-modal="true"><FrameMarks /><span className={styles.modalIcon}>!</span><h2>{title}</h2><p>{description}</p><div><button onClick={onSecondary}>{secondary}</button><button className={styles.primary} onClick={onPrimary}>{primary}</button></div></section></div>;
 }
 
 function ResultPlot({ result }) {

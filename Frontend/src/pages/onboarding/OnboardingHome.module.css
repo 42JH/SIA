@@ -14,25 +14,16 @@
   width: min(100%, var(--setup-card-width));
   min-height: min(var(--setup-card-height), calc(100vh - 48px));
   box-sizing: border-box;
-  padding: clamp(84px, 11vh, 104px) clamp(36px, 5vw, 56px) clamp(28px, 4vh, 40px) clamp(44px, 5vw, 64px);
+  padding: clamp(64px, 8vh, 80px) clamp(28px, 4vw, 44px) clamp(20px, 3vh, 28px) clamp(32px, 4vw, 48px);
   flex-direction: column;
   background: transparent;
 }
 .frameChrome { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .frameSurface { fill: #fff; stroke: var(--onboarding-navy); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
-.frameAccent {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  pointer-events: none;
-  clip-path: polygon(2.8% 1.33%, 96.2% 1.33%, 99.2% 6.33%, 99.2% 93.67%, 96.2% 98.67%, 3.8% 98.67%, .8% 93.67%, .8% 6.33%);
-}
-.frameAccent::before, .frameAccent::after { position: absolute; background: var(--onboarding-navy); content: ""; }
-.frameAccent::before { top: 0; bottom: 0; left: 0; width: 12px; }
-.frameAccent::after { right: 0; bottom: 0; left: 0; height: 12px; }
+.frameAccent { position: absolute; z-index: 2; top: 8px; right: 8px; width: 30px; height: 30px; background: var(--onboarding-navy); clip-path: polygon(0 0, 100% 0, 100% 100%); pointer-events: none; }
 .card > :not(.frameChrome):not(.frameAccent) { z-index: 1; }
-.logo { position: absolute; top: 36px; left: 52px; width: 128px; height: 46px; object-fit: contain; }
-.frameTitle { width: max-content; margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -.04em; }
+.logo { position: absolute; top: 28px; left: 40px; width: 112px; height: 40px; object-fit: contain; object-position: center; }
+.frameTitle { width: max-content; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -.04em; }
 .frameTitle::after, .welcomeCopy .titleRule { display: block; width: 78px; height: 5px; margin-top: 16px; border-radius: 4px; background: linear-gradient(90deg, var(--onboarding-cyan), var(--onboarding-blue)); content: ""; }
 .card button, .linkButton {
   display: grid;
@@ -68,13 +59,13 @@
   line-height: 1.55;
   text-align: left;
 }
-.welcomeContent { display: grid; min-height: 280px; flex: 1; grid-template-columns: minmax(240px, 42%) minmax(0, 1fr); align-items: center; }
-.welcomeCopy { align-self: center; padding-left: 8px; }
-.welcomeCopy h1 { margin: 0; font-size: clamp(32px, 3.4vw, 40px); letter-spacing: -.055em; }
-.welcomeCopy h2 { margin: 16px 0 4px; font-size: 26px; }
-.welcomeCopy p { margin: 0; color: var(--onboarding-muted); font-size: 18px; }
-.welcomeOrb { display: grid; width: min(100%, 380px); aspect-ratio: 1; justify-self: center; }
-.welcomeOrbCanvas { display: block; width: 100%; height: 100%; }
+.welcomeContent { display: grid; min-height: 220px; flex: 1; grid-template-columns: minmax(220px, 0.92fr) minmax(0, 1.08fr); align-items: center; column-gap: 16px; }
+.welcomeCopy { align-self: center; justify-self: start; padding-left: clamp(40px, 6vw, 96px); padding-right: 0; }
+.welcomeCopy h1 { margin: 0; font-size: clamp(28px, 3vw, 36px); letter-spacing: -.055em; }
+.welcomeCopy h2 { margin: 14px 0 4px; font-size: 22px; }
+.welcomeCopy p { margin: 0; color: var(--onboarding-muted); font-size: 16px; }
+.welcomeOrb { display: grid; width: min(100%, 240px); aspect-ratio: 1; place-items: center; justify-self: center; }
+.welcomeOrbImage { display: block; width: 100%; height: 100%; overflow: visible; }
 .fields { display: grid; gap: 8px; margin-top: 16px; }
 .fields label { display: grid; gap: 8px; color: var(--onboarding-navy); font-size: 14px; font-weight: 800; }
 .fields input, .fields select {
@@ -85,11 +76,12 @@
   border-radius: 10px;
   outline: 0;
   background: var(--onboarding-panel);
-  color: var(--onboarding-muted);
+  color: var(--onboarding-navy);
   font: inherit;
   font-size: 15px;
   font-weight: 400;
 }
+.fields small { color: var(--onboarding-muted); font-size: 13px; font-weight: 500; }
 .fields > button { width: max-content; min-width: 180px; min-height: 48px; font-size: 15px; }
 .startCenter { position: relative; align-items: stretch; justify-content: flex-start; overflow: visible; }
 .sideMark { position: absolute; top: 46%; right: 6%; display: grid; width: min(280px, 36%); aspect-ratio: 1; place-items: center; overflow: visible; pointer-events: none; transform: translateY(-50%); }
@@ -119,11 +111,7 @@
 .cameraPreview { position: relative; display: grid; min-height: clamp(330px, 48vh, 460px); place-items: center; overflow: hidden; border: 1.5px solid var(--onboarding-line); background: #17213a; }
 .cameraVideo { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
 .cameraWaiting { position: absolute; z-index: 0; inset: 0; display: grid; place-items: center; color: #c7daf8; font-size: 18px; font-weight: 700; }
-.cameraShade { position: absolute; z-index: 1; inset: 0; background: linear-gradient(rgb(110 157 226 / 20%) 1px, transparent 1px), linear-gradient(90deg, rgb(110 157 226 / 20%) 1px, transparent 1px), rgb(5 23 48 / 18%); background-size: 16.666% 33.333%; }
-.cameraPreview::after { z-index: 2; }
-.cameraPreview::before, .cameraPreview::after, .resultBoard::before, .resultBoard::after { position: absolute; width: 28px; height: 28px; border-color: var(--onboarding-line); border-style: solid; content: ""; }
-.cameraPreview::before, .resultBoard::before { top: 18px; left: 18px; border-width: 6px 0 0 6px; }
-.cameraPreview::after, .resultBoard::after { right: 18px; bottom: 18px; border-width: 0 6px 6px 0; }
+.cameraShade { position: absolute; z-index: 1; inset: 0; background: rgb(5 23 48 / 18%); }
 .cameraLive { position: absolute; z-index: 4; top: 22px; left: 52px; padding: 5px 9px; background: rgb(8 24 58 / 62%); color: white; font-size: 15px; }
 .cameraPreview p { position: absolute; z-index: 4; bottom: 42px; margin: 0; padding: 6px 12px; background: rgb(8 24 58 / 62%); color: white; font-weight: 700; }
 .cameraPreview small { position: absolute; z-index: 4; right: 18px; bottom: 10px; padding: 4px 8px; background: rgb(8 24 58 / 62%); color: white; }
@@ -151,9 +139,6 @@
 .error, .rejection { color: #aa293b !important; font-weight: 700; }
 .step_basic .fields { margin-top: 28px; gap: 18px; }
 .connection { position: fixed; right: 24px; bottom: 9px; margin: 0; color: #8b9bbc; font-size: 11px; }
-@media (prefers-reduced-motion: reduce) {
-  .welcomeOrbCanvas { opacity: .95; }
-}
 @media (max-width: 1050px) {
   .page { padding: 18px; }
   .card { width: min(calc(100vw - 36px), var(--setup-card-width)); }
@@ -161,11 +146,11 @@
 }
 @media (max-width: 720px) {
   .page { padding: 12px; }
-  .card { width: calc(100vw - 24px); min-height: var(--setup-card-height); padding: 88px 24px 28px 40px; }
-  .logo { top: 24px; left: 36px; width: 112px; height: 42px; }
-  .welcomeContent { min-height: 360px; grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .welcomeCopy { padding: 0; }
-  .welcomeOrb { width: min(240px, 70%); }
+  .card { width: calc(100vw - 24px); min-height: var(--setup-card-height); padding: 72px 20px 22px 32px; }
+  .logo { top: 20px; left: 28px; width: 96px; height: 36px; }
+  .welcomeContent { min-height: 280px; grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .welcomeCopy { padding: 0; justify-self: start; }
+  .welcomeOrb { width: min(200px, 70%); justify-self: center; }
   .fields input, .fields select { height: 58px; }
   .sideMark, .gazeStartGraphic { position: relative; top: auto; right: auto; width: 210px; margin: 24px auto; transform: none; }
   .footer { flex-wrap: wrap; }

@@ -1,7 +1,6 @@
-.measure { position: fixed; z-index: 2000; inset: 0; overflow: hidden; background: linear-gradient(rgb(93 140 225 / 9%) 1px, transparent 1px), linear-gradient(90deg, rgb(93 140 225 / 9%) 1px, transparent 1px), #f3f8ff; background-size: 40px 40px; color: #082a5c; --mole-size: clamp(168px, 16vw, 240px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
-.measure::before { position: absolute; z-index: 5; inset: 0; border: 2px solid #4f86ff; clip-path: polygon(0 0, 24px 0, 0 24px, 0 0, 100% 0, calc(100% - 24px) 0, 100% 24px, 100% 0, 100% 100%, calc(100% - 24px) 100%, 100% calc(100% - 24px), 100% 100%, 0 100%, 24px 100%, 0 calc(100% - 24px)); pointer-events: none; content: ""; }
+.measure { position: fixed; z-index: 2000; inset: 0; overflow: hidden; background: #f3f8ff; color: #082a5c; --mole-size: clamp(168px, 16vw, 240px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
 .guide { position: absolute; z-index: 6; top: 18px; left: 50%; margin: 0; font-size: clamp(18px, 1.45vw, 24px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
-.stopButton { position: absolute; z-index: 8; right: 28px; bottom: 24px; min-width: 120px; min-height: 42px; border: 1px solid #427be8; background: rgb(255 255 255 / 76%); color: #123b75; font: inherit; font-weight: 800; cursor: pointer; clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px); }
+.stopButton { position: absolute; z-index: 8; right: 28px; bottom: 24px; min-width: 120px; min-height: 42px; border: 1px solid #427be8; border-radius: 5px; background: rgb(255 255 255 / 76%); color: #123b75; font: inherit; font-weight: 800; cursor: pointer; }
 .grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
 .cell { position: relative; display: grid; place-items: center; }
 .cell::before, .cell::after { position: absolute; background: rgb(89 133 211 / 10%); content: ""; }
@@ -25,7 +24,7 @@
 .hitGroup .lock b { color: #ffc629; }
 .connectionError { position: absolute; z-index: 10; bottom: 22px; left: 50%; margin: 0; padding: 10px 16px; border: 1px solid #a32838; background: white; color: #a32838; transform: translateX(-50%); }
 .startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
-.startModal { display: grid; width: min(540px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; padding: 44px; border: 2px solid #183064; background: #fff; text-align: center; clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px); }
+.startModal { display: grid; width: min(440px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; padding: 40px 36px 32px; border: 2px solid #183064; border-radius: 8px; background: #fff; text-align: center; }
 .startModal > span { font-size: 64px; }
 .startModal h2 { margin: 12px 0; font-size: 29px; }
 .startModal p { margin: 0 0 28px; color: #6383b6; }
