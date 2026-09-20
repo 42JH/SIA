@@ -226,6 +226,19 @@ def test_vad_segmenter():
             if ev:
                 events.append(ev)
 
+    # 초기 무음 없이 바로 말해도 첫 프레임이 소음 바닥을 끌어올려 발화를 삼키지 않는다.
+    cold = VadSegmenter()
+    cold_events = []
+    for i in range(30):
+        ev = cold.feed(loud, (i + 1) * cold.block_dur)
+        if ev:
+            cold_events.append(ev)
+    for i in range(40):
+        ev = cold.feed(quiet, (30 + i + 1) * cold.block_dur)
+        if ev:
+            cold_events.append(ev)
+    assert [ev[0] for ev in cold_events] == ["onset", "utter"], cold_events
+
     feed(quiet, 40)                    # 노이즈 바닥 학습
     assert not events
     feed(loud, 1)                      # 한 블록(30ms) 소음 — 시작 조건(2블록) 미달
