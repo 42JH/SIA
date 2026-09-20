@@ -48,11 +48,13 @@ class RegistrationBoundaryTests(MotionTests):
     def test_trimmed_duration_and_runtime(self):
         from custom_motion import CustomGestureStore
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
-        reg.start(dict(tempId="trim", motion="DYNAMIC", takes=1, takeDurationSec=2), now=0)
+        reg.start(dict(tempId="trim", motion="DYNAMIC", takes=3, takeDurationSec=2), now=0)
         def pose(t):
             return [hand(shape=0.10 * np.clip((t - 0.5) / 0.8, 0, 1))]
-        for t in np.linspace(0, 2, 81):
-            reg._collect(pose(t), t)
+        for take in range(1, 4):
+            reg.take = take
+            for t in np.linspace(0, 2, 81):
+                reg._collect(pose(t), take * 3 + t)
         reg.phase = "WAIT_FINISH"
         with contextlib.redirect_stdout(io.StringIO()) as log:
             reg.finish()

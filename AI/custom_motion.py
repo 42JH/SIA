@@ -178,6 +178,19 @@ def trim_motion_frames(frames, threshold=0.04):
     return frames[first:last + 1] if last > first else frames
 
 
+def _interpolate_frames(times, points, grid):
+    """One shared interpolation index for every coordinate (np.interp semantics)."""
+    times = np.asarray(times)
+    upper = np.clip(np.searchsorted(times, grid, side='right'), 1, len(times)-1)
+    lower = upper - 1
+    weight = np.clip((grid-times[lower])/(times[upper]-times[lower]), 0, 1)
+    weight = weight.reshape((len(grid),) + (1,)*(points.ndim-1))
+    # Convert before subtracting, as np.interp also interpolates in float64.
+    lo = points[lower].astype(np.float64)
+    hi = points[upper].astype(np.float64)
+    return lo + weight*(hi-lo)
+
+
 def encode_sequence(times, points):
     times, points = np.asarray(times), np.asarray(points, dtype=np.float32)
     if len(times) < 2 or np.any(np.diff(times) <= 0):
@@ -201,7 +214,7 @@ def encode_sequence(times, points):
         # 불안정하므로 보정을 건너뛴다 — 회전 미보정 상태(기존 동작)로 남는다.
     flat = normalized.reshape(len(times), -1)
     grid = np.linspace(times[0], times[-1], FRAMES)
-    sampled = np.stack([np.interp(grid, times, col) for col in flat.T], axis=-1)
+    sampled = _interpolate_frames(times, flat, grid)
     result = np.zeros((FRAMES, 2, 21, 2), np.float32)
     result[:, :points.shape[1]] = sampled.reshape(FRAMES, points.shape[1], 21, 2)
     return result
@@ -378,7 +391,60 @@ def swipe_trajectory_distance(a, b, count):
     return float(np.sqrt(np.mean(np.sum(delta ** 2, axis=-1))))
 
 
-def motion_comparison(a, b, count):
+def _curved_motion(sequence, count):
+    if count != 1 or len(sequence) < 6:
+        return False
+    path = sequence[:, 0, 0]
+    length = float(np.linalg.norm(np.diff(path, axis=0), axis=-1).sum())
+    return length >= DIRECTION_MIN_MOTION and np.linalg.norm(path[-1] - path[0]) < .70 * length
+
+
+def _align_curve(a, b, count=1):
+    """Bounded monotonic time alignment; preserve both endpoints and all frames.
+
+    Never rotate, reverse, translate or scale the path. The five-frame band
+    limits timing drift to about one fifth of a recording. A stretch penalty
+    favours diagonal progress. Distant candidates are rejected before DP.
+    """
+    n = len(a)
+    if n != FRAMES or len(b) != n:
+        return None
+    delta = a[:, None, :count] - b[None, :, :count]
+    hand_cost = np.average(np.sum(delta ** 2, axis=-1), axis=-1,
+                           weights=LANDMARK_WEIGHTS)
+    cost = np.max(hand_cost, axis=-1)
+    # A valid path visits every row/column, stays in the band and has at most
+    # 1.5*n pairs. Bound the final mean landmark error, not the DP objective.
+    band = np.abs(np.arange(n)[:, None] - np.arange(n)[None, :]) <= 5
+    bound_cost = np.where(band, hand_cost.mean(axis=-1), np.inf)
+    lower = max(float(bound_cost.min(axis=0).sum()), float(bound_cost.min(axis=1).sum())) / (n*1.5)
+    if lower >= MATCH_DISTANCE ** 2:
+        return None
+    dp = np.full((n+1, n+1), np.inf)
+    dp[0, 0] = 0
+    back = np.zeros((n+1, n+1), dtype=np.int8)
+    for i in range(1, n+1):
+        for j in range(max(1, i-5), min(n, i+5)+1):
+            choices = (dp[i-1, j-1], dp[i-1, j] + .0025, dp[i, j-1] + .0025)
+            step = min(range(3), key=choices.__getitem__)
+            dp[i, j] = choices[step] + cost[i-1, j-1]
+            back[i, j] = step
+    ia, ib = [], []
+    i = j = n
+    while i and j:
+        ia.append(i-1)
+        ib.append(j-1)
+        step = back[i, j]
+        if step != 2:
+            i -= 1
+        if step != 1:
+            j -= 1
+    if len(ia) > n * 1.5:
+        return None
+    return a[ia[::-1]], b[ib[::-1]]
+
+
+def motion_comparison(a, b, count, _feature_cache=None):
     """동적 중복/실행/후보 검사 공통 점수. 한 특징 차이가 평균에 묻히지 않게 한다.
 
     각 손의 시간 RMS 중 큰 값을 사용한다. 거리와 형태는 손바닥 길이 단위,
@@ -387,7 +453,9 @@ def motion_comparison(a, b, count):
     """
     direction_a = motion_direction_8(a, count)
     direction_b = motion_direction_8(b, count)
+    curved = _curved_motion(a, count) and _curved_motion(b, count)
     if (direction_a is not None and direction_b is not None
+            and not curved
             and not motion_directions_compatible(a, b, count)):
         return dict(
             landmark=float('inf'), shape=float('inf'), rotation=float('inf'),
@@ -395,11 +463,20 @@ def motion_comparison(a, b, count):
             mirrored=False, direction=direction_a,
             reference_direction=direction_b, direction_match=False,
         )
-    fa = motion_features(a, count)
+    def features(sequence):
+        if _feature_cache is None:
+            return motion_features(sequence, count)
+        key = (id(sequence), count)
+        if key not in _feature_cache:
+            # Retain the array too, preventing identity reuse within this frame.
+            _feature_cache[key] = (sequence, motion_features(sequence, count))
+        return _feature_cache[key][1]
+
+    fa = features(a)
     def rms(v):
         return float(np.max(np.sqrt(np.mean(v ** 2, axis=0))))
     def compare(candidate, mirrored):
-        fb = motion_features(candidate, count)
+        fb = features(candidate)
         shape_delta = fa['shape'] - fb['shape']
         shape_sq = np.average(np.sum(shape_delta ** 2, axis=-1), axis=-1, weights=LANDMARK_WEIGHTS)
         shape = float(np.max(np.sqrt(np.mean(shape_sq, axis=0))))
@@ -431,18 +508,46 @@ def motion_comparison(a, b, count):
             result.update(score=swipe_score, score_source="SWIPE_TRAJECTORY_SHAPE",
                           swipe_trajectory=swipe_trajectory,
                           swipe_direction=swipe_direction_8(a, count))
+    # Both hands share one time path. Never independently warp, swap or
+    # reflect them: their relative timing and separation carry meaning.
+    two_hand_motion = (count == 2
+                       and distance(a, np.repeat(a[:1], len(a), axis=0), 2) >= PREFIX_MIN_MOTION
+                       and distance(b, np.repeat(b[:1], len(b), axis=0), 2) >= PREFIX_MIN_MOTION)
+    if (curved or two_hand_motion) and result['score'] >= MATCH_DISTANCE:
+        candidates = ((b, False), (mirrored, True)) if count == 1 else ((b, False),)
+        for candidate, is_mirrored in candidates:
+            aligned = _align_curve(a, candidate, count)
+            if aligned is None:
+                continue
+            # Already selected handedness; prevent a second reflection.
+            aa, bb = aligned
+            fa, fb = motion_features(aa, count), motion_features(bb, count)
+            shape_sq = np.average(np.sum((fa['shape'] - fb['shape']) ** 2, axis=-1),
+                                  axis=-1, weights=LANDMARK_WEIGHTS)
+            angle = fa['rotation'] - fb['rotation']
+            angle = np.arctan2(np.sin(angle), np.cos(angle))
+            wrist = np.linalg.norm((fa['wrists'] - fa['wrists'][:1]) -
+                                   (fb['wrists'] - fb['wrists'][:1]), axis=-1)
+            parts = dict(landmark=distance(aa, bb, count),
+                         shape=float(np.max(np.sqrt(np.mean(shape_sq, axis=0)))),
+                         rotation=rms(angle), wrist=rms(wrist),
+                         separation=rms(fa['separation'] - fb['separation']))
+            score = max(parts.values())
+            if score < result['score']:
+                result.update(**parts, score=score, mirrored=is_mirrored,
+                              score_source='ALIGNED_CURVE' if count == 1 else 'ALIGNED_TWO_HAND',
+                              aligned_pairs=len(aa))
     return result
 
 
-def motion_matching_distance(a, b, count):
-    return motion_comparison(a, b, count)['score']
+def motion_matching_distance(a, b, count, _feature_cache=None):
+    return motion_comparison(a, b, count, _feature_cache)['score']
 
 
 def prefix_sequence(sequence, fraction):
     """Resample the start of a template, preserving its original coordinate frame."""
     grid = np.linspace(0, (FRAMES - 1) * fraction, FRAMES)
-    flat = sequence.reshape(FRAMES, -1)
-    return np.stack([np.interp(grid, np.arange(FRAMES), col) for col in flat.T], axis=-1).reshape(sequence.shape)
+    return _interpolate_frames(np.arange(FRAMES), sequence, grid)
 
 
 def static_execution_allowed(active, registering, claimed, custom_pose, name):
@@ -508,6 +613,7 @@ class CustomGestureStore:
         self.latched_name = None
         self.missing_since = None
         self._last_claimed = False  # 가장 최근 정상 프레임의 claimed — 찰나의 추적 실패를 이어붙이는 데 쓴다
+        self._curve_prefix = None
 
     @property
     def n(self):
@@ -605,6 +711,69 @@ class CustomGestureStore:
         self.latched_name = None
         self.missing_since = None
         self._last_claimed = False
+        self._curve_prefix = None
+
+    def _curve_prefix_claimed(self, now, count, disabled):
+        """Track a moving curved prefix from its onset, with phase alignment.
+
+        Acquire at PREFIX_DISTANCE; continue only the same progressing prefix
+        inside the existing final-match distance. Straight motion never enters
+        this path. Missing input, a stop or a changed onset releases the claim.
+        """
+        previous = self._curve_prefix
+        self._curve_prefix = None
+        if count != 1 or len(self.history) < 6:
+            return False
+        frames = trim_motion_frames([(t, p) for t, p, _ in self.history])
+        if len(frames) < 6 or now - frames[-1][0] > TRACKING_GRACE_S:
+            return False
+        current = encode_sequence([t for t, _ in frames], [p for _, p in frames])
+        wrists = current[:, 0, 0] - current[0, 0, 0]
+        travel = float(np.linalg.norm(np.diff(wrists, axis=0), axis=-1).sum())
+        # Same straightness boundary as swipe_direction_8. Require movement,
+        # so noisy stationary hands cannot reserve a command.
+        if (travel < DIRECTION_MIN_MOTION
+                or float(np.linalg.norm(wrists[-1])) / travel >= .70
+                or distance(current, np.repeat(current[:1], FRAMES, axis=0), 1) < PREFIX_MIN_MOTION):
+            return False
+        elapsed = frames[-1][0] - frames[0][0]
+        best = None
+        for index, (seq, name, motion, n, duration) in enumerate(
+                zip(*(self.data[k] for k in EXTRA_KEYS))):
+            if motion != 'DYNAMIC' or n != 1 or name in disabled:
+                continue
+            path = seq[:, 0, 0] - seq[0, 0, 0]
+            length = float(np.linalg.norm(np.diff(path, axis=0), axis=-1).sum())
+            if length < DIRECTION_MIN_MOTION or float(np.linalg.norm(path[-1])) / length >= .70:
+                continue
+            continuing = (previous is not None and previous['index'] == index
+                          and previous['name'] == str(name)
+                          and abs(previous['onset'] - frames[0][0]) < 1e-6
+                          and now - previous['advanced_at'] <= TRACKING_GRACE_S)
+            threshold = MATCH_DISTANCE if continuing else PREFIX_DISTANCE
+            for fraction in np.linspace(.25, .975, 30):
+                if not .5 <= elapsed / (float(duration) * fraction) <= 1.5:
+                    continue
+                if continuing and fraction < previous['fraction'] - .025:
+                    continue
+                expected = prefix_sequence(seq, float(fraction))
+                expected_wrists = expected[:, 0, 0] - expected[0, 0, 0]
+                # Cheap lower bound before comparing hand shape/rotation.
+                wrist_error = float(np.sqrt(np.mean(np.sum((wrists - expected_wrists) ** 2, axis=-1))))
+                if wrist_error >= threshold:
+                    continue
+                score = motion_matching_distance(current, expected, 1)
+                if score >= threshold or (best is not None and score >= best[0]):
+                    continue
+                advancing = not continuing or fraction > previous['fraction'] + 1e-6
+                state = dict(index=index, name=str(name), onset=frames[0][0],
+                             fraction=float(fraction),
+                             advanced_at=now if advancing else previous['advanced_at'])
+                best = score, state
+        if best is not None:
+            self._curve_prefix = best[1]
+            return True
+        return False
 
     def update(self, hands, now, disabled=(), pose_landmarks=None):
         """Return (held two-hand pose, completed motion, suppress other commands, distance).
@@ -660,6 +829,7 @@ class CustomGestureStore:
             elapsed = now - self.missing_since
             if elapsed >= TRACKING_GRACE_S:
                 self.history.clear()
+                self._curve_prefix = None
             if elapsed >= 0.3:
                 self.latched = False
             claimed = self.latched or (elapsed < TRACKING_GRACE_S and had_progress)
@@ -667,6 +837,7 @@ class CustomGestureStore:
         if self.missing_since is not None and now - self.missing_since >= TRACKING_GRACE_S:
             self.history.clear()
             self._last_claimed = False
+            self._curve_prefix = None
         self.missing_since = None
         if self.latched:
             self._last_claimed = True
@@ -675,6 +846,7 @@ class CustomGestureStore:
         if self.history and (now - self.history[-1][0] > 0.25 or now <= self.history[-1][0]
                              or identity != self.history[-1][2]):
             self.history.clear()
+            self._curve_prefix = None
         if not self.history or now - self.history[-1][0] >= 0.05:
             self.history.append((now, points, identity))
         count = len(points)
@@ -685,6 +857,18 @@ class CustomGestureStore:
                 current_world = encode_world_sequence([0, 1], [world_points, world_points])
         best_static, best_dynamic = (MATCH_DISTANCE, None), (MATCH_DISTANCE, None)
         pending_motion = False
+        sequence_cache = {}
+        movement_cache = {}
+        feature_cache = {}
+
+        def sequence_for(window):
+            # History is immutable during this update. Equal endpoints select
+            # the same samples, so repeated template windows share encoding.
+            key = (window[0][0], window[-1][0])
+            if key not in sequence_cache:
+                sequence_cache[key] = encode_sequence([v[0] for v in window], [v[1] for v in window])
+            return sequence_cache[key]
+
         for index, (seq, name, motion, n, duration) in enumerate(
                 zip(*(self.data[k] for k in EXTRA_KEYS))):
             if count != n or name in disabled:
@@ -700,7 +884,21 @@ class CustomGestureStore:
                 if score < best_static[0]:
                     best_static = score, str(name)
                 continue
-            for speed in (0.7, 1.0, 1.3):
+            speeds = (0.7, 1.0, 1.3)
+            # 실제 속도가 이 세 배수 사이(예: 0.85배)에 끼면, 가장 가까운 배수조차
+            # 그 시점까지 쌓인 실제 시간보다 더 긴 구간을 요구해 통과 못 하거나,
+            # 통과해도 그 구간이 동작의 앞부분을 잘라낸 "뒤쪽 일부"만 담게 된다.
+            # 별 그리기처럼 구간마다 모양이 뚜렷이 다른 동작은 이 잘림만으로도
+            # 기준(MATCH_DISTANCE)을 넘겨버린다(실측: 15% 빠르게 재현 시 0.295).
+            # 실제로 쌓인 구간 길이를 배수로 환산해 하나 더 시도하면, 몇 배로
+            # 봐야 할지 추측하지 않고 "지금까지 관측된 전체"를 그대로 비교하게
+            # 되어 이 잘림이 사라진다 — 말도 안 되게 짧거나 긴 경우만 배제한다.
+            if self.history:
+                actual_span = self.history[-1][0] - self.history[0][0]
+                actual_speed = actual_span / float(duration)
+                if 0.5 <= actual_speed <= 1.5:
+                    speeds = speeds + (actual_speed,)
+            for speed in speeds:
                 span = float(duration) * speed
                 # Look for actual movement matching a template prefix before a
                 # built-in hold can fire. A stationary matching pose alone must
@@ -715,18 +913,30 @@ class CustomGestureStore:
                         elapsed = prefix_window[-1][0] - prefix_window[0][0]
                         if elapsed < length * 0.85:
                             continue
-                        current_prefix = encode_sequence([v[0] for v in prefix_window],
-                                                         [v[1] for v in prefix_window])
-                        movement = distance(current_prefix, np.repeat(current_prefix[:1], FRAMES, axis=0), count)
+                        current_prefix = sequence_for(prefix_window)
+                        key = (prefix_window[0][0], prefix_window[-1][0])
+                        if key not in movement_cache:
+                            movement_cache[key] = distance(current_prefix, np.repeat(current_prefix[:1], FRAMES, axis=0), count)
+                        movement = movement_cache[key]
+                        if movement < PREFIX_MIN_MOTION:
+                            continue
                         expected = prefix_sequence(seq, min(1.0, elapsed / span))
-                        if movement >= PREFIX_MIN_MOTION and motion_matching_distance(current_prefix, expected, count) < PREFIX_DISTANCE:
+                        if motion_matching_distance(current_prefix, expected, count, feature_cache) < PREFIX_DISTANCE:
                             pending_motion = True
                             break
                 window = [item for item in self.history if item[0] >= now - span - 0.04]
                 if len(window) < 6 or window[-1][0] - window[0][0] < span * 0.9:
                     continue
-                current = encode_sequence([v[0] for v in window], [v[1] for v in window])
-                score = motion_matching_distance(current, seq, count)
+                current = sequence_for(window)
+                if _curved_motion(seq, count):
+                    # Registration removes stationary lead-in/out before
+                    # normalizing its origin. Use that same active interval
+                    # at execution, retaining the existing speed floor.
+                    active = trim_motion_frames([(v[0], v[1]) for v in window])
+                    if (len(active) >= 6
+                            and active[-1][0] - active[0][0] >= float(duration) * .5):
+                        current = sequence_for(active)
+                score = motion_matching_distance(current, seq, count, feature_cache)
                 if score < best_dynamic[0]:
                     best_dynamic = score, str(name)
         if best_dynamic[1]:
@@ -735,7 +945,8 @@ class CustomGestureStore:
             self.history.clear()
             self._last_claimed = True
             return None, best_dynamic[1], True, best_dynamic[0]
-        if pending_motion:
+        curve_pending = self._curve_prefix_claimed(now, count, disabled)
+        if pending_motion or curve_pending:
             self._last_claimed = True
             return None, None, True, None
         self._last_claimed = bool(best_static[1])
