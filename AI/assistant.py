@@ -674,7 +674,9 @@ def main():
                     full, crop, hwnd = pending_capture
                     pending_capture = None
                     brain.submit(ev[2], full, crop, t_utter=ev[1], target_hwnd=hwnd,
-                                 wake_live=(wake_live_score, wake_cut) if wake_stream is not None and heard else None)
+                                 wake_live=(wake_live_score, wake_cut) if wake_stream is not None and heard else None,
+                                 wake_follow_at=wake_live_t if wake_stream is not None and follow else None,
+                                 wake_fallback=wake_stream is None)
 
             # --- 제스처 커맨드 (컨텍스트 의존: 유튜브가 활성 창이면 미디어 제어) ---
             from brain import is_youtube
