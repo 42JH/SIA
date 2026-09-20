@@ -99,7 +99,7 @@ export default function GazeMeasurement({ point, ready }) {
         {hit && <div className={`${styles.targetGroup} ${styles.hitGroup}`}><img className={styles.hitMole} src={moleHitImage} alt="잡은 두더지" /><span className={styles.scope}><i /><b>HIT!</b></span></div>}
       </div>;
     })}</div>
-    {!introDone && <div className={styles.startBackdrop}><section className={styles.startModal} role="dialog" aria-modal="true"><b className={styles.modalBevel} /><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}
+    {!introDone && <div className={styles.startBackdrop}><section className={`${styles.startModal}`} role="dialog" aria-modal="true"><b className={styles.modalBevel} /><h2>두더지 잡기를 시작할까요?</h2><p>시작하면 나타나는 두더지의 코를 1초간 바라보세요.</p><button onClick={() => setIntroDone(true)} disabled={!ready}>시작하기</button></section></div>}
     {!ready && <p className={styles.measureError} role="alert">연결 또는 화면 상태를 확인해주세요.</p>}
   </div>;
   return createPortal(screen, document.body);

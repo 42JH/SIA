@@ -10,6 +10,7 @@ const voiceRejectionMessages = {
   TOO_LONG: '너무 길게 들렸어요. 화면의 문장 하나만 읽어주세요.',
   NOISY: '주변이 시끄러워요. 조용한 곳에서 다시 읽어주세요.',
   INCONSISTENT: '앞 문장과 목소리가 다르게 들려요. 같은 분이 조용한 곳에서 다시 읽어주세요.',
+  MISMATCH: '화면의 문장과 다르게 들렸어요. 문장을 그대로 읽어주세요.',
 };
 
 export function useOnboarding() {
@@ -67,15 +68,7 @@ export function useOnboarding() {
       },
       wakeword_done: () => {
         if (state().step !== 'wake') return;
-        try {
-          sendOnboarding('voice_reg_start', {});
-          change({
-            wakeDone: true, wakeRejection: null, pending: true, error: '',
-            step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null,
-          });
-        } catch (error) {
-          change({ wakeDone: true, wakeRejection: null, pending: false, error: error.message });
-        }
+        change({ wakeDone: true, wakeRejection: null, pending: false, error: '' });
       },
       voice_sentence: (voiceSentence) => {
         if (!voiceSteps.includes(state().step)) return;

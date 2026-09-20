@@ -1,5 +1,4 @@
-.measure { position: fixed; z-index: var(--setup-layer); inset: 0; width: 100vw; height: 100vh; box-sizing: border-box; overflow: hidden; background: linear-gradient(rgb(93 140 225 / 9%) 1px, transparent 1px), linear-gradient(90deg, rgb(93 140 225 / 9%) 1px, transparent 1px), #f3f8ff; background-size: 40px 40px; color: var(--onboarding-ink); --mole-size: clamp(168px, 16vw, 236px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
-.measure::before { position: absolute; z-index: 5; inset: 0; border: 2px solid var(--onboarding-navy); clip-path: polygon(0 0, 24px 0, 0 24px, 0 0, 100% 0, calc(100% - 24px) 0, 100% 24px, 100% 0, 100% 100%, calc(100% - 24px) 100%, 100% calc(100% - 24px), 100% 100%, 0 100%, 24px 100%, 0 calc(100% - 24px)); pointer-events: none; content: ""; }
+.measure { position: fixed; z-index: var(--setup-layer); inset: 0; width: 100vw; height: 100vh; box-sizing: border-box; overflow: hidden; background: #f3f8ff; color: var(--onboarding-ink); --mole-size: clamp(168px, 16vw, 236px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
 .guide { position: absolute; z-index: 4; top: 18px; left: 50%; margin: 0; font-size: clamp(17px, 1.4vw, 23px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
 .grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
 .cell { position: relative; }
@@ -26,8 +25,8 @@
 @keyframes hit { from { opacity: .65; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
 .measureError { position: absolute; z-index: 5; right: 18px; bottom: 18px; margin: 0; padding: 7px 12px; background: rgb(255 255 255 / 92%); color: #a22839; }
 .startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
-.startModal { position: relative; display: grid; width: min(560px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; overflow: hidden; padding: 48px 40px 36px 52px; background: #fff; color: var(--onboarding-ink); text-align: center; clip-path: polygon(16px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 22px 100%, 0 calc(100% - 22px), 0 16px); box-shadow: 0 0 0 2px var(--onboarding-navy); }
-.modalBevel { position: absolute; top: 0; left: 0; width: 10px; height: 100%; background: var(--onboarding-navy); clip-path: polygon(0 16px, 100% 0, 100% 100%, 0 calc(100% - 22px)); }
+.startModal { position: relative; display: grid; width: min(440px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; overflow: hidden; padding: 40px 36px 32px; background: #fff; color: var(--onboarding-ink); text-align: center; border-radius: 8px; box-shadow: 0 0 0 2px var(--onboarding-navy); }
+.modalBevel { display: none; }
 .startModal h2 { margin: 12px 0; font-size: 28px; }
 .startModal p { margin: 0 0 26px; color: var(--onboarding-muted); }
 .startModal button { min-width: 160px; min-height: 48px; border: 0; border-radius: 8px; background: var(--onboarding-navy); color: #fff; font: inherit; font-weight: 800; cursor: pointer; }

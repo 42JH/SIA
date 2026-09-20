@@ -1,23 +1,24 @@
 :global(:root) { --gaze-navy: #071f45; --gaze-deep: #071a37; --gaze-blue: #4f7bd0; --gaze-line: #5f8ee8; --gaze-soft: #c8d9f2; --gaze-copy: #527fc9; }
 
 .gazePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; color: var(--gaze-navy); }
-.gazeHero { position: relative; display: grid; min-height: 52px; height: 52px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; }
-.heroTitle { display: flex; align-items: center; gap: 12px; }
-.heroTitle button { width: 38px; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 38px; font-weight: 300; line-height: 1; cursor: pointer; }
-.gazeHero h1 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -.055em; }
+.gazeHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; isolation: isolate; }
+.heroTitle { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.heroTitle button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 0; cursor: pointer; }
+.heroTitle button::before { width: 12px; height: 12px; margin-top: 3px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: rotate(45deg); content: ""; }
+.gazeHero h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
 .gazeHero p { margin: 12px 0 0 50px; color: var(--gaze-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
-.circuit { width: 100%; height: 52px; overflow: visible; fill: white; stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: white; stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--gaze-blue); }
 .circuit circle { stroke-width: 2.4; }
-.heroRadar { width: 52px; height: 52px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
+.heroRadar { display: block; width: 52px; height: 52px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
 .heroRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
 .heroRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
 .heroRadar .radarCenter { fill: var(--gaze-blue); stroke: none; }
 
 .calibrationGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: 55% 45%; gap: 20px; }
-.frame { position: relative; border: 2px solid var(--gaze-line); clip-path: polygon(18px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 22px), calc(100% - 22px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.frameLine { position: absolute; top: 8px; left: 28px; width: 120px; height: 2px; background: var(--gaze-line); }
+.frame { position: relative; border: 2px solid var(--gaze-line); border-radius: 8px; }
+.frameLine { display: none; }
 .activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; background: radial-gradient(circle at 72% 32%, rgb(62 103 180 / 32%), transparent 36%), linear-gradient(135deg, #081a3c, #182d60); color: white; }
 .activePanel > small, .listTitle small { margin-bottom: 12px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
 .activePanel h2, .listTitle h2 { margin: 0; font-size: clamp(28px, 2.55vw, 40px); letter-spacing: -.04em; }
@@ -68,7 +69,7 @@ button:disabled { cursor: default; opacity: .45; }
 .deleteNotice p { margin: 0; }
 
 .bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 84%); }
-.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--gaze-navy); border-radius: 50%; font-size: 27px; font-weight: 800; }
+.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--gaze-navy); border-radius: 50%; font-size: 22px; font-weight: 800; line-height: 1; }
 .bottomBar > strong { color: var(--gaze-blue); font-size: 17px; }
 .bottomBar > button, .deleteActions { margin-left: auto; }
 .bottomBar > .secondary { min-width: 220px; }
@@ -78,11 +79,11 @@ button:disabled { cursor: default; opacity: .45; }
 .error { color: #a32838; }
 
 .backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(39 61 91 / 56%); }
-.modal { width: min(700px, 100%); min-height: 300px; box-sizing: border-box; padding: 58px 64px 42px; background: white; color: var(--gaze-navy); text-align: center; }
+.modal { position: relative; width: min(480px, calc(100vw - 48px)); min-height: 0; box-sizing: border-box; padding: 40px 36px 32px; border: 2px solid var(--gaze-line); border-radius: 8px; background: white; color: var(--gaze-navy); text-align: center; }
 .modal h2 { margin: 18px 0; font-size: 27px; }
 .modal p { color: #7695c7; font-size: 17px; line-height: 1.7; }
 .modal > .primary { min-width: 190px; margin-top: 22px; }
-.modalIcon { position: relative; display: grid; width: 84px; height: 84px; place-items: center; margin: -20px auto 10px; border: 2px solid var(--gaze-navy); border-radius: 50%; font-size: 48px; font-weight: 400; }
+.modalIcon { position: relative; display: grid; width: 84px; height: 84px; place-items: center; margin: 0 auto 16px; border: 2px solid var(--gaze-navy); border-radius: 50%; font-size: 42px; font-weight: 400; line-height: 1; }
 .modalIcon i { width: 14px; height: 14px; border-radius: 50%; background: var(--gaze-navy); }
 .addedName { display: block; margin-bottom: -6px; font-size: 18px; }
 .modalActions { display: flex; justify-content: center; gap: 16px; margin-top: 32px; }
@@ -102,4 +103,4 @@ button:disabled { cursor: default; opacity: .45; }
   .bottomBar { min-height: 62px; }
 }
 @media (max-width: 1000px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
-@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 52px 24px 32px; } .modalActions { flex-wrap: wrap; } }
+@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 36px 24px 32px; } .modalActions { flex-wrap: wrap; } }

@@ -1,20 +1,18 @@
 .voicePage, .registrationPage { --voice-navy: #142853; --voice-deep: #0f2047; --voice-blue: #3f70d8; --voice-line: #4f7ee1; --voice-soft: #d5e1f5; position: relative; color: var(--voice-navy); }
 .voicePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; }
-.registrationPage { min-height: calc(100vh - 164px); }
-.voiceHero { position: relative; display: grid; min-height: 52px; height: 52px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; }
-.voiceHero h1 { margin: 0; color: var(--voice-navy); font-size: 34px; font-weight: 800; letter-spacing: -.055em; }
-.heroTitle { display: flex; align-items: center; gap: 12px; }
-.heroTitle button { width: 38px; padding: 0; border: 0; background: transparent; color: var(--voice-navy); font-size: 38px; font-weight: 300; line-height: 1; cursor: pointer; }
+.registrationPage { display: grid; min-height: calc(100vh - 164px); grid-template-rows: auto minmax(0, 1fr); gap: 20px; align-content: start; }
+.voiceHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr; align-items: center; isolation: isolate; }
+.voiceHero h1 { margin: 0; color: var(--voice-navy); font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
+.heroTitle { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.heroTitle button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); font-size: 0; cursor: pointer; }
+.heroTitle button::before { width: 12px; height: 12px; margin-top: 3px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: rotate(45deg); content: ""; }
 .voiceHero p { margin: 12px 0 0 50px; color: var(--voice-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
-.circuit { width: 100%; height: 52px; overflow: visible; fill: var(--voice-navy); stroke: var(--voice-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: var(--voice-navy); stroke: var(--voice-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--voice-blue); }
 .circuit > circle { fill: white; stroke-width: 2.4; }
-.signalSeal { display: grid; width: 52px; height: 52px; place-items: center; justify-self: end; border: 2px solid var(--voice-navy); border-radius: 50%; box-shadow: inset 0 0 0 6px white, inset 0 0 0 7px var(--voice-line); }
-.miniWave { display: flex; height: 22px; align-items: center; gap: 3px; }
-.miniWave i { width: 4px; border-radius: 8px; background: var(--voice-navy); }
-.frame { position: relative; border: 2px solid var(--voice-line); clip-path: polygon(18px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 22px), calc(100% - 22px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
-.frameLine { position: absolute; top: 8px; left: 28px; width: 120px; height: 2px; background: var(--voice-line); }
+.frame { position: relative; border: 2px solid var(--voice-line); border-radius: 8px; }
+.frameLine { display: none; }
 .voiceGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: 55% 45%; gap: 20px; }
 .activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; border-color: var(--voice-line); background: linear-gradient(135deg, #101f45 0%, #223d75 100%); color: white; }
 .activePanel > small, .listTitle small { margin: 0 0 15px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
@@ -62,7 +60,7 @@ button:disabled { cursor: default; opacity: .45; }
 .pillButton { grid-row: 1; grid-column: 3; align-self: start; min-width: 0; min-height: 42px; margin-top: 8px; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
 .voiceCard:has(> input) .pillButton { grid-column: 4; }
 .bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 80%); }
-.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--voice-navy); border-radius: 50%; font-size: 27px; font-weight: 800; }
+.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--voice-navy); border-radius: 50%; font-size: 22px; font-weight: 800; line-height: 1; }
 .bottomBar > strong { color: var(--voice-blue); font-size: 17px; }
 .bottomBar > button, .deleteActions { margin-left: auto; }
 .bottomBar > .secondary { min-width: 220px; }
@@ -72,7 +70,7 @@ button:disabled { cursor: default; opacity: .45; }
 .loading, .pageError { position: fixed; z-index: 40; top: 64px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--voice-line); background: white; transform: translateX(-50%); }
 .pageError { color: #a32838; }
 
-.registrationGrid { display: grid; min-height: calc(100vh - 272px); grid-template-columns: 42% 58%; }
+.registrationGrid { display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-columns: 42% 58%; overflow: hidden; }
 .registrationVisual { display: grid; place-items: center; border-color: var(--voice-line); background: linear-gradient(145deg, #101f45, #263f76); color: white; }
 .registrationContent { display: grid; min-width: 0; place-items: center; padding: 40px 7%; background: rgb(255 255 255 / 88%); }
 .guideContent, .centerState, .completeState, .reviewContent, .recordingContent { width: min(100%, 760px); text-align: center; }
@@ -103,14 +101,14 @@ button:disabled { cursor: default; opacity: .45; }
 .spinner { width: 76px; height: 76px; margin: 0 auto 24px; border: 4px solid #dbe5f3; border-top-color: var(--voice-blue); border-radius: 50%; animation: spin .9s linear infinite; }
 
 .backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(39 61 91 / 56%); }
-.modal { position: relative; width: min(700px, 100%); min-height: 300px; padding: 58px 64px 42px; border: 2px solid var(--voice-line); background: white; color: var(--voice-navy); text-align: center; clip-path: polygon(18px 0, calc(100% - 24px) 0, 100% 24px, 100% calc(100% - 24px), calc(100% - 24px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.modal { position: relative; width: min(480px, calc(100vw - 48px)); min-height: 0; padding: 40px 36px 32px; border: 2px solid var(--voice-line); border-radius: 8px; background: white; color: var(--voice-navy); text-align: center; }
 .modal .frameLine { width: 84px; }
 .modal h2 { margin: 18px 0; font-size: 27px; }
 .modal p { color: #7695c7; font-size: 17px; line-height: 1.7; }
-.modalIcon { display: grid; width: 84px; height: 84px; place-items: center; margin: -20px auto 10px; border: 2px solid var(--voice-navy); border-radius: 50%; font-size: 48px; font-weight: 500; }
+.modalIcon { position: relative; display: grid; width: 84px; height: 84px; place-items: center; margin: 0 auto 16px; border: 2px solid var(--voice-navy); border-radius: 50%; font-size: 42px; font-weight: 500; line-height: 1; }
 .modalMic::after { position: absolute; width: 25px; height: 25px; margin: -58px -58px 0 0; border-radius: 50%; background: var(--voice-navy); color: white; content: "!"; font-size: 18px; line-height: 25px; }
 .modal > .primary { min-width: 190px; margin-top: 22px; }
-.renameModal { width: min(760px, 100%); text-align: left; }
+.renameModal { width: min(520px, calc(100vw - 48px)); text-align: left; }
 .renameModal h2 { font-size: 32px; }
 .titleUnderline { display: block; width: 42px; height: 2px; margin: 4px 0 34px; background: var(--voice-line); }
 .renameModal label { display: grid; gap: 14px; font-size: 17px; font-weight: 800; }
@@ -132,5 +130,5 @@ button:disabled { cursor: default; opacity: .45; }
   .largeWave { height: 90px; }
   .bottomBar { min-height: 62px; }
 }
-@media (max-width: 1050px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr 52px; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .registrationGrid { grid-template-columns: 38% 62%; } .largeWave { gap: 4px; } }
-@media (max-width: 760px) { .voiceHero { grid-template-columns: minmax(0, auto) 52px; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) max-content; gap: 6px; } .cardAudio { min-width: 0; } .wave { min-width: 72px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 54px 24px 32px; } .actionRow { flex-wrap: wrap; } }
+@media (max-width: 1050px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .registrationGrid { grid-template-columns: 38% 62%; } .largeWave { gap: 4px; } }
+@media (max-width: 760px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .voiceGrid, .registrationGrid { grid-template-columns: 1fr; } .registrationVisual { display: none; } .registrationContent { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) max-content; gap: 6px; } .cardAudio { min-width: 0; } .wave { min-width: 72px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 36px 24px 32px; } .actionRow { flex-wrap: wrap; } }
