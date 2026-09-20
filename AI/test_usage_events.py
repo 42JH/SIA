@@ -393,6 +393,118 @@ def test_stale_inference_or_session_renewal_emits_nothing():
             assert not events(link)
 
 
+def test_explicit_end_discards_old_results_and_queue_but_allows_new_wake():
+    with assistant(profile=None) as (brain, link, clock):
+        waiting, release = threading.Event(), threading.Event()
+        sent = []
+
+        def send(message):
+            sent.append(message)
+            if message["type"] == "wakeword_detected":
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 456,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+            return True
+
+        link._send = send
+        link.call.reset_mock()
+
+        def delayed_result():
+            waiting.set()
+            assert release.wait(2)
+            brain._execute(command("open_app"), None, t_utter=10.0, generation=0)
+
+        old = threading.Thread(target=delayed_result)
+        old.start()
+        assert waiting.wait(1)
+        brain.submit(AUDIO, None, None, t_utter=11.0)  # 종료 전에 큐에서 기다리던 발화
+        brain._execute(command("end_session"), None, t_utter=11.5, generation=0)
+        assert brain._audio_generation == 1 and not brain.queue
+
+        # 종료 전 개시 응답이 늦게 와도 세션 상태를 되살리지 않는다.
+        link._on_event(json.dumps({"type": "session_state", "data": {
+            "state": "ACTIVE", "sessionId": 999,
+            "deadlineMs": int((time.time() + 30) * 1000)}}))
+        assert link.be_session_id is None and link.session_until_mono == 0.0
+        assert any(m["type"] == "session_end" and m["data"]["sessionId"] == 999 for m in sent)
+
+        release.set()
+        old.join(2)
+        assert not old.is_alive()
+        assert not any(m["type"] == "wakeword_detected" for m in sent)
+        link.call.assert_not_called()
+
+        clock.now = 13.0
+        assert link.wake_detected(generation=1)  # 종료 후 새 단독 호출어
+        assert link.be_session_id == 456
+        brain._execute(command("open_app"), None, t_utter=13.0, generation=1)
+        assert any(m["type"] == "wakeword_detected" for m in sent)
+        assert any(c.args[0] == "app.launch" for c in link.call.call_args_list)
+
+
+def test_explicit_end_serializes_with_inflight_renewal():
+    link = new_link()
+    link.connected = True
+    entered, release, stopping, stopped = (threading.Event() for _ in range(4))
+    sent = []
+
+    def send(message):
+        sent.append(message)
+        if message["type"] == "wakeword_detected":
+            entered.set()
+            assert release.wait(2)
+        return True
+
+    link._send = send
+    renewing = threading.Thread(target=lambda: link.renew(opening=True, generation=0))
+
+    def stop():
+        stopping.set()
+        link.end(generation=0)
+        stopped.set()
+
+    ending = threading.Thread(target=stop)
+    renewing.start()
+    assert entered.wait(1)
+    ending.start()
+    assert stopping.wait(1)
+    release.set()
+    assert stopped.wait(1)
+
+    link._on_event(json.dumps({"type": "session_state", "data": {
+        "state": "ACTIVE", "sessionId": 777,
+        "deadlineMs": int((time.time() + 30) * 1000)}}))
+    renewing.join(1)
+    ending.join(1)
+    assert not renewing.is_alive() and not ending.is_alive()
+    assert link.be_session_id is None and link.session_until_mono == 0.0
+    assert [m["type"] for m in sent] == ["wakeword_detected", "session_end"]
+    assert sent[-1]["data"]["sessionId"] == 777
+
+
+def test_natural_expiry_still_allows_inflight_command_to_reopen():
+    with assistant(profile=None) as (brain, link, clock):
+        sent = []
+
+        def send(message):
+            sent.append(message)
+            if message["type"] == "wakeword_detected":
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 456,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+            return True
+
+        link._send = send
+        link.call.reset_mock()
+        link._on_event(json.dumps({"type": "session_state", "data": {
+            "state": "PASSIVE", "reason": "EXPIRED"}}))
+        assert link.session_until_mono == clock.now
+
+        brain._execute(command("open_app"), None, t_utter=10.0, generation=0)
+        assert any(m["type"] == "wakeword_detected" for m in sent)
+        assert any(c.args[0] == "app.launch" for c in link.call.call_args_list)
+
+
 def test_eval_capture_does_not_break_utterance():
     """EVAL_CAPTURE=1(골든셋 수집) 로 켜도 발화가 정상 처리돼야 한다.
 

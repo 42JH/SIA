@@ -130,6 +130,8 @@ class AgentLink:
         self.session_until_mono = 0.0   # BE 세션 마감(모노토닉 환산) — brain 게이트용
         self.be_session_id = None
         self._session_condition = threading.Condition()
+        self._session_end_generation = -1
+        self._accept_session_active = True
         self.calib = None               # CalibSession 또는 None (assistant가 주입)
         self._events = deque(maxlen=256)
         self._event_lock = threading.Lock()
@@ -211,9 +213,14 @@ class AgentLink:
         if t == "session_state":
             with self._session_condition:
                 if d.get("state") == "ACTIVE" and d.get("deadlineMs"):
-                    remaining = d["deadlineMs"] / 1000.0 - time.time()
-                    self.session_until_mono = time.monotonic() + max(0.0, remaining)
-                    self.be_session_id = d.get("sessionId")
+                    # 명시 종료 뒤 늦게 온 이전 개시 응답은 로컬 세션을 되살리지 않는다.
+                    if self._accept_session_active:
+                        remaining = d["deadlineMs"] / 1000.0 - time.time()
+                        self.session_until_mono = time.monotonic() + max(0.0, remaining)
+                        self.be_session_id = d.get("sessionId")
+                    elif d.get("sessionId"):
+                        self._send({"type": "session_end", "data": {
+                            "sessionId": d["sessionId"], "reason": "STOPPED"}})
                 elif d.get("reason") == "EXPIRED":
                     # 자연 만료 — 마감을 지금으로 당긴다(이미 지났으면 그대로). 서버와 로컬 벽시계가 어긋나도
                     # 그만큼 더 열려 있지 않는다. 0 으로 지우면 진행 중인 명령까지 "세션 밖"이 되어 버려진다 —
@@ -345,36 +352,50 @@ class AgentLink:
             return False
 
     # --- brain 이 부르는 API (모두 best-effort — 예외는 폴백으로 흡수) ---
-    def wake_detected(self):
+    def wake_detected(self, generation=None):
         """호출어 감지 → BE. FE 'listening' 중계 + 활성 세션 없으면 개시(openOnWakeword).
         활성 세션 중 재수신은 BE 가 무시하므로 LLM 뒤 폴백 발신과 겹쳐도 무해."""
-        return self._send({"type": "wakeword_detected", "data": {}})
+        with self._session_condition:
+            if generation is not None and generation <= self._session_end_generation:
+                return False
+            self._accept_session_active = True
+            return self._send({"type": "wakeword_detected", "data": {}})
 
     def voice_rejected(self):
         """화자 게이트 거부 → BE. BE 가 FE 에 voice_rejected{message} 로 중계(문구는 BE 소유).
         판정할 만큼 유성이 긴 발화에서만 부른다 — 짧은 호출어 거부에서 쏘면 본인 호출마다 문구가 뜬다."""
         self._send({"type": "voice_rejected", "data": {}})
 
-    def renew(self, opening):
+    def renew(self, opening, generation=None):
         """유효 명령 판정 후에만. opening=True 면 세션 개시, 아니면 연장(MCP session.extend).
         마감시각은 BE 의 session_state push 로 갱신된다.
         WS session_renew 는 쓰지 않는다 — 같은 동작인 MCP session.extend 하나로 통일했다(프로토콜 §2)."""
-        if opening:
-            # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
-            # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
-            if self.wake_detected():
-                with self._session_condition:
+        with self._session_condition:
+            if generation is not None and generation <= self._session_end_generation:
+                return None
+            if opening:
+                # 호출어 경로는 wakeword_detected 만. session_open{trigger} 은 활성 세션을 WATCHDOG 으로 죽이고
+                # 새로 발급하므로 호출어마다 보내면 세션이 매번 교체된다(프로토콜.md: "호출어 경로에서는 보내지 않는다").
+                if self.wake_detected(generation=generation):
                     self._session_condition.wait_for(
-                        lambda: self.be_session_id is not None, timeout=1.0)
-        else:
-            self.call("session.extend")
-        return self.be_session_id
+                        lambda: (self.be_session_id is not None
+                                 or (generation is not None and generation <= self._session_end_generation)),
+                        timeout=1.0)
+            else:
+                self.call("session.extend")
+            return self.be_session_id
 
-    def end(self):
-        if self.be_session_id:
-            self._send({"type": "session_end",
-                        "data": {"sessionId": self.be_session_id, "reason": "STOPPED"}})
-        self.session_until_mono = 0.0
+    def end(self, generation=None):
+        with self._session_condition:
+            if generation is not None:
+                self._session_end_generation = max(self._session_end_generation, generation)
+            self._accept_session_active = False
+            if self.be_session_id:
+                self._send({"type": "session_end",
+                            "data": {"sessionId": self.be_session_id, "reason": "STOPPED"}})
+            self.session_until_mono = 0.0
+            self.be_session_id = None
+            self._session_condition.notify_all()
 
     def notice(self, message):
         self._send({"type": "notice", "data": {"message": message}})
