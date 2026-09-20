@@ -361,6 +361,16 @@ class AgentLink:
             self._accept_session_active = True
             return self._send({"type": "wakeword_detected", "data": {}})
 
+    def wait_session(self, generation=None, timeout=1.0):
+        """호출어 뒤 ACTIVE 통지를 제한 시간만 기다린다."""
+        with self._session_condition:
+            self._session_condition.wait_for(
+                lambda: (self.be_session_id is not None
+                         or not self.connected
+                         or (generation is not None and generation <= self._session_end_generation)),
+                timeout=timeout)
+            return self.be_session_id
+
     def voice_rejected(self):
         """화자 게이트 거부 → BE. BE 가 FE 에 voice_rejected{message} 로 중계(문구는 BE 소유).
         판정할 만큼 유성이 긴 발화에서만 부른다 — 짧은 호출어 거부에서 쏘면 본인 호출마다 문구가 뜬다."""

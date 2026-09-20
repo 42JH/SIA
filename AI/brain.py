@@ -47,6 +47,7 @@ SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠
 Pending = collections.namedtuple(  # 확인 대기 — 자리 인덱스로 읽던 6튜플을 이름으로 바꿨다
     "Pending", "q kind expire target completed asked_at generation")
 MAX_INFLIGHT = 4          # 동시에 처리할 발화 수 상한 — 몰릴 때 LLM 왕복이 무제한으로 늘지 않게
+WAKE_FOLLOW_AUTH_WAIT_S = 3.0  # 분리된 후속 발화가 앞 호출어 인증을 기다리는 상한
 CONFIRM_TIMEOUT_S = 10.0  # 파괴적 동작 확인 대기 시간 — **FE 표시와 같은 값이어야 한다**.
 # FE 는 확인창 카운트다운을 10초로 고정하고 우리가 보내는 timeoutSec 을 보지 않는다
 # (notificationStore.js CONFIRM_TIMEOUT_SEC, Tauri overlay/index.html 도 같은 값).
@@ -843,6 +844,7 @@ class Brain(threading.Thread):
         self._audio_lock = threading.RLock()
         self._audio_generation = 0
         self._audio_since = 0.0
+        self._wake_attempt = None  # 최근 호출어 후보의 인증 완료 Event와 결과
         self.busy = 0
         self._pending = None  # (확인 질문, 종류, 만료 시각, 대상, 원래 명령의 완료 통계, 질문 시각)
         self._client = None
@@ -1030,10 +1032,12 @@ class Brain(threading.Thread):
         끝날 때는 세션이 닫혀 있을 수 있는데, 그걸 '세션 밖'으로 버리면 안 된다 (worker 의 in_session 과 같은 기준)."""
         return t < self._session_until()
 
-    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, wake_live=None):
+    def submit(self, audio_i16, full_img, crop_img, t_utter=None, target_hwnd=0, wake_live=None,
+               wake_follow_at=None, wake_fallback=False):
         """t_utter = 발화 시작 시각, target_hwnd = 그 순간의 포커스 창, dom = 브라우저
         컨텍스트(크롬 확장 실측, 없으면 None), wake_live = 상시 추론이 이 조각에서 잡은 (점수, 앞을
-        잘랐는지) 또는 None — 로그 기록용. 세션·확인 만료 판정과 창 조작 대상은
+        잘랐는지) 또는 None — 로그 기록용, wake_fallback = 상시 추론 없이 발화 단위 인증만 쓰는 경로.
+        세션·확인 만료 판정과 창 조작 대상은
         처리 시점이 아니라 '말한 시점' 기준 — 큐 대기 + API 지연 사이에 상태가 바뀌므로."""
         # 버리는 발화는 사유를 남긴다 — 시동어 점수만 찍히고 아무 줄도 없는 재현(271)을 여기서 가른다.
         if self.paused:
@@ -1044,8 +1048,29 @@ class Brain(threading.Thread):
             if t_utter < self._audio_since:
                 print("[발화 무시] 입력 장치 교체 전 발화")
                 return
+            wake_attempt = None
+            if wake_follow_at is not None and not self.session_open_at(t_utter):
+                if wake_live is not None:
+                    wake_attempt = {"at": wake_follow_at, "owner": t_utter,
+                                    "done": threading.Event(), "ok": False,
+                                    "retry": False, "parent": None}
+                elif (getattr(self, "_wake_attempt", None)
+                      and self._wake_attempt["at"] == wake_follow_at):
+                    wake_attempt = {"at": wake_follow_at, "owner": t_utter,
+                                    "done": threading.Event(), "ok": False,
+                                    "retry": False, "parent": self._wake_attempt}
+                if wake_attempt is not None:
+                    self._wake_attempt = wake_attempt
+            elif wake_fallback and not self.session_open_at(t_utter):
+                parent = getattr(self, "_wake_attempt", None)
+                if parent is None or not 0 <= t_utter - parent["at"] <= WAKE_FOLLOW_AUTH_WAIT_S:
+                    parent = None
+                wake_attempt = {"at": parent["at"] if parent else t_utter, "owner": t_utter,
+                                "done": threading.Event(), "ok": False,
+                                "retry": False, "parent": parent}
+                self._wake_attempt = wake_attempt
             self.queue.append((audio_i16, full_img, crop_img,
-                               t_utter, target_hwnd, wake_live, time.monotonic()))  # 마지막 = 세그먼트 도착 시각(지연 계측 기준)
+                               t_utter, target_hwnd, wake_live, time.monotonic(), wake_attempt))  # 마지막 = 연결할 호출어 후보
 
     def reset_audio(self):
         """입력이 바뀌면 대기 발화·화면 캡처·확인 대기를 폐기한다."""
@@ -1053,6 +1078,13 @@ class Brain(threading.Thread):
             self._audio_generation += 1
             self._audio_since = time.monotonic()
             self.queue.clear()
+            wake_attempt = getattr(self, "_wake_attempt", None)
+            while wake_attempt:
+                wake_attempt["ok"] = False
+                wake_attempt["retry"] = False
+                wake_attempt["done"].set()
+                wake_attempt = wake_attempt["parent"]
+            self._wake_attempt = None
             self._pending = None
             # 진행 중인 추론은 이전 누적기를 쓴다 — 그 조각이 새 입력에 섞이지 않게 교체한다.
             self._accum = SpeakerAccum()
@@ -1250,7 +1282,7 @@ class Brain(threading.Thread):
             with self._audio_lock:
                 if not self.queue:
                     continue
-                audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv = self.queue.pop(0)
+                audio, full_img, crop_img, t_utter, hwnd, wake_live, t_recv, wake_attempt = self.queue.pop(0)
                 live_score, live_cut = wake_live or (None, False)  # 상시 추론 점수 / 조각 앞 절단 여부
                 # 제스처 등록이 시작되는 순간에는 submit() 이전에 들어와 있던 발화가
                 # 큐에 남아 있을 수 있다. 소비 단계에서도 한 번 더 버려야 등록 중
@@ -1261,7 +1293,7 @@ class Brain(threading.Thread):
                 generation, accum = self._audio_generation, self._accum
                 profile = self.speaker.snapshot() if self.speaker is not None else None
             self._start(audio, full_img, crop_img, t_utter, hwnd, t_recv,
-                        live_score, live_cut, generation, accum, profile)
+                        live_score, live_cut, generation, accum, profile, wake_attempt)
 
     def _start(self, *args):
         """발화 하나에 스레드 하나. 큐에 줄 세우면 1단 적중(0.42 s)이 앞선 LLM 왕복
@@ -1304,15 +1336,41 @@ class Brain(threading.Thread):
         return True
 
     def _handle(self, audio, full_img, crop_img, t_utter, hwnd, t_recv,
-                live_score, live_cut, generation, accum, profile):
+                live_score, live_cut, generation, accum, profile, wake_attempt=None):
         """발화 하나를 게이트→판정→실행까지 끝낸다. 스레드 하나가 통째로 맡는다 —
         self 에 중간 결과를 얹지 않는 이유가 이것이다(_be_call · lat 참고)."""
         dom = None  # 2단(LLM) 경로에서 BE 로 가져온다. 아래 로그가 먼저 읽으므로 여기서 정의한다.
         with self._audio_lock:
             self.busy += 1
+        wake_owner = wake_attempt is not None and wake_attempt["owner"] == t_utter
+        wake_parent = wake_attempt["parent"] if wake_attempt is not None else None
+        retried_parent = False
+
+        def finish_wake(ok, retry=False):
+            if wake_owner and not wake_attempt["done"].is_set():
+                wake_attempt["ok"] = ok
+                wake_attempt["retry"] = retry
+                wake_attempt["done"].set()
+
         t_proc = time.monotonic()  # 처리 시작(발화 종료 + VAD 꼬리 이후) — 지연 분해 기준점
         t_end = t_recv - VAD_TAIL_S  # 발화가 끝난 시각(추정): VAD 는 꼬리 침묵 뒤에 세그먼트를 넘긴다. 이전 식(t_utter+길이)은 프리롤 2초만큼 늦게 잡았다
         try:
+            if wake_parent is not None and not self.session_open_at(t_utter):
+                if not wake_parent["done"].wait(WAKE_FOLLOW_AUTH_WAIT_S):
+                    return
+                with self._audio_lock:
+                    fresh = generation == self._audio_generation
+                if not fresh or self.paused:
+                    return
+                if wake_parent["ok"]:
+                    be = self._be()
+                    if not be or be.wait_session(generation=generation) is None:
+                        return
+                    finish_wake(True)
+                elif wake_parent["retry"]:
+                    retried_parent = True
+                else:
+                    return
             if EVAL_CAPTURE:
                 pq = (self._pending_for(t_utter) or Pending(None, *[None] * 6)).q
                 capture_case(audio, full_img, crop_img, t_utter < self._session_until(), pq, dom)
@@ -1362,6 +1420,7 @@ class Brain(threading.Thread):
             # 하면서 기준만 달라, 본인의 짧은 명령이 호출어 게이트에서 먼저 죽었다.
             if in_session:
                 wake_ok, wake_why = True, "in_session"
+                finish_wake(True)
             else:
                 wake_ok, wake_why, wake_sim, seg_t0, seg_t1, wake_word_lp, wake_word_last = \
                     self._wake_ok(audio, i_max, lead, oww_pass, wake_score)
@@ -1372,8 +1431,17 @@ class Brain(threading.Thread):
                         stale = generation != self._audio_generation
                     if stale:
                         return
-                    if be and not WAKE_SHADOW and not in_session:
-                        be.wake_detected(generation=generation)  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
+                    sent = bool(be and not WAKE_SHADOW and not in_session
+                                and be.wake_detected(generation=generation))
+                    finish_wake(sent)
+                    if retried_parent:
+                        if not sent or be.wait_session(generation=generation) is None:
+                            return
+                        with self._audio_lock:
+                            if generation != self._audio_generation:
+                                return
+                        if self.paused:
+                            return
                     if only_wake:
                         # BE 가 없으면 세션도 없다 — 실행이 BE 전용이라 로컬 세션은 의미가 없다.
                         self._say("네, 듣고 있어요")
@@ -1383,16 +1451,18 @@ class Brain(threading.Thread):
                                       wake_live=live_score, wake_cut=live_cut,
                                       seg_t0=seg_t0, seg_t1=seg_t1, session=in_session, **audio_stats(audio))
                         return  # 호출만 했다 — 문장 화자인증·조각 누적·STT·Gemini를 부르지 않는다
-                elif not WAKE_SHADOW:
-                    print(f"[호출어 아님 무시] {wake_why}"
-                          + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
-                    log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
-                                  wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
-                                  wake_word_lp=wake_word_lp, wake_word_last=wake_word_last,
-                                  wake_live=live_score, wake_cut=live_cut,
-                                  seg_t0=seg_t0, seg_t1=seg_t1,
-                                  session=in_session, **audio_stats(audio))
-                    return
+                else:
+                    finish_wake(False, retry=True)
+                    if not WAKE_SHADOW:
+                        print(f"[호출어 아님 무시] {wake_why}"
+                              + (f" (시동어 점수 {wake_score:.2f})" if wake_score is not None else ""))
+                        log_utterance(gate="wake_reject", wake_why=wake_why, wake_score=wake_score,
+                                      wake_sim=round(wake_sim, 3) if wake_sim is not None else None,
+                                      wake_word_lp=wake_word_lp, wake_word_last=wake_word_last,
+                                      wake_live=live_score, wake_cut=live_cut,
+                                      seg_t0=seg_t0, seg_t1=seg_t1,
+                                      session=in_session, **audio_stats(audio))
+                        return
             # 화자 게이트: 등록된 목소리가 아니면 Gemini를 부르기도 전에 버린다
             # (유튜브·타인 발화 차단 + API 비용 절약). 미등록이면 항상 통과.
             sim, crop_t0, crop_t1 = None, None, None
@@ -1531,6 +1601,7 @@ class Brain(threading.Thread):
             self._say(friendly_error(e))
             print(f"[brain 오류] {e}")
         finally:
+            finish_wake(False)
             self._retire(generation)
 
     def _retire(self, generation):
