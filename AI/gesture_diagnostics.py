@@ -33,10 +33,13 @@ def save_registration_diagnostic(registration, outcome, reason):
                 verifications.append(hand.get('pose_verification', 'model'))
                 world = hand.get('world_landmarks')
                 world_points.append(world if world is not None else np.full((21, 3), np.nan))
-    metadata = dict(version=3, created_at=datetime.now(timezone.utc).isoformat(),
+    metadata = dict(version=4, created_at=datetime.now(timezone.utc).isoformat(),
                     tempId=registration.temp_id, motion=registration.motion,
+                    replace_gesture_name=getattr(registration, 'replace_gesture_name', None),
                     outcome=outcome, reason=reason, threshold=registration.COLLISION_DIST,
                     comparisons=registration.comparison_diagnostics,
+                    take_consistency=getattr(registration, 'take_consistency_diagnostic', None),
+                    builtin_collisions=getattr(registration, 'builtin_collision_diagnostics', []),
                     builtin_hits=registration.builtin_hits,
                     builtin_uncertain=getattr(registration, 'builtin_uncertain', 0),
                     sample_count=len(registration.samples))

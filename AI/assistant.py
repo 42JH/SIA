@@ -36,6 +36,7 @@ import cv2
 from gesture_be import (
     GesturePreview,
     GestureRegistration,
+    RegistrationGestureRearm,
     GestureTemplateCache,
     registration_blocks_gesture_execution,
     sync_gesture_store,
@@ -197,6 +198,7 @@ def main():
                     help="양손 벌리기/모으기 후보만 표시하고 기존 제스처 액션은 차단")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--gesture-trace", help="진단용 제스처 프레임·처리 시간 JSONL 경로")
     args = ap.parse_args()
 
     if args.check:
@@ -349,6 +351,7 @@ def main():
     # 연결 전에는 위의 로컬 템플릿을 그대로 사용한다.
     remote_cache = GestureTemplateCache(data_path(".gesture_cache"), data_path("be_custom_gestures.npz"))
     registration = GestureRegistration(link, remote_cache, active_custom) if link else None
+    registration_gesture_rearm = RegistrationGestureRearm()
     gesture_preview = GesturePreview(link) if link else None
     from voice_bridge import MicPreview
 
@@ -414,11 +417,20 @@ def main():
     dynamic_hud_event = ""
     dynamic_hud_until = 0.0
     was_gesture_active = False
+    # None이면 "연결됨"이거나 아직 끊긴 적이 없다는 뜻 — 끊긴 순간의 시각을 담아
+    # 얼마나 오래 끊겨 있었는지를 판단한다(아래 REGISTRATION_DISCONNECT_GRACE_S).
+    link_disconnected_since = None if (link and link.connected) else time.monotonic()
+    # 와이파이가 잠깐 흔들리며 연결이 수 초 안에 끊겼다 바로 재접속되는 경우까지
+    # 촬영 중이던 등록을 매번 취소시키면 안 된다 — 이 시간 이상 계속 끊겨 있을
+    # 때만 "복구 불가능한 끊김"으로 보고 정리한다.
+    REGISTRATION_DISCONNECT_GRACE_S = 3.0
     loop_fps = 0.0
     loop_frames = 0
     loop_fps_started = time.monotonic()
     hand_infer_ms = 0.0
     seq = -1
+    gesture_trace = open(args.gesture_trace, 'w', encoding='utf-8') if args.gesture_trace else None
+    gesture_trace_last = None
     print("시아 모드 시작. 화면을 보며 말하면 됩니다. 미리보기 창에서 ESC = 종료.")
     try:
         while True:
@@ -433,6 +445,26 @@ def main():
             if link and link.calib and link.calib.active:
                 link.calib.feed_frame(frame)  # 보정 중이면 시선 특징 수집(비활성 시 no-op)
             now = time.monotonic()
+            link_connected = bool(link and link.connected)
+            if link_connected:
+                link_disconnected_since = None
+            else:
+                if link_disconnected_since is None:
+                    link_disconnected_since = now
+                elif (registration and registration.active
+                      and now - link_disconnected_since >= REGISTRATION_DISCONNECT_GRACE_S):
+                    # 등록 중 BE 연결이 끊긴 채로 grace 이상 지속되면 reg_finish 가 영영
+                    # 도착하지 않아 registration.active가 계속 True로 남는다 —
+                    # registration_blocks_gesture_execution이 이를 보고 있어서 음성 명령까지
+                    # 포함해 전체 실행이 조용히 멈춘 채 굳어버린다(재연결을 기다려도 BE는 이미
+                    # 끝난 등록으로 알고 있어 reg_finish를 다시 보내지 않는다). finish()는 phase가
+                    # WAIT_FINISH가 아니면 스스로 "조기 종료" 사유로 거부 처리하고 reset()까지
+                    # 끝내므로 여기서 호출만 해주면 된다. 이 시점엔 링크가 끊겨 있어 reg_rejected
+                    # 전송은 best-effort로 조용히 실패한다.
+                    print(f"[제스처 등록] BE 연결이 {REGISTRATION_DISCONNECT_GRACE_S:g}초 넘게 끊김 — "
+                          "진행 중이던 등록을 정리합니다")
+                    registration.finish()
+                    link_disconnected_since = now  # 같은 끊김 동안 매 프레임 재호출하지 않는다
             loop_frames += 1
             fps_elapsed = now - loop_fps_started
             if fps_elapsed >= 0.5:
@@ -686,15 +718,19 @@ def main():
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
             registration_active = registration_blocks_gesture_execution(registration)
+            gesture_execution_blocked = registration_gesture_rearm.update(
+                registration_active, bool(hands), now)
             # 카메라 프리뷰·제스처 실행이 등록 중 멈추는 것과 같은 이유로, 음성 명령도
             # 등록 중엔 큐에 안 쌓는다 — 등록 중 우연히 호출어 비슷한 소리가 잡혀
             # 세션이 열리고 엉뚱한 명령이 실행되는 걸 막는다. 촬영 시작 전 카메라
             # 미리보기 단계도 같은 화면 흐름이라 같이 막는다.
-            brain.paused = registration_active or bool(gesture_preview and gesture_preview.active)
+            brain.paused = (gesture_execution_blocked
+                            or bool(gesture_preview and gesture_preview.active))
             # 양손 정적/동적 커스텀 — 시작 궤적이 일치하는 후보가 있으면(claimed)
             # 완성 전까지 내장·1손 정적 제스처 실행을 보류한다(정지한 손모양만으로는
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
-            if gesture_active and not registration_active:
+            gesture_trace_tick = time.perf_counter() if gesture_trace else None
+            if gesture_active and not gesture_execution_blocked:
                 custom_pose, custom_motion_event, custom_claimed, custom_dist = active_custom.update(
                     ([] if two_hand_context and len(hands) == 1 else hands),
                     now, disabled_gestures, pose_landmarks=pose_landmarks
@@ -711,6 +747,20 @@ def main():
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
                 custom_score = None
+            if gesture_trace:
+                gesture_trace.write(json.dumps(dict(
+                    at=time.time(), t=now,
+                    frame_gap_ms=(now-gesture_trace_last)*1000 if gesture_trace_last is not None else None,
+                    custom_processing_ms=(time.perf_counter()-gesture_trace_tick)*1000,
+                    active=gesture_active, blocked=gesture_execution_blocked,
+                    two_hand_context=two_hand_context,
+                    hands=[dict(landmarks=np.asarray(h['landmarks']).tolist(),
+                                handedness=h.get('handedness'), gesture=h.get('gesture'),
+                                size=float(h.get('size', 0))) for h in hands],
+                    custom_event=custom_motion_event, custom_claimed=bool(custom_claimed)),
+                    ensure_ascii=False) + '\n')
+                gesture_trace.flush()
+                gesture_trace_last = now
             if two_hand_context:
                 # 손 2개가 잡힌 프레임에서는 hands[0] 하나만 본 1손 판정(내장·
                 # 레거시 1손 커스텀 모두 포함)을 아예 신뢰하지 않는다 — 2손 커스텀
@@ -726,7 +776,7 @@ def main():
             # 양손 벌리기/모으기는 우선 터미널 후보만 출력한다. 실측 후에만
             # 전체화면 같은 실제 액션 매핑을 추가한다.
             two_hand_event = two_hand_motion.update(
-                hands if gesture_active and not registration_active else [], now
+                hands if gesture_active and not gesture_execution_blocked else [], now
             )
             if two_hand_event:
                 hud_feedback = two_hand_event
@@ -757,7 +807,7 @@ def main():
                 # 등록 중이거나 커스텀 동작 후보를 추적 중이면(claimed, 그리고 이
                 # 이름이 그 후보가 아니면) false를 넣어 홀드 상태도 해제한다.
                 # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
-                allowed = static_execution_allowed(gesture_active, registration_active,
+                allowed = static_execution_allowed(gesture_active, gesture_execution_blocked,
                                                     custom_claimed, custom_pose, name)
                 fired = gesture_toggles[name].update(allowed and gesture == name, now)
                 if fired and name not in disabled_gestures and not args.two_hand_preview:
@@ -783,7 +833,7 @@ def main():
                                          context=context,
                                          accuracy=raw_score,
                                          payload={"source": "static", "occurredAt": int(time.time() * 1000)})
-            if gesture_active and not registration_active:
+            if gesture_active and not gesture_execution_blocked:
                 # 스와이프/스크롤/핀치볼륨의 이동량 기준은 화면 비율로 정해져
                 # 있어 카메라와의 거리에 따라 민감도가 달라진다 — 넣기 전에
                 # 실제 손 크기 기준으로 스케일링해 거리 영향을 지운다.
@@ -834,7 +884,7 @@ def main():
             if dynamic_event:
                 dynamic_hud_event = dynamic_event
                 dynamic_hud_until = now + 0.9
-            if (ENABLE_DYNAMIC_GESTURES and not registration_active and dynamic_event
+            if (ENABLE_DYNAMIC_GESTURES and not gesture_execution_blocked and dynamic_event
                     and dynamic_event not in disabled_gestures
                     and not args.two_hand_preview):
                 be_target = be_gesture_target(
@@ -879,6 +929,8 @@ def main():
             # 이 창은 개발용이었다. 무엇이 인식됐는지는 콘솔 로그로 본다.
             # ESC 종료도 같이 사라졌다 — 콘솔에서 Ctrl+C 로 끝낸다(같은 finally 를 탄다).
     finally:
+        if gesture_trace:
+            gesture_trace.close()
         camera.running = False
         voice.stop()
         voice.join(timeout=4)

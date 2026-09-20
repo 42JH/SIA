@@ -313,6 +313,27 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("손이 너무 작게", payload["reason"])
 
+    def test_hand_size_allows_less_than_seventy_percent_small_frames(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.takes = 1
+        reg.take_frames = {1: [
+            (i * .05, [self.sized_hand(size=.03 if i < 17 else .10)])
+            for i in range(25)
+        ]}
+
+        reg._validate_hand_size(1)
+
+    def test_hand_size_rejects_seventy_percent_small_frames(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.takes = 1
+        reg.take_frames = {1: [
+            (i * .05, [self.sized_hand(size=.03 if i < 18 else .10)])
+            for i in range(25)
+        ]}
+
+        with self.assertRaisesRegex(ValueError, "손이 너무 작게"):
+            reg._validate_hand_size(1)
+
     @staticmethod
     def tilted_hand(x, angle_deg, side="Left"):
         """스와이프처럼 팔을 휘두르며 손목이 자연스럽게 기우는 상황을 흉내낸다."""
@@ -1146,7 +1167,7 @@ class MotionTests(unittest.TestCase):
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
         observed = [hand()]
 
-        for now in (100.1, 100.21, 100.32):
+        for now in (100.1, 100.23, 100.36):
             state = reg.tick(frame, observed, now=now)
             self.assertEqual(state["phase"], "COUNTDOWN")
 

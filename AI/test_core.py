@@ -51,14 +51,22 @@ def test_registration_timing_contract():
     reg.start({"tempId": "t1", "takes": 12, "countdownSec": 15.0,
                "takeDurationSec": 12.5}, now=10.0)
     assert (reg.takes, reg.countdown_s, reg.take_s) == (12, 15.0, 12.5)
-    assert reg.tick(None, None, now=24.99)["phase"] == "COUNTDOWN"
     frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    assert reg.tick(frame, None, now=24.99)["phase"] == "COUNTDOWN"
     assert reg.tick(frame, None, now=25.0)["phase"] == "RECORDING"
 
-    reg.finish()  # RECORDING 중 reg_finish → 품질 검사 대신 명시적 중단
-    assert not reg.active
-    assert link.sent[-1][0] == "reg_rejected"
-    assert "촬영이 완료되기 전" in link.sent[-1][1]["reason"]
+    reg.finish_for("t1")
+    assert reg.active
+    assert reg.finish_requested
+    assert not any(event == "reg_rejected" for event, _ in link.sent)
+
+    finished = []
+    reg.finish = lambda: finished.append(True)
+    reg.take = reg.takes
+    reg.phase_at = 25.0
+    reg.take_s = 0.1
+    reg.tick(frame, None, now=25.1)
+    assert finished == [True]
 
 
 def test_calibrator():

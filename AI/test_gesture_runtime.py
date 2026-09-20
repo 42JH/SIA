@@ -10,10 +10,20 @@ from urllib.error import URLError
 import numpy as np
 
 from hands import GestureEngine, MotionHandTracker, SwipeDetector, SCREEN_SWIPE_CONFIG
-from gesture_be import GestureRegistration, GestureTemplateCache, sync_gesture_store
+from gesture_be import (GestureRegistration, GestureTemplateCache,
+                        RegistrationGestureRearm, sync_gesture_store)
 
 
 class GestureRuntimeTests(unittest.TestCase):
+    def test_registration_requires_hand_release_before_gesture_execution(self):
+        gate = RegistrationGestureRearm(release_hold_s=0.25)
+        self.assertTrue(gate.update(True, True, 1.0))
+        self.assertTrue(gate.update(False, True, 1.1))
+        self.assertTrue(gate.update(False, False, 1.2))
+        self.assertTrue(gate.update(False, False, 1.44))
+        self.assertFalse(gate.update(False, False, 1.45))
+        self.assertFalse(gate.update(False, True, 1.6))
+
     def test_swipe_requires_return_or_stillness(self):
         for sign in (1, -1):
             with self.subTest(sign=sign):
@@ -85,6 +95,10 @@ class GestureRuntimeTests(unittest.TestCase):
             reg.finish_for(temp_id)
         reg.finish.assert_not_called()
         self.assertTrue(reg.active)
+        reg.finish_for('current')
+        reg.finish.assert_not_called()
+        self.assertTrue(reg.finish_requested)
+        reg.phase = 'WAIT_FINISH'
         reg.finish_for('current')
         reg.finish.assert_called_once()
 

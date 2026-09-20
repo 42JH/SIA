@@ -22,14 +22,20 @@ class FrameBoundsTests(unittest.TestCase):
         self.registration({1}, n=4)._validate_frame_bounds()
         self.registration({30})._validate_frame_bounds()
 
-    def test_continuous_exit_rejected_below_ratio_limit(self):
-        reg = self.registration(set(range(10, 17)))  # 연속 0.2초, 7/61 프레임
+    def test_brief_continuous_exit_is_allowed(self):
+        self.registration(set(range(10, 17)))._validate_frame_bounds()
+
+    def test_sustained_continuous_exit_is_rejected(self):
+        reg = self.registration(set(range(10, 26)))
         with self.assertRaisesRegex(ValueError, '1회차.*손목과 손끝이 화면 안'):
             reg._validate_frame_bounds()
 
-    def test_intermittent_exit_rejected_by_ratio(self):
+    def test_twenty_percent_intermittent_exit_is_allowed(self):
+        self.registration(set(range(0, 60, 5)), n=60)._validate_frame_bounds()
+
+    def test_frequent_intermittent_exit_is_rejected_by_ratio(self):
         with self.assertRaises(ValueError):
-            self.registration(set(range(0, 60, 5)), n=60)._validate_frame_bounds()
+            self.registration(set(range(0, 60, 2)), n=60)._validate_frame_bounds()
 
     def test_rare_disjoint_spikes_allowed(self):
         self.registration({5, 20, 40})._validate_frame_bounds()

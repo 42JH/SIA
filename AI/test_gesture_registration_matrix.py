@@ -55,20 +55,24 @@ class RegistrationMatrixTests(unittest.TestCase):
                     self.check_bounds(reg, rejected)
 
     def test_ratio_threshold(self):
-        for count in (19, 20, 21):
+        for count in (34, 35, 36):
             with self.subTest(outside=count):
                 # 연속 이탈 없이 비율 조건만 검사한다.
-                self.check_bounds(self.bounds(np.arange(100)/50, set(range(0, count*3, 3))), count >= 20)
+                self.check_bounds(self.bounds(np.arange(100)/50, set(range(0, count*2, 2))), count >= 35)
 
     def test_duration_threshold(self):
-        for duration, rejected in ((0.199, False), (0.2, True), (0.201, True)):
+        for duration, rejected in ((0.499, False), (0.5, True), (0.501, True)):
             with self.subTest(duration=duration):
-                times = [0, duration] + list(np.linspace(duration+0.03, 2, 28))
-                self.check_bounds(self.bounds(times, {0, 1}), rejected)
+                clipped_times = list(np.arange(0, duration, 0.05))
+                if not clipped_times or clipped_times[-1] < duration:
+                    clipped_times.append(duration)
+                times = clipped_times + list(np.linspace(duration+0.03, 2, 28))
+                self.check_bounds(
+                    self.bounds(times, set(range(len(clipped_times)))), rejected)
 
     def test_missing_frames_do_not_dilute_ratio(self):
         # 검출 10프레임 중 2회 이탈, 나머지 미검출 90프레임으로 희석하지 않는다.
-        self.check_bounds(self.bounds(np.arange(100)/50, {0, 9}, set(range(10, 100))), True)
+        self.check_bounds(self.bounds(np.arange(100)/50, {0, 9}, set(range(10, 100))), False)
 
     def test_failure_identifies_take(self):
         reg = self.bounds(np.arange(30)/30, set())

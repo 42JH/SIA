@@ -62,7 +62,7 @@ class TakeConsistencyTests(unittest.TestCase):
                     self.assertIn('회차', data['reason'])
                     self.assertTrue(
                         any(text in data['reason'] for text in
-                            ('서로 다릅니다', '움직임 차이가 큽니다', '동작 방향이 반대입니다')),
+                            ('서로 다릅니다', '다른 회차와 다릅니다', '움직임 차이가 큽니다', '동작 방향이 반대입니다')),
                         data['reason'],
                     )
                     self.assertNotIn('similarTo', data)
