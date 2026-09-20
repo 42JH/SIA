@@ -2100,7 +2100,7 @@ def test_user_data_survives_a_frozen_restart():
     onefile 은 매 실행마다 새 임시 폴더에 풀고 끝나면 지운다. `Path(__file__).parent` 는
     그 폴더를 가리키므로, 온보딩이 쓰는 wake/speaker/calib npz 를 거기 두면 앱을 끌 때
     같이 사라진다 — 켤 때마다 온보딩을 다시 해야 한다. 자산은 거기서 읽는 게 맞고(번들이
-    거기로 풀린다) 사용자 데이터만 %APPDATA%\SIA 로 나간다.
+    거기로 풀린다) 사용자 데이터만 %APPDATA% 아래로 나간다.
     """
     import io as _io
     import sys

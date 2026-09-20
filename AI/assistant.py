@@ -888,13 +888,10 @@ def main():
                 overlay.set_state("ACTIVE", suffix)
             else:
                 overlay.set_state("IDLE")
-            # 듣는 중엔 응시 링으로 "여길 보고 있다고 인식 중" 피드백
-            if worker and (listening or brain.busy):
-                cur = buffer.current(now)
-                if cur:
-                    overlay.show_ring(*cur)
-            else:
-                overlay.hide_ring()
+            # 응시 링은 걷어냈다 — 화면 표시는 FE 몫이고, 이 링은 pyautogui 화면 캡처에
+            # 그대로 찍혀 Gemini 로 가는 크롭 **정중앙**에 들어갔다(크롭 중심과 링 위치가
+            # 같은 시선 신호라서). 관측 장치가 관측 대상을 바꾸고 있었다.
+            # 명령 해석용 시선은 buffer.fixation_at() 으로 따로 가므로 영향 없다.
 
             # --- HUD 미리보기 ---
             hud = cv2.resize(frame, (480, 270))
