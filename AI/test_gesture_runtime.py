@@ -10,10 +10,20 @@ from urllib.error import URLError
 import numpy as np
 
 from hands import GestureEngine, MotionHandTracker, SwipeDetector, SCREEN_SWIPE_CONFIG
-from gesture_be import GestureRegistration, GestureTemplateCache, sync_gesture_store
+from gesture_be import (GestureRegistration, GestureTemplateCache,
+                        RegistrationGestureRearm, sync_gesture_store)
 
 
 class GestureRuntimeTests(unittest.TestCase):
+    def test_registration_requires_hand_release_before_gesture_execution(self):
+        gate = RegistrationGestureRearm(release_hold_s=0.25)
+        self.assertTrue(gate.update(True, True, 1.0))
+        self.assertTrue(gate.update(False, True, 1.1))
+        self.assertTrue(gate.update(False, False, 1.2))
+        self.assertTrue(gate.update(False, False, 1.44))
+        self.assertFalse(gate.update(False, False, 1.45))
+        self.assertFalse(gate.update(False, True, 1.6))
+
     def test_swipe_requires_return_or_stillness(self):
         for sign in (1, -1):
             with self.subTest(sign=sign):
@@ -86,6 +96,10 @@ class GestureRuntimeTests(unittest.TestCase):
         reg.finish.assert_not_called()
         self.assertTrue(reg.active)
         reg.finish_for('current')
+        reg.finish.assert_not_called()
+        self.assertTrue(reg.finish_requested)
+        reg.phase = 'WAIT_FINISH'
+        reg.finish_for('current')
         reg.finish.assert_called_once()
 
     @staticmethod
@@ -135,18 +149,18 @@ class GestureRuntimeTests(unittest.TestCase):
             for no_actions in (True, False):
                 if True:  # be_gesture_only 는 제거됐다 — 이 분기는 no_actions 만 본다
                     with self.subTest(line=branch.lineno, no_actions=no_actions):
-                        link, overlay, foreground = Mock(), Mock(), Mock(return_value=123)
-                        env = dict(link=link, overlay=overlay, foreground_hwnd=foreground,
+                        link, said, foreground = Mock(), Mock(), Mock(return_value=123)
+                        env = dict(link=link, foreground_hwnd=foreground,
                                    args=SimpleNamespace(no_actions=no_actions),
                                    be_target=('Victory', 'youtube'), name='Victory',
                                    dynamic_event='Screen_Next', context='youtube', now=10,
                                    usage_events=[], uuid=Mock(), custom_score=None,
-                                   time=SimpleNamespace(time=lambda: 10), print=Mock())
+                                   time=SimpleNamespace(time=lambda: 10), print=said)
                         exec(code, env)
                         if no_actions:
                             link.send_event.assert_not_called()
                             foreground.assert_not_called()
-                            overlay.toast.assert_called_once()
+                            said.assert_called_once()   # 화면이 아니라 콘솔로 (-333)
                         else:
                             link.send_event.assert_called_once_with(
                                 'gesture_exec', {'name': 'Victory', 'hwnd': 123, 'context': 'youtube'})

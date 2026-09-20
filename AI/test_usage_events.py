@@ -53,14 +53,15 @@ def assistant(profile=PROFILE, act=True):
             if tool == "explorer.items" else (True, {})))
         speaker = None if profile is None else SimpleNamespace(
             snapshot=Mock(return_value=profile), verify=Mock(return_value=(True, 0.87654)))
-        brain = Brain(Mock(), act=act, speaker=speaker, link=link)
+        brain = Brain(act=act, speaker=speaker, link=link)
         # 호출어 개인화 판정은 test_wake_template 이 따로 본다. 여기서는 "시동어 후보가 나오면 통과"로 고정해
         # 통계·실행 경로만 남긴다 — 실제 판정은 STT·임베딩 모델을 부른다.
-        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (
-            (True, "ok", 0.9, 0.0, 1.4) if oww_pass else (False, "no_candidate", None, None, None))
+        brain._wake_ok = lambda audio, i_max, lead, oww_pass, head_top=None: (
+            (True, "ok", 0.9, 0.0, 1.4, None, None) if oww_pass
+            else (False, "no_candidate", None, None, None, None, None))
         brain._client = object()
         brain.router = Router("시아야")
-        brain.router.transcribe = Mock(return_value=("시아야 계산기 열어줘", 0.5))
+        brain.router.transcribe = Mock(return_value=("시아야 계산기 열어줘", 0.5, -0.3))
         brain._ask = Mock(return_value=command("answer"))
         clock = SimpleNamespace(now=12.0)
         with patch("brain.time.monotonic", side_effect=lambda: clock.now):
@@ -77,7 +78,7 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
         pass
 
     if result is not None:
-        brain.router.transcribe.return_value = ("시아야 이거 해줘", 0.5)  # 실제 라우터에서 LLM 승격
+        brain.router.transcribe.return_value = ("시아야 이거 해줘", 0.5, -0.3)  # 실제 라우터에서 LLM 승격
         brain._ask.return_value = result
     brain.submit(audio, None, None, t_utter=started, target_hwnd=hwnd)
     with patch("brain.time.sleep", side_effect=Done):
@@ -87,7 +88,19 @@ def utter(brain, result=None, audio=AUDIO, started=10.0, hwnd=0, fails=False):
             pass
     assert brain._drain(5), "발화 처리 스레드가 끝나지 않았다"   # run() 은 띄우기만 한다(-320)
     assert brain.busy == 0
-    assert fails == any(str(call.args[0]).startswith("오류:") for call in brain.overlay.toast.call_args_list)
+    assert fails == any(str(m).startswith("오류:") for m in brain.said)
+
+
+def start_queued(brain):
+    """큐의 발화를 모두 스레드로 띄우고 무한 run 루프만 끊는다."""
+    class Done(BaseException):
+        pass
+
+    with patch("brain.time.sleep", side_effect=Done):
+        try:
+            brain.run()
+        except Done:
+            pass
 
 
 def events(link, kind=None):
@@ -125,6 +138,330 @@ def test_opening_session_waits_for_be_session_id():
     assert link.renew(opening=True) == 321
     worker.join(1)
     assert not worker.is_alive()
+
+
+def test_split_wake_follow_waits_for_auth_and_active_once():
+    with assistant() as (brain, link, _):
+        link.be_session_id, link.session_until_mono = None, 0.0
+        auth_entered, release_auth, waiting_active = (threading.Event() for _ in range(3))
+        first = np.full(16000, 1, dtype=np.int16)
+        follow = np.full(16000, 2, dtype=np.int16)
+
+        def authenticate(*_):
+            auth_entered.set()
+            assert release_auth.wait(2)
+            return True, "ok", 0.9, 0.0, 1.4, None, None
+
+        real_wait = link.wait_session
+
+        def wait_session(*args, **kwargs):
+            waiting_active.set()
+            return real_wait(*args, **kwargs)
+
+        brain.wake = SimpleNamespace(reset=lambda: None)
+        brain._wake_ok = Mock(side_effect=authenticate)
+        brain._try_router = Mock(return_value=command("media", media_key="mute", wake_heard=False))
+        link.wait_session = Mock(side_effect=wait_session)
+        link.call.reset_mock()
+
+        with patch("brain.wake_score_of", return_value=(0.99, 1, 0)), \
+                patch("brain.wake_only", side_effect=lambda audio, *_: audio[0] == 1):
+            brain.submit(first, None, None, t_utter=10.0, wake_live=(0.99, False), wake_follow_at=10.5)
+            brain.submit(follow, None, None, t_utter=11.0, wake_follow_at=10.5)
+            start_queued(brain)
+            try:
+                assert auth_entered.wait(1)
+                brain.speaker.verify.assert_not_called()
+                release_auth.set()
+                assert waiting_active.wait(1)
+                assert not any(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list)
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 321,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+                assert brain._drain(3)
+            finally:
+                release_auth.set()
+
+        assert brain._wake_ok.call_count == 1
+        brain.speaker.verify.assert_called_once()
+        assert sum(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list) == 1
+
+
+def test_rejected_prior_wake_does_not_reject_follow_own_wake():
+    with assistant() as (brain, link, _):
+        link.be_session_id, link.session_until_mono = None, 0.0
+        first_entered, release_first, second_checked, wake_sent = (threading.Event() for _ in range(4))
+        first = np.full(16000, 1, dtype=np.int16)
+        follow = np.full(16000, 2, dtype=np.int16)
+
+        def authenticate(audio, *_):
+            if audio[0] == 1:
+                first_entered.set()
+                assert release_first.wait(2)
+                return False, "speaker_mismatch", 0.3, 0.0, 1.4, None, None
+            second_checked.set()
+            return True, "ok", 0.9, 0.0, 1.4, None, None
+
+        def send(message):
+            if message["type"] == "wakeword_detected":
+                wake_sent.set()
+            return True
+
+        brain.wake = SimpleNamespace(reset=lambda: None)
+        brain._wake_ok = Mock(side_effect=authenticate)
+        brain._try_router = Mock(return_value=command("media", media_key="mute", wake_heard=False))
+        link._send = Mock(side_effect=send)
+        link.call.reset_mock()
+
+        with patch("brain.wake_score_of", return_value=(0.99, 1, 0)), \
+                patch("brain.wake_only", side_effect=lambda audio, *_: audio[0] == 1):
+            brain.submit(first, None, None, t_utter=10.0,
+                         wake_live=(0.99, False), wake_follow_at=10.5)
+            # debounce 때문에 새 wake_live는 없지만 발화 단위 인증은 자체 호출어를 찾는다.
+            brain.submit(follow, None, None, t_utter=11.0, wake_follow_at=10.5)
+            start_queued(brain)
+            try:
+                assert first_entered.wait(1)
+                release_first.set()
+                assert second_checked.wait(1) and wake_sent.wait(1)
+                brain._try_router.assert_not_called()
+                assert not any(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list)
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 654,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+                assert brain._drain(3)
+            finally:
+                release_first.set()
+
+        assert brain._wake_ok.call_count == 2
+        brain._try_router.assert_called_once()
+        brain.speaker.verify.assert_called_once()
+        assert sum(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list) == 1
+
+
+def test_no_stream_split_wake_waits_for_auth_and_active():
+    with assistant() as (brain, link, _):
+        link.be_session_id, link.session_until_mono = None, 0.0
+        auth_entered, release_auth, waiting_active = (threading.Event() for _ in range(3))
+        first = np.full(16000, 1, dtype=np.int16)
+        follow = np.full(16000, 2, dtype=np.int16)
+
+        def authenticate(*_):
+            auth_entered.set()
+            assert release_auth.wait(2)
+            return True, "ok", 0.9, 0.0, 1.4, None, None
+
+        real_wait = link.wait_session
+
+        def wait_session(*args, **kwargs):
+            waiting_active.set()
+            return real_wait(*args, **kwargs)
+
+        brain.wake = SimpleNamespace(reset=lambda: None)
+        brain._wake_ok = Mock(side_effect=authenticate)
+        brain._try_router = Mock(return_value=command("media", media_key="mute", wake_heard=False))
+        link.wait_session = Mock(side_effect=wait_session)
+        link.call.reset_mock()
+
+        with patch("brain.wake_score_of", return_value=(0.99, 1, 0)), \
+                patch("brain.wake_only", side_effect=lambda audio, *_: audio[0] == 1):
+            brain.submit(first, None, None, t_utter=10.0, wake_fallback=True)
+            brain.submit(follow, None, None, t_utter=11.0, wake_fallback=True)
+            start_queued(brain)
+            try:
+                assert auth_entered.wait(1)
+                release_auth.set()
+                assert waiting_active.wait(1)
+                assert not any(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list)
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 987,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+                assert brain._drain(3)
+            finally:
+                release_auth.set()
+
+        assert brain._wake_ok.call_count == 1
+        brain.speaker.verify.assert_called_once()
+        assert sum(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list) == 1
+
+
+def test_three_part_wake_chain_retargets_new_candidate():
+    for fallback in (False, True):
+        for second_ok in (True, False):
+            with assistant() as (brain, link, _):
+                link.be_session_id, link.session_until_mono = None, 0.0
+                a_entered, release_a = threading.Event(), threading.Event()
+                b_entered, release_b = threading.Event(), threading.Event()
+                c_checked, wake_sent = threading.Event(), threading.Event()
+                a = np.full(16000, 1, dtype=np.int16)
+                b = np.full(16000, 2, dtype=np.int16)
+                c = np.full(16000, 3, dtype=np.int16)
+
+                def authenticate(audio, *_):
+                    if audio[0] == 1:
+                        a_entered.set()
+                        assert release_a.wait(2)
+                        return False, "no_candidate", None, None, None, None, None
+                    if audio[0] == 2:
+                        b_entered.set()
+                        assert release_b.wait(2)
+                        return second_ok, "ok" if second_ok else "no_candidate", 0.9, 0.0, 1.4, None, None
+                    c_checked.set()
+                    return False, "no_candidate", None, None, None, None, None
+
+                def send(message):
+                    if message["type"] == "wakeword_detected":
+                        wake_sent.set()
+                    return True
+
+                def score(_model, audio):
+                    return (0.99, 1, 0) if audio[0] != 3 else (0.0, None, 0)
+
+                brain.wake = SimpleNamespace(reset=lambda: None)
+                brain._wake_ok = Mock(side_effect=authenticate)
+                brain._try_router = Mock(return_value=command("media", media_key="mute", wake_heard=False))
+                link._send = Mock(side_effect=send)
+                link.call.reset_mock()
+
+                with patch("brain.wake_score_of", side_effect=score), \
+                        patch("brain.wake_only", side_effect=lambda audio, *_: audio[0] == 2):
+                    if fallback:
+                        brain.submit(a, None, None, t_utter=10.0, wake_fallback=True)
+                        brain.submit(b, None, None, t_utter=11.0, wake_fallback=True)
+                        brain.submit(c, None, None, t_utter=12.0, wake_fallback=True)
+                    else:
+                        brain.submit(a, None, None, t_utter=10.0,
+                                     wake_live=(0.6, False), wake_follow_at=10.5)
+                        brain.submit(b, None, None, t_utter=11.0, wake_follow_at=10.5)
+                        brain.submit(c, None, None, t_utter=12.0, wake_follow_at=10.5)
+                    start_queued(brain)
+                    try:
+                        assert a_entered.wait(1)
+                        release_a.set()
+                        assert b_entered.wait(1)
+                        assert not c_checked.is_set()
+                        assert not any(call.args[0] == "media.mute_toggle"
+                                       for call in link.call.call_args_list)
+                        release_b.set()
+                        if second_ok:
+                            assert wake_sent.wait(1)
+                            assert not c_checked.is_set()
+                            assert not any(call.args[0] == "media.mute_toggle"
+                                           for call in link.call.call_args_list)
+                            link._on_event(json.dumps({"type": "session_state", "data": {
+                                "state": "ACTIVE", "sessionId": 741,
+                                "deadlineMs": int((time.time() + 30) * 1000)}}))
+                        else:
+                            assert c_checked.wait(1)
+                        assert brain._drain(3)
+                    finally:
+                        release_a.set()
+                        release_b.set()
+
+                calls = sum(call.args[0] == "media.mute_toggle" for call in link.call.call_args_list)
+                assert calls == int(second_ok), (fallback, second_ok, calls)
+                assert brain._wake_ok.call_count == (2 if second_ok else 3)
+
+
+def test_split_wake_follow_failure_paths_do_not_execute():
+    for failure in ("wake_reject", "disconnect", "missing_active", "explicit_end",
+                    "input_change", "old_candidate"):
+        with assistant() as (brain, link, _):
+            link.be_session_id, link.session_until_mono = None, 0.0
+            auth_entered, release_auth = threading.Event(), threading.Event()
+            wait_entered, release_wait = threading.Event(), threading.Event()
+            first = np.full(16000, 1, dtype=np.int16)
+            follow = np.full(16000, 2, dtype=np.int16)
+
+            def authenticate(audio, *_):
+                auth_entered.set()
+                assert release_auth.wait(2)
+                ok = failure != "wake_reject" and not (failure == "old_candidate" and audio[0] == 2)
+                return ok, "ok" if ok else "speaker_mismatch", 0.9, 0.0, 1.4, None, None
+
+            def send(_):
+                if failure == "disconnect":
+                    link.connected = False
+                    return False
+                return True
+
+            def wait_session(*_, **__):
+                wait_entered.set()
+                assert release_wait.wait(2)
+                return None
+
+            brain.wake = SimpleNamespace(reset=lambda: None)
+            brain._wake_ok = Mock(side_effect=authenticate)
+            brain._try_router = Mock(return_value=command("media", media_key="mute", wake_heard=False))
+            link._send = Mock(side_effect=send)
+            if failure in ("missing_active", "explicit_end", "input_change"):
+                link.wait_session = Mock(side_effect=wait_session)
+            link.call.reset_mock()
+
+            with patch("brain.wake_score_of", return_value=(0.99, 1, 0)), \
+                    patch("brain.wake_only", side_effect=lambda audio, *_: audio[0] == 1):
+                if failure in ("explicit_end", "input_change"):
+                    brain.submit(first, None, None, t_utter=10.0, wake_fallback=True)
+                    brain.submit(follow, None, None, t_utter=11.0, wake_fallback=True)
+                else:
+                    brain.submit(first, None, None, t_utter=10.0,
+                                 wake_live=(0.99, False), wake_follow_at=10.5)
+                    brain.submit(follow, None, None, t_utter=11.0,
+                                 wake_follow_at=7.0 if failure == "old_candidate" else 10.5)
+                start_queued(brain)
+                try:
+                    assert auth_entered.wait(1)
+                    release_auth.set()
+                    if failure in ("missing_active", "explicit_end", "input_change"):
+                        assert wait_entered.wait(1)
+                        if failure == "explicit_end":
+                            brain._execute(command("end_session"), None, t_utter=11.5, generation=0)
+                        elif failure == "input_change":
+                            brain.reset_audio()
+                        release_wait.set()
+                    assert brain._drain(3)
+                finally:
+                    release_auth.set()
+                    release_wait.set()
+
+            brain.speaker.verify.assert_not_called()
+            assert not any(c.args[0] == "media.mute_toggle" for c in link.call.call_args_list), failure
+            if failure == "wake_reject":
+                assert brain._wake_ok.call_count == 2  # 뒤 발화도 자체 호출어를 검사한 뒤 거절
+
+
+def test_active_session_follow_does_not_serialize_commands():
+    with assistant() as (brain, link, _):
+        slow_entered, release_slow, fast_done = (threading.Event() for _ in range(3))
+        slow = np.full(16000, 1, dtype=np.int16)
+        fast = np.full(16000, 2, dtype=np.int16)
+        link.wait_session = Mock(wraps=link.wait_session)
+
+        def route(audio, *_args, **_kwargs):
+            if audio[0] == 1:
+                slow_entered.set()
+                assert release_slow.wait(2)
+            return {"audio_is_speech": True, "is_command": True, "wake_heard": False,
+                    "action": "test", "fast": audio[0] == 2}
+
+        def execute(result, *_args, **_kwargs):
+            if result["fast"]:
+                fast_done.set()
+
+        brain.wake = None
+        brain._try_router = route
+        brain._execute = execute
+        brain.submit(slow, None, None, t_utter=10.0,
+                     wake_live=(0.99, False), wake_follow_at=10.5)
+        brain.submit(fast, None, None, t_utter=11.0, wake_follow_at=10.5)
+        start_queued(brain)
+        try:
+            assert slow_entered.wait(1)
+            assert fast_done.wait(1), "활성 세션의 뒤 명령이 앞 명령 완료를 기다렸다"
+        finally:
+            release_slow.set()
+        assert brain._drain(3)
+        link.wait_session.assert_not_called()
 
 
 def test_concurrent_enqueue_during_flush():
@@ -392,6 +729,118 @@ def test_stale_inference_or_session_renewal_emits_nothing():
             assert not events(link)
 
 
+def test_explicit_end_discards_old_results_and_queue_but_allows_new_wake():
+    with assistant(profile=None) as (brain, link, clock):
+        waiting, release = threading.Event(), threading.Event()
+        sent = []
+
+        def send(message):
+            sent.append(message)
+            if message["type"] == "wakeword_detected":
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 456,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+            return True
+
+        link._send = send
+        link.call.reset_mock()
+
+        def delayed_result():
+            waiting.set()
+            assert release.wait(2)
+            brain._execute(command("open_app"), None, t_utter=10.0, generation=0)
+
+        old = threading.Thread(target=delayed_result)
+        old.start()
+        assert waiting.wait(1)
+        brain.submit(AUDIO, None, None, t_utter=11.0)  # 종료 전에 큐에서 기다리던 발화
+        brain._execute(command("end_session"), None, t_utter=11.5, generation=0)
+        assert brain._audio_generation == 1 and not brain.queue
+
+        # 종료 전 개시 응답이 늦게 와도 세션 상태를 되살리지 않는다.
+        link._on_event(json.dumps({"type": "session_state", "data": {
+            "state": "ACTIVE", "sessionId": 999,
+            "deadlineMs": int((time.time() + 30) * 1000)}}))
+        assert link.be_session_id is None and link.session_until_mono == 0.0
+        assert any(m["type"] == "session_end" and m["data"]["sessionId"] == 999 for m in sent)
+
+        release.set()
+        old.join(2)
+        assert not old.is_alive()
+        assert not any(m["type"] == "wakeword_detected" for m in sent)
+        link.call.assert_not_called()
+
+        clock.now = 13.0
+        assert link.wake_detected(generation=1)  # 종료 후 새 단독 호출어
+        assert link.be_session_id == 456
+        brain._execute(command("open_app"), None, t_utter=13.0, generation=1)
+        assert any(m["type"] == "wakeword_detected" for m in sent)
+        assert any(c.args[0] == "app.launch" for c in link.call.call_args_list)
+
+
+def test_explicit_end_serializes_with_inflight_renewal():
+    link = new_link()
+    link.connected = True
+    entered, release, stopping, stopped = (threading.Event() for _ in range(4))
+    sent = []
+
+    def send(message):
+        sent.append(message)
+        if message["type"] == "wakeword_detected":
+            entered.set()
+            assert release.wait(2)
+        return True
+
+    link._send = send
+    renewing = threading.Thread(target=lambda: link.renew(opening=True, generation=0))
+
+    def stop():
+        stopping.set()
+        link.end(generation=0)
+        stopped.set()
+
+    ending = threading.Thread(target=stop)
+    renewing.start()
+    assert entered.wait(1)
+    ending.start()
+    assert stopping.wait(1)
+    release.set()
+    assert stopped.wait(1)
+
+    link._on_event(json.dumps({"type": "session_state", "data": {
+        "state": "ACTIVE", "sessionId": 777,
+        "deadlineMs": int((time.time() + 30) * 1000)}}))
+    renewing.join(1)
+    ending.join(1)
+    assert not renewing.is_alive() and not ending.is_alive()
+    assert link.be_session_id is None and link.session_until_mono == 0.0
+    assert [m["type"] for m in sent] == ["wakeword_detected", "session_end"]
+    assert sent[-1]["data"]["sessionId"] == 777
+
+
+def test_natural_expiry_still_allows_inflight_command_to_reopen():
+    with assistant(profile=None) as (brain, link, clock):
+        sent = []
+
+        def send(message):
+            sent.append(message)
+            if message["type"] == "wakeword_detected":
+                link._on_event(json.dumps({"type": "session_state", "data": {
+                    "state": "ACTIVE", "sessionId": 456,
+                    "deadlineMs": int((time.time() + 30) * 1000)}}))
+            return True
+
+        link._send = send
+        link.call.reset_mock()
+        link._on_event(json.dumps({"type": "session_state", "data": {
+            "state": "PASSIVE", "reason": "EXPIRED"}}))
+        assert link.session_until_mono == clock.now
+
+        brain._execute(command("open_app"), None, t_utter=10.0, generation=0)
+        assert any(m["type"] == "wakeword_detected" for m in sent)
+        assert any(c.args[0] == "app.launch" for c in link.call.call_args_list)
+
+
 def test_eval_capture_does_not_break_utterance():
     """EVAL_CAPTURE=1(골든셋 수집) 로 켜도 발화가 정상 처리돼야 한다.
 
@@ -404,8 +853,7 @@ def test_eval_capture_does_not_break_utterance():
             utter(brain_obj, command("open_app", app="calc"))
         cap.assert_called_once()
         assert cap.call_args.args[5] is None  # dom 은 이 시점에 아직 없다(2단에서 BE 로 가져온다)
-        assert not any(str(c.args[0]).startswith("오류:")
-                       for c in brain_obj.overlay.toast.call_args_list)
+        assert not any(str(m).startswith("오류:") for m in brain_obj.said)
 
 
 def test_confirmation_records_original_task_only_after_approval():
@@ -454,7 +902,7 @@ def test_media_and_session_end_router_paths():
     for text, action, tool in (("시아야 음소거 해줘", "media", "media.mute_toggle"),
                                ("이제 그만", "end_session", None)):
         with assistant() as (brain, link, _):
-            brain.router.transcribe.return_value = (text, 0.5)
+            brain.router.transcribe.return_value = (text, 0.5, -0.3)
             utter(brain)
             assert len(events(link, "voice")) == 1
             assert events(link, "voice")[0]["accuracy"] == 1.0  # 1단 라우터 명령도 정확도에 든다
@@ -504,17 +952,17 @@ def test_unexecuted_actions_and_local_mode():
         link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
         utter(brain, command("web_search", query="실패"))
         # BE 가 이유를 말해 줬으면 그대로 전한다 — '연결 안 됨'으로 뭉뚱그리면 원인을 못 찾는다
-        assert brain.overlay.toast.call_args.args[0] == "'실패' 검색 — 검색 실패"
+        assert brain.said[-1] == "'실패' 검색 — 검색 실패"
         assert not events(link, "command")
         assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):
         brain.link = None
         # 세션은 BE 소유다(-320) — BE 가 없으면 세션도 없어 모든 발화가 호출어 게이트를 탄다.
         # 여기 주제는 "BE 없이도 answer 문구는 나간다" 이므로 게이트만 통과시킨다.
-        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
+        brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
         utter(brain, command("answer"))
         assert not events(link)
-        assert brain.overlay.toast.call_args.args[0] == "완료"
+        assert brain.said[-1] == "완료"
 
 
 def test_verified_utterance_keeps_enrolled_voice_sample():

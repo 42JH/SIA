@@ -60,7 +60,11 @@ class TakeConsistencyTests(unittest.TestCase):
                     event, data = link.sent[-1]
                     self.assertEqual(event, 'reg_rejected')
                     self.assertIn('회차', data['reason'])
-                    self.assertIn('서로 다릅니다', data['reason'])
+                    self.assertTrue(
+                        any(text in data['reason'] for text in
+                            ('서로 다릅니다', '다른 회차와 다릅니다', '움직임 차이가 큽니다', '동작 방향이 반대입니다')),
+                        data['reason'],
+                    )
                     self.assertNotIn('similarTo', data)
                     self.assertIsNone(link.payload)
 
@@ -70,11 +74,8 @@ class TakeConsistencyTests(unittest.TestCase):
         self.assertIn('3회차', link.sent[-1][1]['reason'])
         self.assertIsNone(link.payload)
 
-    def test_borderline_take_variance_rejected_with_safety_margin(self):
-        """회차 간 편차가 예전 임계값(실행 인식 기준과 동일)보다는 작지만 새
-        안전 여유(TAKE_CONSISTENCY_MARGIN) 기준으로는 넘는 경우, 등록 시점에
-        걸러야 한다 — 통과시키면 실제 재현이 조금만 달라져도 어느 회차와도
-        임계값 안에 못 들어와 실행 때 미인식으로 이어진다."""
+    def test_natural_dynamic_take_variance_is_allowed(self):
+        """실측 정상 반복 범위에 해당하는 약 0.20의 동적 편차는 허용한다."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             link = Link()
@@ -85,9 +86,8 @@ class TakeConsistencyTests(unittest.TestCase):
                 reg.start(dict(tempId='borderline', motion='DYNAMIC', takes=3), now=0)
                 for take in range(1, 4):
                     reg.take = take
-                    # take 3만 손모양 오프셋(0.05)을 더해, 회차 간 거리가 대략
-                    # 0.196 — 이전 임계값(0.22)보다는 작지만 새 임계값(0.132)은
-                    # 넘도록 보정했다(별도 스크립트로 사전 계산).
+                    # take 3만 손모양 오프셋(0.05)을 더하면 회차 간 거리가 약
+                    # 0.196이다. 기존 0.132에서는 정상 반복도 거부됐던 구간이다.
                     offset = 0.05 if take == 3 else 0.0
                     for phase in np.linspace(0, 1, 31):
                         h = dict(hand(0.3, 'Left', shape=0.12 * phase + offset), gesture=None)
@@ -95,9 +95,8 @@ class TakeConsistencyTests(unittest.TestCase):
                 reg.phase = 'WAIT_FINISH'
                 reg.finish()
             event, data = link.sent[-1]
-            self.assertEqual(event, 'reg_rejected', link.sent[-1])
-            self.assertIn('서로 다릅니다', data['reason'])
-            self.assertIsNone(link.payload)
+            self.assertEqual(event, 'reg_captured', link.sent[-1])
+            self.assertIsNotNone(link.payload)
 
     def test_hand_count_differs_between_takes(self):
         for motion in ('STATIC', 'DYNAMIC'):

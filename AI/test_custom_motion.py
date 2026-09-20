@@ -10,6 +10,7 @@ from custom_motion import (CustomGestureStore, distance, empty_templates,
                            encode_sequence, encode_world_sequence, normalize_arm_pose,
                            ordered_landmarks,
                            read_templates, static_execution_allowed, motion_direction_8,
+                           swipe_direction_8, motion_direction_difference,
                            motion_matching_distance,
                            world_matching_distance)
 from gesture_be import (GestureRegistration, GestureRegistrationRejected,
@@ -127,11 +128,86 @@ class MotionTests(unittest.TestCase):
             sequence = encode_sequence([0, 1], [[base], [base + [dx, dy]]])
             self.assertEqual(motion_direction_8(sequence, 1), expected)
 
+    def test_swipe_direction_uses_same_rule_for_all_eight_directions(self):
+        for expected, (dx, dy) in {
+            "RIGHT": (.2, 0), "DOWN_RIGHT": (.2, .2), "DOWN": (0, .2),
+            "DOWN_LEFT": (-.2, .2), "LEFT": (-.2, 0),
+            "UP_LEFT": (-.2, -.2), "UP": (0, -.2),
+            "UP_RIGHT": (.2, -.2),
+        }.items():
+            sequence = np.stack([
+                np.asarray(hand(0.3 + dx * t)["landmarks"] + [0, dy * t])[None, ...]
+                for t in np.linspace(0, 1, 24)
+            ])
+            self.assertEqual(swipe_direction_8(sequence, 1), expected)
+
+    def test_backtracking_motion_is_not_reduced_to_a_swipe_direction(self):
+        xs = np.r_[np.linspace(0.3, 0.55, 12), np.linspace(0.55, 0.42, 12)]
+        sequence = np.stack([
+            np.asarray(hand(x)["landmarks"])[None, ...] for x in xs
+        ])
+        self.assertIsNone(swipe_direction_8(sequence, 1))
+
     def test_adjacent_direction_templates_do_not_match(self):
         base = hand()["landmarks"]
         right = encode_sequence([0, 1], [[base], [base + [.2, 0]]])
         up_right = encode_sequence([0, 1], [[base], [base + [.2, -.2]]])
         self.assertTrue(np.isinf(motion_matching_distance(right, up_right, 1)))
+
+    def test_direction_sector_boundary_does_not_split_nearby_motions(self):
+        base = hand()["landmarks"]
+
+        def at(degrees):
+            angle = np.radians(degrees)
+            delta = np.array([np.cos(angle), np.sin(angle)]) * .2
+            return encode_sequence([0, 1], [[base], [base + delta]])
+
+        # 21 and 24 degrees fall in adjacent 8-way sectors but differ by only
+        # three degrees, so they must remain comparable.
+        self.assertNotEqual(motion_direction_8(at(21), 1), motion_direction_8(at(24), 1))
+        self.assertAlmostEqual(motion_direction_difference(at(21), at(24), 1), 3, places=3)
+        self.assertTrue(np.isfinite(motion_matching_distance(at(21), at(24), 1)))
+
+    def test_direction_tolerance_accepts_25_degrees_but_separates_45_and_90(self):
+        base = hand()["landmarks"]
+
+        def at(degrees):
+            angle = np.radians(degrees)
+            delta = np.array([np.cos(angle), np.sin(angle)]) * .2
+            return encode_sequence([0, 1], [[base], [base + delta]])
+
+        self.assertTrue(np.isfinite(motion_matching_distance(at(0), at(25), 1)))
+        self.assertTrue(np.isinf(motion_matching_distance(at(0), at(45), 1)))
+        self.assertTrue(np.isinf(motion_matching_distance(at(0), at(90), 1)))
+
+    def test_repeated_swipes_match_in_all_eight_directions(self):
+        base = hand()["landmarks"]
+
+        def swipe(dx, dy, travel):
+            frames = [[base + np.array([dx, dy]) * travel * t]
+                      for t in np.linspace(0, 1, 24)]
+            return encode_sequence(np.linspace(0, 1, 24), frames)
+
+        for dx, dy in ((1, 0), (1, 1), (0, 1), (-1, 1),
+                       (-1, 0), (-1, -1), (0, -1), (1, -1)):
+            with self.subTest(direction=(dx, dy)):
+                short = swipe(dx, dy, .20)
+                long = swipe(dx, dy, .35)
+                self.assertLess(motion_matching_distance(short, long, 1), .35)
+                self.assertTrue(np.isinf(
+                    motion_matching_distance(short, swipe(-dx, -dy, .20), 1)))
+
+    def test_same_swipe_path_does_not_hide_a_different_hand_shape(self):
+        def swipe(shape):
+            frames = []
+            for t in np.linspace(0, 1, 24):
+                points = hand(shape=shape)["landmarks"].copy()
+                points[:, 1] += .25 * t
+                frames.append([points])
+            return encode_sequence(np.linspace(0, 1, 24), frames)
+
+        self.assertLess(motion_matching_distance(swipe(0), swipe(.08), 1), .35)
+        self.assertGreater(motion_matching_distance(swipe(0), swipe(.20), 1), .35)
 
     def test_direction_timing_and_rearm(self):
         store = self.register("DYNAMIC", lambda t: [hand(0.3 + t * 0.2)])
@@ -236,6 +312,27 @@ class MotionTests(unittest.TestCase):
         event, payload = self.link.sent[-1]
         self.assertEqual(event, "reg_rejected", self.link.sent[-1])
         self.assertIn("손이 너무 작게", payload["reason"])
+
+    def test_hand_size_allows_less_than_seventy_percent_small_frames(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.takes = 1
+        reg.take_frames = {1: [
+            (i * .05, [self.sized_hand(size=.03 if i < 17 else .10)])
+            for i in range(25)
+        ]}
+
+        reg._validate_hand_size(1)
+
+    def test_hand_size_rejects_seventy_percent_small_frames(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.takes = 1
+        reg.take_frames = {1: [
+            (i * .05, [self.sized_hand(size=.03 if i < 18 else .10)])
+            for i in range(25)
+        ]}
+
+        with self.assertRaisesRegex(ValueError, "손이 너무 작게"):
+            reg._validate_hand_size(1)
 
     @staticmethod
     def tilted_hand(x, angle_deg, side="Left"):
@@ -403,6 +500,29 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(len(frames), 60)
         self.assertTrue(all(points.shape == (1, 21, 2) for _, points in frames))
         self.assertLess(float(frames[0][1][0, 0, 0]), 0.6)
+
+    def test_overlapping_small_phantom_is_not_counted_as_second_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="phantom", motion="DYNAMIC", takes=1,
+                       takeDurationSec=1, countdownSec=0), now=0)
+        for index in range(21):
+            x = 0.30 + index * 0.008
+            primary = self.sized_hand(x=x, side="Right", size=0.12)
+            phantom = self.sized_hand(x=x + 0.015, side="Left", size=0.045)
+            reg._collect([primary, phantom], index * 0.05)
+
+        self.assertEqual(set(reg.hand_counts), {1})
+        self.assertTrue(all(len(hands) == 1 for _, hands in reg.take_frames[1]))
+        self.assertEqual(reg._infer_hand_count(), 1)
+
+    def test_two_similarly_sized_overlapping_hands_are_preserved(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        left = self.sized_hand(x=0.40, side="Left", size=0.11)
+        right = self.sized_hand(x=0.44, side="Right", size=0.10)
+
+        filtered = reg._collapse_overlapping_phantom_hand([left, right])
+
+        self.assertEqual(len(filtered), 2)
 
     def test_one_hand_take_rejects_persistent_two_hand_capture(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
@@ -1047,7 +1167,7 @@ class MotionTests(unittest.TestCase):
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
         observed = [hand()]
 
-        for now in (100.1, 100.21, 100.32):
+        for now in (100.1, 100.23, 100.36):
             state = reg.tick(frame, observed, now=now)
             self.assertEqual(state["phase"], "COUNTDOWN")
 
@@ -1099,6 +1219,28 @@ class MotionTests(unittest.TestCase):
         reg.finish()
         self.assertEqual(self.link.sent[-1][0], "reg_rejected")
         self.assertEqual(self.link.sent[-1][1]["similarTo"], "existing")
+        self.assertIsNone(self.link.payload)
+
+    def test_duplicate_vertical_swipe_rejected_despite_distance_and_pose_variance(self):
+        def moving(t, travel, shape):
+            observed = hand(0.3, shape=shape)
+            observed["landmarks"][:, 1] += t * travel
+            return [observed]
+
+        store = self.register(
+            "DYNAMIC", lambda t: moving(t, 0.20, 0.0), name="down-swipe")
+        self.link.payload = None
+        reg = GestureRegistration(self.link, self.cache, store)
+        reg.start(dict(tempId="duplicate-down", motion="DYNAMIC", takes=3,
+                       takeDurationSec=1), now=0)
+        for take in range(1, 4):
+            reg.take = take
+            for t in np.linspace(0, 1, 21):
+                reg._collect(moving(t, 0.35, 0.08), take * 3 + t * 0.3)
+        reg.phase = "WAIT_FINISH"
+        reg.finish()
+        self.assertEqual(self.link.sent[-1][0], "reg_rejected", self.link.sent[-1])
+        self.assertEqual(self.link.sent[-1][1]["similarTo"], "down-swipe")
         self.assertIsNone(self.link.payload)
 
     def test_missing_entire_take_rejected(self):

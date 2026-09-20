@@ -325,11 +325,10 @@ def test_pending_audio_reset():
     brain._pending = Pending("old confirmation", "window_close", 1e9, 0, (0.0, {}), 0.0, 0)
     brain._accum = SpeakerAccum()
     old_accum = brain._accum
-    before = time.monotonic()
     brain.reset_audio()
     assert not brain.queue and brain._pending is None
     assert brain._accum is not old_accum and brain._audio_generation == 1
-    brain.submit(None, None, None, t_utter=before)
+    brain.submit(None, None, None, t_utter=brain._audio_since - 0.001)
     assert not brain.queue
     brain.submit(None, None, None)
     assert len(brain.queue) == 1
@@ -370,8 +369,8 @@ def test_inflight_audio_is_not_executed_after_switch():
         # 이 검사의 주제는 입력 전환이다 — 세션은 BE 소유가 됐으므로(-320) BE 대역 없이는
         # 세션이 없다. 호출어 판정에 걸리지 않게 게이트만 통과시킨다.
         brain._accum = SpeakerAccum()
-        brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
-        brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
+        brain.said = []
+        brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
         brain._try_router = lambda *_: None
         executed = []
         brain._execute = lambda *args: executed.append(args)
@@ -406,10 +405,10 @@ def test_slow_execution_does_not_block_audio():
     brain._pending = brain.speaker = brain.wake = brain.link = None
     brain.wake_template = None
     brain._accum = SpeakerAccum()
-    brain.overlay = SimpleNamespace(toast=lambda *a, **k: None, panel=lambda *a, **k: None)
+    brain.said = []
     # 세션은 BE 소유가 됐다(-320). BE 대역이 없으면 세션도 없어 모든 발화가 호출어 게이트를
     # 탄다 — 이 테스트의 관심사는 '입력이 바뀌면 진행 중 발화를 실행하지 않는다' 라 게이트는 통과시킨다.
-    brain._wake_ok = lambda audio, i_max, lead, oww_pass: (True, "ok", 0.9, 0.0, 1.4)
+    brain._wake_ok = lambda *a: (True, "ok", 0.9, 0.0, 1.4, None, None)
     brain._try_router = lambda *_: {"action": "test"}
     listener = VoiceListener(collections.deque(), on_reset=brain.reset_audio)
     started, release, completed = threading.Event(), threading.Event(), threading.Event()

@@ -56,6 +56,38 @@ def _dist(a, b):
     return math.hypot(a.x - b.x, a.y - b.y)
 
 
+def overlapping_two_hand_evidence(hands, pose_landmarks, visibility=0.35,
+                                  max_distance_palms=3.0):
+    """Detect two touching hands when Hands temporarily merges them into one.
+
+    Two normal hand detections are definitive.  With one hand detection, both
+    Pose wrists must be visible and close to that hand's palm centre.  This
+    prevents a resting second arm elsewhere in the frame from suppressing a
+    genuine one-hand gesture.
+    """
+    hands = hands or []
+    if len(hands) >= 2:
+        return True
+    if len(hands) != 1 or pose_landmarks is None or len(pose_landmarks) <= 16:
+        return False
+    wrist_pose = []
+    for index in (15, 16):
+        landmark = pose_landmarks[index]
+        if len(landmark) < 3 or float(landmark[2]) < visibility:
+            return False
+        wrist_pose.append(np.asarray(landmark[:2], dtype=np.float32))
+    points = np.asarray(hands[0].get("landmarks"), dtype=np.float32)
+    if points.shape != (21, 2) or not np.isfinite(points).all():
+        return False
+    palm_size = float(np.linalg.norm(points[9] - points[0]))
+    if palm_size <= 1e-6:
+        return False
+    palm_centre = points[[0, 5, 9, 13, 17]].mean(axis=0)
+    limit = max(0.10, palm_size * max_distance_palms)
+    return all(float(np.linalg.norm(wrist - palm_centre)) <= limit
+               for wrist in wrist_pose)
+
+
 # Screen_Next/Prev는 실측 도구와 실제 assistant가 반드시 같은 값을 사용한다.
 SCREEN_SWIPE_CONFIG = {
     "dist": 0.12,

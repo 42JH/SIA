@@ -63,8 +63,10 @@ class VadSegmenter:
         # 바닥 창은 고정 배열 + 헤드 인덱스 원형 버퍼 — deque 는 np.percentile 때마다 파이썬 객체 1333개를 배열로 복사한다 (블록당 0.087 → ~0.04 ms).
         # float64 유지: float32 면 백분위 보간이 마지막 비트에서 달라져 임계 경계 블록의 판정이 뒤집힐 수 있다.
         self._ring = np.zeros(max(self.noise_win, 1))
-        self._ring_i = 0   # 다음에 쓸 칸 (끝에 닿으면 0 — 가장 오래된 값을 덮어쓴다)
-        self._ring_n = 0   # 채워진 개수 (첫 40 s 동안만 창보다 작다)
+        # 시작 직후 말해도 첫 음성이 바닥의 전부가 되지 않게 프리롤 길이만큼 무음을 먼저 둔다.
+        # 실제 무음이 들어오면 원형 버퍼가 이 값을 순서대로 덮어쓴다.
+        self._ring_n = min(int(preroll_s / self.block_dur), self.noise_win)
+        self._ring_i = self._ring_n % max(self.noise_win, 1)
         self.start_blocks = start_blocks
         self.end_blocks = int(end_silence_s / self.block_dur)
         self.preroll_n = int(preroll_s / self.block_dur)
@@ -96,23 +98,27 @@ class VadSegmenter:
         """지금 열려 있는(또는 마지막) 조각의 시작 시각 — 호출어를 잡은 시각과 견주는 쪽이 쓴다."""
         return self._onset_t
 
+    def _update_noise(self, rms):
+        self._ring[self._ring_i] = rms
+        self._ring_i = (self._ring_i + 1) % self.noise_win
+        self._ring_n = min(self._ring_n + 1, self.noise_win)
+        self.noise = float(np.percentile(self._ring[:self._ring_n], self.noise_pct))
+
     def feed(self, block_i16, t):
         """블록 하나 투입. 반환: None | ("onset", t) | ("utter", t_onset, audio)."""
         rms = float(np.sqrt(np.mean(block_i16.astype(np.float32) ** 2)))
         self.last_rms = rms
-        if self.noise_win:
-            self._ring[self._ring_i] = rms
-            self._ring_i = (self._ring_i + 1) % self.noise_win
-            self._ring_n = min(self._ring_n + 1, self.noise_win)
-            self.noise = float(np.percentile(self._ring[:self._ring_n], self.noise_pct))  # 순서 무관이라 링을 그대로 넣는다
+        threshold, threshold_lo = self.threshold, self.threshold_lo
         if not self.recording:
             self._preroll.append(block_i16)
             self._preroll = self._preroll[-self.preroll_n:]
-            if rms > self.threshold:
+            if rms > threshold:
                 self._hot += 1
             else:
                 self._hot = 0
-                if not self.noise_win:  # 옛 방식 (비교용) — 조용할 때만 갱신
+                if self.noise_win:
+                    self._update_noise(rms)
+                else:  # 옛 방식 (비교용) — 조용할 때만 갱신
                     self.noise = 0.97 * self.noise + 0.03 * rms
             if self._hot >= self.start_blocks:
                 self.recording = True
@@ -128,16 +134,18 @@ class VadSegmenter:
             return None
         # 녹음 중
         self._buf.append(block_i16)
-        if rms > self.threshold:
+        if rms > threshold:
             self._quiet = 0
             self._speech += 1
             self._since = 0
-        elif rms > self.threshold_lo and self._since < self.tail_blocks:
+        elif rms > threshold_lo and self._since < self.tail_blocks:
             self._quiet = 0   # 말 꼬리. 유성 계수(_speech)는 시작 임계로만 센다 — 낮은 임계로 세면 짧은 소음이 발화가 된다
             self._since += 1
         else:
             self._quiet += 1
             self._since += 1
+        if self.noise_win:
+            self._update_noise(rms)
         if self._quiet >= self.end_blocks or len(self._buf) >= self.max_blocks:
             self.recording = False
             buf, self._buf = self._buf, []

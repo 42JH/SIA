@@ -181,7 +181,7 @@ def test_wake_only_run_skips_command_processing():
                 if owner and not attached and not active:
                     assert log.call_args.kwargs["gate"] == "wake_only"
                     brain.speaker.verify.assert_not_called()
-                    assert any(c.args[0] == "네, 듣고 있어요" for c in brain.overlay.toast.call_args_list)
+                    assert "네, 듣고 있어요" in brain.said
                     assert not brain._accum.n_joined
                     # 세션은 BE 소유가 됐다(-320) — BE 가 없으면 로컬로 세션을 열지 않는다.
                 elif active:
@@ -213,7 +213,7 @@ def test_wake_only_preserves_confirmation_and_shadow():
     for shadow in (False, True):
         with assistant() as (brain, link, _):
             brain.wake = SimpleNamespace(reset=lambda: None)
-            brain.router.transcribe.return_value = ("시아야", 0.1)
+            brain.router.transcribe.return_value = ("시아야", 0.1, -0.3)
             if not shadow:
                 brain._pending = Pending("닫을까요?", "test", 100.0, 0, (0.0, {}), 0.0, 0)
             with patch("brain.wake_score_of", return_value=(0.99, peak, 0)), patch("brain.WAKE_SHADOW", shadow), patch.object(brain, "_execute", return_value=None):

@@ -5,16 +5,19 @@
 제스처 템플릿(npz)을 처리하므로 별도 카메라를 열지 않는다.
 """
 import base64
+import copy
 import io
 import json
 import queue
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
 import numpy as np
 from gesture_diagnostics import save_registration_diagnostic
+from gesture_consistency import evaluate_dynamic_takes
 
 from hands import (REFERENCE_PALM_SIZE, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, normalize_landmarks, pose_distances, scale_by_hand_size,
@@ -24,7 +27,9 @@ from custom_motion import (
     encode_pose_sequence, encode_world_sequence, normalize_arm_pose,
     ordered_landmarks, ordered_world_landmarks, read_templates,
     trim_motion_frames, template_bytes as encode_template_bytes,
-    matching_distance, motion_matching_distance, motion_direction_8, TRACKING_GRACE_S,
+    matching_distance, motion_comparison, motion_features, motion_matching_distance,
+    motion_direction_8, motion_direction_difference, swipe_trajectory_distance, swipe_direction_8,
+    DIRECTION_TOLERANCE_DEG, TRACKING_GRACE_S, empty_templates,
 )
 
 
@@ -132,6 +137,29 @@ def registration_blocks_gesture_execution(registration):
     명령으로 해석되어 로컬 또는 BE에서 실행되면 안 된다.
     """
     return bool(registration is not None and registration.active)
+
+
+class RegistrationGestureRearm:
+    """Keep gesture execution blocked until hands leave after registration."""
+
+    def __init__(self, release_hold_s=0.25):
+        self.release_hold_s = release_hold_s
+        self.locked = False
+        self.release_since = None
+
+    def update(self, registration_active, has_hands, now):
+        if registration_active:
+            self.locked = True
+            self.release_since = None
+        elif self.locked:
+            if has_hands:
+                self.release_since = None
+            elif self.release_since is None:
+                self.release_since = now
+            elif now - self.release_since >= self.release_hold_s:
+                self.locked = False
+                self.release_since = None
+        return self.locked
 
 
 def encode_jpeg(frame, max_width=640, quality=75):
@@ -322,8 +350,8 @@ class GestureRegistration:
     MIN_STATIC_SAMPLES = 8
     MIN_STATIC_MOTION_FRAMES = 4  # 2손 정적: 회차당 평균낼 프레임이 너무 적으면 떨림이 안 지워진다
     FRAME_MARGIN = 0.02  # 정규화 좌표가 이만큼 넘게 [0,1]을 벗어나면 화면 밖으로 본다
-    OUT_OF_FRAME_HOLD_S = 0.20
-    OUT_OF_FRAME_RATIO = 0.20
+    OUT_OF_FRAME_HOLD_S = 0.50
+    OUT_OF_FRAME_RATIO = 0.35
     OUT_OF_FRAME_MAX_GAP_S = 0.25  # 긴 관측 공백을 연속 이탈로 추정하지 않는다
     MAX_GAP_FRACTION = 0.3  # 회차 구간 대비 이 비율 넘게 손을 놓치면 거부
     STATIC = "STATIC"
@@ -331,6 +359,7 @@ class GestureRegistration:
     FRAME_INTERVAL_S = 0.10
     BUILTIN_OVERLAP = 0.20
     MIN_PALM_SIZE = 0.055
+    SMALL_HAND_MAX_RATIO = 0.70
     MAX_SPREAD = 0.25
     STATIC_SPREAD_PERCENTILE = 90
     STATIC_SPREAD_MAX_RATIO = 0.20
@@ -343,11 +372,8 @@ class GestureRegistration:
     # 서로 다른 저장 제스처의 최근접 거리는 0.482였다. 정적과 같은 0.45를
     # 쓰면 손 펴기/모으기(0.38~0.44)까지 비틀기로 오판하므로 분리한다.
     DYNAMIC_COLLISION_DIST = 0.35
-    # 회차 간 허용 오차. 정적은 자세 하나의 손끝 가중 거리라 기존 안전 여유를
-    # 유지한다. 동적은 실측 반복 촬영에서 속도·시작 시점 차이만으로도 0.15~0.35가
-    # 나왔으므로 실행 매칭값의 60%(0.132)를 그대로 쓰면 정상 촬영까지 대부분
-    # 거부한다. 세 회차 템플릿을 모두 저장하는 점을 감안해 0.35까지 허용하되,
-    # 모든 회차 쌍을 비교해 한 회차가 실제로 다른 동작인 경우는 계속 거부한다.
+    # 정적 등록의 기존 허용 오차. 동적 회차 검사는 실행 MATCH_DISTANCE를
+    # 직접 사용하므로 이 등록 전용 임계값으로 완화하지 않는다.
     TAKE_STATIC_DISTANCE = 0.35 * 0.6  # 42차원 kNN의 손끝 가중 L2 단위
     TAKE_SEQUENCE_DISTANCE = 0.35
 
@@ -359,6 +385,7 @@ class GestureRegistration:
 
     def reset(self):
         self.temp_id = None
+        self.replace_gesture_name = None
         self.phase = "IDLE"
         self.take = 0
         # BE reg_mode_start가 주는 촬영 설정을 따른다. 이벤트에 값이 없을 때만 기본값을 쓴다.
@@ -379,6 +406,9 @@ class GestureRegistration:
         self.take_frames = {}
         self.take_pose_frames = {}
         self.comparison_diagnostics = []
+        self.take_consistency_diagnostic = None
+        self.builtin_collision_diagnostics = []
+        self.finish_requested = False
 
     @property
     def active(self):
@@ -400,6 +430,7 @@ class GestureRegistration:
         self.temp_id = str(data.get("tempId", ""))
         if not self.temp_id:
             return
+        self.replace_gesture_name = data.get('replaceGestureName') or None
         motion = str(data.get("motion", self.DYNAMIC)).upper()
         self.motion = motion if motion in (self.STATIC, self.DYNAMIC) else self.DYNAMIC
         # FE 안내, BE 프리뷰 버퍼, AI 샘플 수집 구간을 같은 설정으로 맞춘다.
@@ -485,6 +516,38 @@ class GestureRegistration:
             return []
         return [hands] if isinstance(hands, dict) else list(hands)
 
+    @classmethod
+    def _collapse_overlapping_phantom_hand(cls, hands):
+        """Discard a small duplicate detection drawn inside the real hand.
+
+        MediaPipe can briefly split one close, foreshortened hand into two
+        detections.  A real pair of hands must remain untouched, especially
+        for prayer-like poses, so this only collapses an unusually small hand
+        whose landmark centre substantially overlaps a clearly larger hand.
+        """
+        hands = list(hands)
+        if len(hands) != 2:
+            return hands
+        measured = []
+        for observed in hands:
+            points = np.asarray(observed.get("landmarks"), dtype=np.float32)
+            if points.ndim != 2 or points.shape[0] < 10 or points.shape[1] < 2:
+                return hands
+            palm_size, _ = cls._hand_quality(points)
+            centre = np.mean(points[:, :2], axis=0)
+            measured.append((palm_size, centre, observed))
+        measured.sort(key=lambda item: item[0], reverse=True)
+        large_size, large_centre, large = measured[0]
+        small_size, small_centre, _ = measured[1]
+        centre_distance = float(np.linalg.norm(large_centre - small_centre))
+        is_phantom = (
+            large_size >= 0.09
+            and small_size < 0.075
+            and small_size < large_size * 0.60
+            and centre_distance < max(0.08, large_size * 0.65)
+        )
+        return [large] if is_phantom else hands
+
     def _collect(self, hands, now, pose_landmarks=None):
         """현재 프레임의 손 관측을 기록한다. 크기 측정은 handedness로 정렬해 같은 손을 본다.
 
@@ -493,6 +556,7 @@ class GestureRegistration:
         첫 번째 손만 보면 서로 다른 손을 오가며 측정해, 두 손 다 실제로는 안정적이어도
         크기가 인위적으로 흔들리는 것처럼 기록된다.
         """
+        hands = self._collapse_overlapping_phantom_hand(hands)
         self.hand_counts.append(len(hands))
         self.take_frames.setdefault(self.take, []).append((now, hands))
         self.take_pose_frames.setdefault(self.take, []).append(
@@ -552,12 +616,21 @@ class GestureRegistration:
                                                        "phase": "COUNTDOWN"})
                 else:
                     self.phase = "WAIT_FINISH"
+                    if self.finish_requested:
+                        self.finish()
         return {"phase": self.phase, "take": self.take, "remaining": 0.0}
 
     def finish_for(self, temp_id):
         """temp_id가 현재 진행 중인 등록과 같을 때만 종료한다 (경합 방지)."""
         if temp_id and temp_id == self.temp_id:
-            self.finish()
+            if self.phase == "WAIT_FINISH":
+                self.finish()
+            else:
+                # BE/FE timers and the camera loop advance independently. A
+                # finish event may arrive while the final frame is RECORDING.
+                self.finish_requested = True
+                print(f"[제스처 등록] 종료 요청 보류: "
+                      f"{self.take}/{self.takes}회, {self.phase}")
 
     def finish(self):
         if not self.active:
@@ -609,6 +682,28 @@ class GestureRegistration:
             self.reset()
 
     def _validate_and_upload(self, hand_count):
+        original = self.custom_store
+        if self.replace_gesture_name and original is not None:
+            # 교체 대상만 비교에서 제외하며 실행 저장소와 원본 파일은 유지한다.
+            filtered = copy.copy(original)
+            keep = original.data['sequence_names'] != self.replace_gesture_name
+            legacy_keep = np.asarray(original.legacy.names) != self.replace_gesture_name
+            filtered.data = {
+                key: value[(original.data['names'] != self.replace_gesture_name)
+                           if key in ('X', 'names') else keep]
+                for key, value in original.data.items()
+            }
+            filtered.legacy = copy.copy(original.legacy)
+            filtered.legacy.X = original.legacy.X[legacy_keep]
+            filtered.legacy.names = [name for name in original.legacy.names
+                                     if name != self.replace_gesture_name]
+            self.custom_store = filtered
+        try:
+            self._validate_and_upload_current(hand_count)
+        finally:
+            self.custom_store = original
+
+    def _validate_and_upload_current(self, hand_count):
         if not self.samples:
             if self.motion == self.STATIC and self._upload_pose_only_static():
                 return
@@ -695,20 +790,27 @@ class GestureRegistration:
         # 저장에 사용하는 동일한 추적 손만 측정한다. 한 손 동작에서 배경의 작은
         # 오검출 손이 잠깐 잡혀도 크기 판정을 오염시키지 않는다.
         if hand_count == 1:
-            measured_sizes = [self._hand_quality(observed["landmarks"])[0]
-                              for take in range(1, self.takes + 1)
-                              for _, observed in self._one_hand_take_observations(take)]
-        else:
-            measured_sizes = [self._hand_quality(hand["landmarks"])[0]
+            # Use the largest observation in every visible frame. The tracked
+            # sequence drops abrupt scale changes, but doing that here would
+            # also hide the small frames this quality check must measure.
+            measured_sizes = [max(self._hand_quality(hand["landmarks"])[0]
+                                  for hand in hands)
                               for frames in self.take_frames.values()
-                              for _, hands in frames if len(hands) == 2
-                              for hand in hands]
+                              for _, hands in frames if hands]
+        else:
+            # Judge the smaller hand per frame. Combining both hands into one
+            # list lets one consistently tiny hand hide behind the normal hand.
+            measured_sizes = [min(self._hand_quality(hand["landmarks"])[0]
+                                  for hand in hands)
+                              for frames in self.take_frames.values()
+                              for _, hands in frames if len(hands) == 2]
         # 원본 회차가 없는 단위 테스트와 이전 호출 경로의 호환성을 유지한다.
         if not measured_sizes:
-            measured_sizes = list(self.sizes)
-            if hand_count == 2:
-                measured_sizes.extend(self.sizes2)
-        if not measured_sizes or np.percentile(measured_sizes, 10) < self.MIN_PALM_SIZE:
+            measured_sizes = (list(self.sizes2) if hand_count == 2 and self.sizes2
+                              else list(self.sizes))
+        small_ratio = (float(np.mean(np.asarray(measured_sizes) < self.MIN_PALM_SIZE))
+                       if measured_sizes else 1.0)
+        if not measured_sizes or small_ratio >= self.SMALL_HAND_MAX_RATIO:
             raise ValueError("손이 너무 작게 감지되었습니다. 카메라에 조금 더 가까이 손목까지 보여주세요")
 
     def _partial_two_hand_static_collision(self):
@@ -897,7 +999,38 @@ class GestureRegistration:
         "Swipe_Down": "아래쪽 스와이프",
     }
 
-    def _builtin_dynamic_collision(self, hand_count=None, take_directions=None):
+    def _curve_runtime_claims(self, take, sequences, durations):
+        """Replay against other takes only, without changing the live store.
+
+        A partial-path swipe is safe only when claimed at its actual timestamp
+        and the intended custom gesture subsequently completes.
+        """
+        peers = [i for i in range(len(sequences)) if i != take - 1]
+        if not peers or self.custom_store is None:
+            return set()
+        runtime = copy.copy(self.custom_store)
+        runtime.history = deque(maxlen=1000)
+        runtime.reset_motion()
+        runtime.data = empty_templates()
+        runtime.data.update(
+            sequences=np.array([sequences[i] for i in peers], dtype=np.float32),
+            sequence_names=np.array(['registration-peer'] * len(peers)),
+            motions=np.array(['DYNAMIC'] * len(peers)),
+            hand_counts=np.ones(len(peers), dtype=np.int32),
+            durations=np.array([durations[i] for i in peers], dtype=np.float32),
+        )
+        claims, completions = set(), []
+        # Preserve all observed hands and missing frames, as at runtime.
+        for t, hands in self.take_frames.get(take, []):
+            _, event, claimed, _ = runtime.update(hands, t)
+            if claimed or event:
+                claims.add(t)
+            if event == 'registration-peer':
+                completions.append(t)
+        return {t for t in claims if completions and t <= completions[0]}
+
+    def _builtin_dynamic_collision(self, hand_count=None, take_directions=None, take_sequences=None,
+                                   take_durations=None):
         """동적 등록이 내장 동적 감지기와 겹치는지, 실제 감지기로 그대로 재생해 확인한다.
 
         실행 때와 같은 감지기·같은 설정을 써서 "이 촬영이 실제로 라이브였다면
@@ -931,6 +1064,7 @@ class GestureRegistration:
         중복 유사도(exp(-거리), 항상 0~1)와 척도·의미가 다른 근사치임을 참고할 것.
         """
         hand_count = self._infer_hand_count() if hand_count is None else hand_count
+        runtime_claims = {}
         for name, make_detector, extract in self.BUILTIN_DYNAMIC_DETECTORS:
             for take in range(1, self.takes + 1):
                 detectors = {}
@@ -940,8 +1074,10 @@ class GestureRegistration:
                     # 배경 사람의 손이 순간적으로 함께 잡혀도 내장 스와이프로
                     # 재생하지 않는다. 등록 템플릿에 실제로 쓰는 주 손 궤적과
                     # 같은 것을 사용해야 품질 검사와 충돌 검사의 대상이 일치한다.
-                    source = [(t, [observed]) for t, observed
-                              in self._one_hand_take_observations(take)]
+                    observations = dict(self._one_hand_take_observations(take))
+                    # 미검출 시점도 재생해 실행 때와 같이 감지기를 초기화한다.
+                    source = [(t, [observations[t]] if t in observations else [])
+                              for t, _ in self.take_frames.get(take, [])]
                 else:
                     source = self.take_frames.get(take, [])
                 for t, hands in source:
@@ -976,6 +1112,23 @@ class GestureRegistration:
                             event = None
                         if event:
                             start = self.take_frames[take][0][0]
+                            partial_path = (take_sequences is not None
+                                            and swipe_direction_8(take_sequences[take - 1], hand_count) is None)
+                            suppressed = False
+                            if (partial_path and hand_count == 1 and take_durations is not None
+                                    and self.take_consistency_diagnostic is not None
+                                    and self.take_consistency_diagnostic['passed']):
+                                if take not in runtime_claims:
+                                    runtime_claims[take] = self._curve_runtime_claims(
+                                        take, take_sequences, take_durations)
+                                suppressed = t in runtime_claims[take]
+                            self.builtin_collision_diagnostics.append(dict(
+                                take=take, elapsed_s=float(t - start), hand=side, event=event,
+                                path_type='PARTIAL_PATH' if partial_path else 'SWIPE_OR_UNKNOWN',
+                                suppressed_by_custom=suppressed,
+                            ))
+                            if suppressed:
+                                continue
                             print(f"[제스처 스와이프 충돌] tempId={self.temp_id} take={take} elapsed={t-start:.3f}s hand={side} direction={event}")
                             window_s = SCREEN_SWIPE_CONFIG.get('max_t', 0.5)
                             window = [(x, y) for ht, x, y in history if t - ht <= window_s + 0.04]
@@ -1050,7 +1203,10 @@ class GestureRegistration:
                 if directions[i] is not None and directions[j] is not None:
                     print(f"[제스처 회차 방향] tempId={self.temp_id} takes={i+1},{j+1} "
                           f"directions={directions[i]},{directions[j]}")
-                    if directions[i] != directions[j]:
+                    angle_difference = motion_direction_difference(
+                        sequences[i], sequences[j], hand_count)
+                    if (angle_difference is not None
+                            and angle_difference > DIRECTION_TOLERANCE_DEG):
                         raise ValueError(
                             f"{i+1}회차는 {labels[directions[i]]}, {j+1}회차는 "
                             f"{labels[directions[j]]} 방향으로 움직였습니다. "
@@ -1074,21 +1230,39 @@ class GestureRegistration:
                     )
 
     @staticmethod
+    def _dynamic_trajectory_distance(a, b, hand_count):
+        """Compare direction/path while ignoring pose and absolute travel."""
+        swipe_score = swipe_trajectory_distance(a, b, hand_count)
+        if np.isfinite(swipe_score):
+            return swipe_score
+        features_a = motion_features(a, hand_count)
+        features_b = motion_features(b, hand_count)
+        wrist_a = features_a["wrists"] - features_a["wrists"][:1]
+        wrist_b = features_b["wrists"] - features_b["wrists"][:1]
+        travel_a = max(float(np.linalg.norm(wrist_a[-1], axis=-1).mean()), 1e-6)
+        travel_b = max(float(np.linalg.norm(wrist_b[-1], axis=-1).mean()), 1e-6)
+        wrist_delta = np.linalg.norm(wrist_a / travel_a - wrist_b / travel_b, axis=-1)
+        wrist_score = float(np.max(np.sqrt(np.mean(wrist_delta ** 2, axis=0))))
+        separation_delta = features_a["separation"] / travel_a - features_b["separation"] / travel_b
+        separation_score = float(np.sqrt(np.mean(separation_delta ** 2)))
+        return max(wrist_score, separation_score)
+
+    @staticmethod
     def _dynamic_take_distance(a, b, hand_count):
         """Scale-normalized distance used only for repeat-take consistency.
 
-        A large swipe spans several palm lengths, so a small timing difference
-        creates a large absolute landmark error even when direction and path
-        are the same.  Duplicate/runtime matching keeps its strict absolute
-        distance; only the three attempts' consistency score is normalized by
-        their own movement magnitude.
+        Repeat takes naturally differ in travel distance and speed. Compare
+        hand shape/rotation as recorded, but normalize each wrist trajectory
+        by its own end-to-end travel before comparing the path. Duplicate and
+        runtime matching keep their strict absolute-distance score.
         """
-        raw = motion_matching_distance(a, b, hand_count)
-        still_a = np.repeat(a[:1], len(a), axis=0)
-        still_b = np.repeat(b[:1], len(b), axis=0)
-        magnitude = (distance(a, still_a, hand_count)
-                     + distance(b, still_b, hand_count)) / 2
-        return raw / max(1.0, magnitude)
+        comparison = motion_comparison(a, b, hand_count)
+        if not comparison["direction_match"]:
+            return float("inf")
+        trajectory_score = GestureRegistration._dynamic_trajectory_distance(
+            a, b, hand_count)
+        return max(comparison["shape"], comparison["rotation"],
+                   trajectory_score)
 
     def _validate_static_stability(self, take, spreads):
         """자연스러운 떨림은 허용하고 지속적인 손가락 모양 변화만 거부한다."""
@@ -1375,17 +1549,40 @@ class GestureRegistration:
                 pose_seq if pose_seq is not None
                 else np.zeros((FRAMES, 6, 2), np.float32))
             durations.append(frames[-1][0] - frames[0][0] if self.motion == self.DYNAMIC else self.take_s)
-        take_directions = ([motion_direction_8(sequence, hand_count) for sequence in sequences]
+        # 닫힌 곡선의 끝점 흔들림을 대각선 스와이프 예외로 취급하지 않는다.
+        take_directions = ([swipe_direction_8(sequence, hand_count) for sequence in sequences]
                            if self.motion == self.DYNAMIC else None)
-        compare = (lambda a, b, count: self._dynamic_take_distance(a, b, count)
-                   if self.motion == self.DYNAMIC else matching_distance(a, b, count))
+        if self.motion == self.DYNAMIC and self.takes > 1:
+            self.take_consistency_diagnostic = evaluate_dynamic_takes(
+                sequences, hand_count, self.custom_store.data)
+            print('[제스처 실행 일관성] ' + json.dumps(
+                self.take_consistency_diagnostic, ensure_ascii=False, allow_nan=False))
         matches = []
         for take, seq in enumerate(sequences, 1):
             world_seq = (world_sequences[take - 1]
                          if world_valid[take - 1] else None)
             candidates = self.custom_store.sequence_comparisons(
                 seq, self.motion, hand_count, world_sequence=world_seq)
-            score, name = ((candidates[0]['score'], candidates[0]['name']) if candidates
+            if self.motion == self.DYNAMIC:
+                # Registration duplicate checks must tolerate a user repeating
+                # the same path at a different speed or travel distance. Keep
+                # strict runtime scores intact and attach a registration-only
+                # normalized score to each existing dynamic template.
+                for candidate in candidates:
+                    index = candidate['template_index']
+                    # Normalize speed/travel variance, but never let a shared
+                    # path erase a real finger-shape difference.  A swipe is a
+                    # duplicate only when direction, trajectory and hand shape
+                    # are all sufficiently close.
+                    normalized = (max(
+                        self._dynamic_trajectory_distance(
+                            seq, self.custom_store.data['sequences'][index], hand_count),
+                        candidate['shape'],
+                    ) if candidate['direction_match'] else float('inf'))
+                    candidate['registration_score'] = min(candidate['score'], normalized)
+                candidates.sort(key=lambda item: item['registration_score'])
+            score, name = (((candidates[0].get('registration_score', candidates[0]['score'])),
+                            candidates[0]['name']) if candidates
                            else (float('inf'), None))
             self.comparison_diagnostics.append(dict(take=take, candidates=candidates))
             if candidates:
@@ -1414,7 +1611,7 @@ class GestureRegistration:
         # 그 프레임만 실패하면 그 손 하나만으로 내장 동작이 새어나갈 수 있다.
         if self.motion == self.DYNAMIC:
             collided, collided_event, collided_similarity = self._builtin_dynamic_collision(
-                hand_count, take_directions)
+                hand_count, take_directions, take_sequences=sequences, take_durations=durations)
             if collided:
                 # similar_to는 표시용 통칭("스와이프")이 아니라 구체적인 이벤트
                 # 이름("Swipe_Left" 등, BE 기본 제스처 이름과 일치)을 보낸다 —
@@ -1425,23 +1622,35 @@ class GestureRegistration:
                 # 직전 이동거리 ÷ 발동 기준 거리의 근사값이다(_builtin_dynamic_collision
                 # 참고) — 커스텀 중복 유사도와 척도가 다를 수 있다.
                 display_name = self.SWIPE_DIRECTION_LABELS.get(collided_event, collided)
+                collision = (self.builtin_collision_diagnostics[-1]
+                             if self.builtin_collision_diagnostics else None)
+                reason = (f"{collision['take']}회차 동작 중간이 '{display_name}'로 인식됩니다. "
+                          "동작을 마치기 전에 다른 기능이 실행될 수 있어 등록할 수 없습니다"
+                          if collision and collision['path_type'] == 'PARTIAL_PATH'
+                          else f"'{display_name}'와 너무 유사합니다")
                 raise GestureRegistrationRejected(
-                    f"'{display_name}'와 너무 유사합니다", similar_to=collided_event,
+                    reason, similar_to=collided_event,
                     similarity=collided_similarity,
                 )
+        # 명확한 단일 이상 회차는 부분 중복 다수결의 모호한 안내보다 우선한다.
+        # 내장 동작의 실제 발동 충돌은 위에서 먼저 차단한다.
+        if (self.take_consistency_diagnostic is not None
+                and self.take_consistency_diagnostic['outlier_take'] is not None):
+            raise ValueError(self.take_consistency_diagnostic['reason'])
         self._validate_custom_collision_votes(
             matches,
             self.DYNAMIC_COLLISION_DIST if self.motion == self.DYNAMIC else self.COLLISION_DIST,
         )
-        if self.motion == self.DYNAMIC:
-            self._validate_motion_directions(sequences)
-        # 충돌·중복이 아니라는 게 확인된 뒤에야 회차 간 일관성(모양·방향)을
-        # 본다 — 애초에 거부될 동작이면 일관성부터 맞추라고 헛수고를 시키지
-        # 않는다. 위 두 검사(내장 충돌은 모든 회차를 순회, 중복검사는 회차별로
-        # 비교) 모두 회차 전체를 이미 다 보므로 순서를 바꿔도 정확도는 그대로다.
-        self._validate_take_consistency(
-            sequences, lambda a, b: compare(a, b, hand_count), self.TAKE_SEQUENCE_DISTANCE
-        )
+        # 기존 중복 안내(similarTo)를 우선 유지하되, 실행 후보 경쟁에서
+        # 다른 제스처가 선택되는 회차도 저장 전에 반드시 거부한다.
+        if (self.take_consistency_diagnostic is not None
+                and not self.take_consistency_diagnostic['passed']):
+            raise ValueError(self.take_consistency_diagnostic['reason'])
+        if self.motion != self.DYNAMIC:
+            self._validate_take_consistency(
+                sequences, lambda a, b: matching_distance(a, b, hand_count),
+                self.TAKE_SEQUENCE_DISTANCE,
+            )
         data = dict(
             X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
             sequences=np.stack(sequences), sequence_names=np.array(["__pending__"] * len(sequences)),
