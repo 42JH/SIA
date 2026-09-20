@@ -44,7 +44,6 @@ SAVE_DIR = LOG_DIR / "save_overlay"   # EVAL_CAPTURE 검증용 오버레이 전�
 # BE scroll.step 의 휠 노치 수(1~10). 로컬 PageDown 한 번(≈한 화면)에 맞춘 값 —
 # 휠 한 노치의 실제 이동량은 앱마다 달라 라이브에서 조정하는 손잡이다.
 SCROLL_AMOUNT = int(os.environ.get("SCROLL_AMOUNT") or 10)  # BE scroll.step 휠 노치(1~10)
-HUD_TITLE = "assistant (ESC=quit)"  # assistant.py cv2.imshow 제목 — BE 창 목록에도 떠서 대상에서 제외한다
 Pending = collections.namedtuple(  # 확인 대기 — 자리 인덱스로 읽던 6튜플을 이름으로 바꿨다
     "Pending", "q kind expire target completed asked_at generation")
 MAX_INFLIGHT = 4          # 동시에 처리할 발화 수 상한 — 몰릴 때 LLM 왕복이 무제한으로 늘지 않게
@@ -824,9 +823,11 @@ class Brain(threading.Thread):
     paused = False
 
 
-    def __init__(self, overlay, act=True, speaker=None, link=None, wake_template=None):
+    def __init__(self, act=True, speaker=None, link=None, wake_template=None):
         super().__init__(daemon=True)
-        self.overlay = overlay
+        # 화면 표시는 FE 몫이다(-333). 로컬엔 콘솔만 남으므로 최근 안내를 들고 있는다 —
+        # 무엇을 말했는지 확인하는 유일한 수단이고 테스트도 이걸 단언한다.
+        self.said = collections.deque(maxlen=50)
         self.act = act  # False면 실행 없이 로그만 (--no-actions)
         self.speaker = speaker  # SpeakerVerifier 또는 None (화자 인증 게이트)
         self.wake_template = wake_template  # WakeTemplateStore 또는 None (호출어 개인화 판정)
@@ -950,7 +951,7 @@ class Brain(threading.Thread):
         if not hwnd or not self._be():
             return None
         title = window_title_of(hwnd)
-        if not title or title == HUD_TITLE:  # 우리 HUD 창은 BE 목록에도 뜬다 — 대상으로 삼지 않는다
+        if not title:
             return None
         ok, ctx, _ = self._be_call("context.get")
         if not ok:
@@ -1610,12 +1611,12 @@ class Brain(threading.Thread):
     # 사용자에게 보이는 문구는 내 화면(오버레이)과 FE 화면 양쪽에 띄운다. AI 는 FE 와 직접 연결되지
     # 않으므로 BE 에 notice 를 보내면 BE 가 FE 로 그대로 넘긴다(프로토콜 §4.1). 오버레이는 60자 넘으면 패널.
     def _say(self, message, kind=None, seconds=None, **fields):
-        if len(message) > 60:
-            self.overlay.panel(message)
-        elif seconds is None:
-            self.overlay.toast(message)
-        else:
-            self.overlay.toast(message, seconds)
+        """사용자에게 보일 한 줄. **그리는 건 FE 가 한다** — AI 는 BE 로 넘기기만 한다.
+        예전엔 여기서 tkinter 오버레이도 같이 띄웠는데, FE 가 같은 notice 를 그리므로
+        한 화면에 같은 문구가 두 번 뜨고 있었다(-333).
+        """
+        print(f"[안내] {message}")
+        self.said.append(message)
         be = self._be()
         if be:
             data = notice_data(message, kind, **fields)
@@ -1688,7 +1689,7 @@ class Brain(threading.Thread):
             self._say(say or "대기 모드로 전환합니다")
             return completed if self.act else None
         if not self.act:
-            self.overlay.toast(f"[시늉만] {action}: {say}")
+            print(f"[시늉만] {action}: {say}")
             return
 
         if action == "confirm_yes":
@@ -1861,7 +1862,7 @@ class Brain(threading.Thread):
             if action == "answer":
                 return completed
         else:
-            self.overlay.toast("…")
+            self._say("…")   # FE 로도 가야 한다 — 오버레이만 띄우면 화면에 아무것도 안 뜬다
 
     def _media(self, key, say="", hwnd=0, level=None):
         if key == "volset":  # 절대값은 BE 전용(volume.set) — 로컬 키 입력으론 현재 값을 모른다
