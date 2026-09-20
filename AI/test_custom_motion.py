@@ -480,6 +480,29 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(all(points.shape == (1, 21, 2) for _, points in frames))
         self.assertLess(float(frames[0][1][0, 0, 0]), 0.6)
 
+    def test_overlapping_small_phantom_is_not_counted_as_second_hand(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        reg.start(dict(tempId="phantom", motion="DYNAMIC", takes=1,
+                       takeDurationSec=1, countdownSec=0), now=0)
+        for index in range(21):
+            x = 0.30 + index * 0.008
+            primary = self.sized_hand(x=x, side="Right", size=0.12)
+            phantom = self.sized_hand(x=x + 0.015, side="Left", size=0.045)
+            reg._collect([primary, phantom], index * 0.05)
+
+        self.assertEqual(set(reg.hand_counts), {1})
+        self.assertTrue(all(len(hands) == 1 for _, hands in reg.take_frames[1]))
+        self.assertEqual(reg._infer_hand_count(), 1)
+
+    def test_two_similarly_sized_overlapping_hands_are_preserved(self):
+        reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
+        left = self.sized_hand(x=0.40, side="Left", size=0.11)
+        right = self.sized_hand(x=0.44, side="Right", size=0.10)
+
+        filtered = reg._collapse_overlapping_phantom_hand([left, right])
+
+        self.assertEqual(len(filtered), 2)
+
     def test_one_hand_take_rejects_persistent_two_hand_capture(self):
         reg = GestureRegistration(self.link, self.cache, CustomGestureStore(self.root / "missing.npz"))
         reg.take_frames[1] = []

@@ -487,6 +487,38 @@ class GestureRegistration:
             return []
         return [hands] if isinstance(hands, dict) else list(hands)
 
+    @classmethod
+    def _collapse_overlapping_phantom_hand(cls, hands):
+        """Discard a small duplicate detection drawn inside the real hand.
+
+        MediaPipe can briefly split one close, foreshortened hand into two
+        detections.  A real pair of hands must remain untouched, especially
+        for prayer-like poses, so this only collapses an unusually small hand
+        whose landmark centre substantially overlaps a clearly larger hand.
+        """
+        hands = list(hands)
+        if len(hands) != 2:
+            return hands
+        measured = []
+        for observed in hands:
+            points = np.asarray(observed.get("landmarks"), dtype=np.float32)
+            if points.ndim != 2 or points.shape[0] < 10 or points.shape[1] < 2:
+                return hands
+            palm_size, _ = cls._hand_quality(points)
+            centre = np.mean(points[:, :2], axis=0)
+            measured.append((palm_size, centre, observed))
+        measured.sort(key=lambda item: item[0], reverse=True)
+        large_size, large_centre, large = measured[0]
+        small_size, small_centre, _ = measured[1]
+        centre_distance = float(np.linalg.norm(large_centre - small_centre))
+        is_phantom = (
+            large_size >= 0.09
+            and small_size < 0.075
+            and small_size < large_size * 0.60
+            and centre_distance < max(0.08, large_size * 0.65)
+        )
+        return [large] if is_phantom else hands
+
     def _collect(self, hands, now, pose_landmarks=None):
         """현재 프레임의 손 관측을 기록한다. 크기 측정은 handedness로 정렬해 같은 손을 본다.
 
@@ -495,6 +527,7 @@ class GestureRegistration:
         첫 번째 손만 보면 서로 다른 손을 오가며 측정해, 두 손 다 실제로는 안정적이어도
         크기가 인위적으로 흔들리는 것처럼 기록된다.
         """
+        hands = self._collapse_overlapping_phantom_hand(hands)
         self.hand_counts.append(len(hands))
         self.take_frames.setdefault(self.take, []).append((now, hands))
         self.take_pose_frames.setdefault(self.take, []).append(
