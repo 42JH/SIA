@@ -1373,7 +1373,7 @@ class Brain(threading.Thread):
                     if stale:
                         return
                     if be and not WAKE_SHADOW and not in_session:
-                        be.wake_detected()  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
+                        be.wake_detected(generation=generation)  # FE "듣고 있어요" + 세션 개시 (프로토콜 §4.1)
                     if only_wake:
                         # BE 가 없으면 세션도 없다 — 실행이 BE 전용이라 로컬 세션은 의미가 없다.
                         self._say("네, 듣고 있어요")
@@ -1523,7 +1523,7 @@ class Brain(threading.Thread):
                       f" | LLM {lat.get('llm_s')}({lat.get('llm_tries')}) | 실행 {finished - t_exec:.2f} | 발화끝→완료 {finished - t_end:.2f}s")
                 with self._audio_lock:
                     fresh = generation == self._audio_generation
-                if completed and be and fresh:
+                if completed and be and (fresh or result.get("action") == "end_session"):
                     started, fields = completed
                     latency_ms = int((finished - started) * 1000)
                     be.queue_usage("command", **fields, latencyMs=latency_ms)
@@ -1628,6 +1628,9 @@ class Brain(threading.Thread):
                  profile=None, tier=2, generation=None):
         """실제 완료 시 (원래 발화 시작 시각, 통계 필드), 미실행·확인 대기는 None."""
         t_utter = time.monotonic() if t_utter is None else t_utter
+        with self._audio_lock:
+            if generation is not None and generation != self._audio_generation:
+                return  # 폐기 검사는 세션 개시·연장보다 먼저 한다.
         if not result.get("audio_is_speech", True):
             return  # 잡음/기계음 — 조용히 무시
         if not result.get("is_command"):
@@ -1636,7 +1639,7 @@ class Brain(threading.Thread):
             if result.get("wake_heard") and t_utter >= self._session_until():
                 be = self._be()
                 if be:
-                    be.renew(opening=True)  # BE 가 세션 개시 → session_state 로 마감시각 회신
+                    be.renew(opening=True, generation=generation)  # BE 가 세션 개시 → session_state 로 마감시각 회신
                 self._say("네, 듣고 있어요")
             return
         # 코드 차원 호출어 게이트: 세션이 없을 땐 wake_heard 없이는 절대 통과 못 함 —
@@ -1654,7 +1657,7 @@ class Brain(threading.Thread):
                 # 사용자는 세션 안에서 말했지만 LLM 왕복(실측 12~29 s)이 BE 세션(기본 15 s)보다
                 # 길면 호출 시점엔 이미 닫혀 있다. 그때 연장을 보내면 SessionService.renew 가
                 # active==null 로 SESSION_REQUIRED 를 던져 명령이 통째로 버려진다(9/18 실측 0/19).
-                session_id = be.renew(opening=not self._session_live())
+                session_id = be.renew(opening=not self._session_live(), generation=generation)
         with self._audio_lock:
             if generation is not None and generation != self._audio_generation:
                 return  # 세션 갱신 응답을 기다리는 동안 입력이 바뀐 발화도 버린다.
@@ -1683,9 +1686,9 @@ class Brain(threading.Thread):
              generation=0):
         """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
+            self.reset_audio()
             if be:
-                be.end()
-            self._pending = None
+                be.end(generation=generation)
             self._say(say or "대기 모드로 전환합니다")
             return completed if self.act else None
         if not self.act:
