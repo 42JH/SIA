@@ -46,7 +46,7 @@ from gaze import Calibrator, GazeBuffer, make_engine
 from hands import (GestureEngine, GestureStable, HoldToggle, MotionHandTracker,
                    PalmScrollDetector, PinchVolumeDetector, SCREEN_SWIPE_CONFIG,
                    SwipeDetector, TwoHandSpreadDetector, scale_by_hand_size,
-                   scale_landmarks_by_hand_size)
+                   scale_landmarks_by_hand_size, overlapping_two_hand_evidence)
 from main import Camera, GazeWorker, open_camera
 
 from paths import asset_path, data_path  # 얼렸을 때 자산/사용자 데이터가 갈라진다
@@ -678,6 +678,8 @@ def main():
             # GestureStable로 안정화되지만 점수는 현재 프레임 기준이라 드물게
             # 어긋날 수 있다(허용 가능한 근사치).
             raw_score = hand["score"] if hand else None
+            two_hand_context = overlapping_two_hand_evidence(
+                hands, pose_landmarks)
             # 내장 분류(7종)가 못 알아본 손모양만 커스텀 분류기가 2차 판정
             if hand and active_custom.n:
                 # Registered templates passed collision checks during capture.
@@ -701,7 +703,8 @@ def main():
             # 보류하지 않는다). 완성되면 custom_motion_event로 즉발 처리한다.
             if gesture_active and not registration_active:
                 custom_pose, custom_motion_event, custom_claimed, custom_dist = active_custom.update(
-                    hands, now, disabled_gestures, pose_landmarks=pose_landmarks
+                    ([] if two_hand_context and len(hands) == 1 else hands),
+                    now, disabled_gestures, pose_landmarks=pose_landmarks
                 )
                 # 양손 정적/동적 커스텀도 1손 커스텀과 같은 exp(-거리) 관례로 신뢰도를
                 # 낸다 — 정적 매치는 raw_score를 덮어써 static_names 발동부에서 그대로
@@ -715,7 +718,7 @@ def main():
                 custom_pose = custom_motion_event = None
                 custom_claimed = False
                 custom_score = None
-            if len(hands) == 2:
+            if two_hand_context:
                 # 손 2개가 잡힌 프레임에서는 hands[0] 하나만 본 1손 판정(내장·
                 # 레거시 1손 커스텀 모두 포함)을 아예 신뢰하지 않는다 — 2손 커스텀
                 # 인식이 그 프레임에 실패해도(핸드니스 오판 등) 1손 판정이 새어

@@ -6,7 +6,8 @@ import numpy as np
 from types import SimpleNamespace
 
 from gaze import FEATURE_DIM, Calibrator, ClickRecal, GazeBuffer
-from hands import GestureStable, HoldToggle, OneEuro, PinchFSM
+from hands import (GestureStable, HoldToggle, OneEuro, PinchFSM,
+                   overlapping_two_hand_evidence)
 from gesture_be import GestureRegistration, registration_blocks_gesture_execution
 
 
@@ -19,6 +20,21 @@ def test_registration_execution_gate():
     assert not registration_blocks_gesture_execution(None)
     assert not registration_blocks_gesture_execution(Registration(False))
     assert registration_blocks_gesture_execution(Registration(True))
+
+
+def test_touching_two_hands_do_not_fall_back_to_one_hand_builtin():
+    points = np.zeros((21, 2), dtype=np.float32)
+    points[:] = [0.5, 0.4]
+    points[0] = [0.5, 0.5]
+    points[9] = [0.5, 0.4]
+    hand = {"landmarks": points}
+    pose = [(0.0, 0.0, 0.0)] * 33
+    pose[15] = (0.43, 0.48, 0.9)
+    pose[16] = (0.57, 0.48, 0.9)
+
+    assert overlapping_two_hand_evidence([hand], pose)
+    pose[16] = (0.90, 0.85, 0.9)
+    assert not overlapping_two_hand_evidence([hand], pose)
 
 
 def test_registration_timing_contract():
