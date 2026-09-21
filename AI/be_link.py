@@ -23,7 +23,6 @@ import urllib.request
 import uuid
 from collections import deque
 from pathlib import Path
-from gesture_session_renewal import GestureRenewalPolicy, foreground_context_chain
 
 PROTOCOL_VERSION = "2025-11-25"
 AGENT_VERSION = "0.4.2"
@@ -150,7 +149,6 @@ class AgentLink:
         self._send_lock = threading.Lock()
         self._stop = False
         self._gesture_session_synced = False
-        self.gesture_renewal_policy = GestureRenewalPolicy(self._read_gesture_policy)
         if self.rt:
             threading.Thread(target=self._ws_loop, daemon=True).start()
 
@@ -161,7 +159,6 @@ class AgentLink:
         except Exception as e:
             print(f"[BE] websockets 미설치 — WS 비활성(MCP 만 사용): {e}")
             return
-        threading.Thread(target=self._gesture_policy_loop, daemon=True).start()
         backoff = 1.0
         while not self._stop:
             try:
@@ -171,7 +168,6 @@ class AgentLink:
                     self.connected = True
                     self.gesture_ready = False
                     self._gesture_session_synced = False
-                    self.gesture_renewal_policy.invalidate()
                     backoff = 1.0
                     self._send({"type": "hello", "data": {"agentVersion": AGENT_VERSION}})
                     print(f"[BE] /ws/agent 연결됨 (port {self.rt['port']})")
@@ -181,7 +177,6 @@ class AgentLink:
                 self.connected = False
                 self.gesture_ready = False
                 self._gesture_session_synced = False
-                self.gesture_renewal_policy.invalidate()
                 self.ws = None
                 if self._stop:
                     break
@@ -199,9 +194,6 @@ class AgentLink:
         t, d = msg.get("type"), msg.get("data") or {}
         if not isinstance(d, dict):
             return
-        if t in {"hello_ack", "recognition_start", "settings_changed", "gesture_toggled",
-                 "gesture_registered", "gesture_renamed", "gesture_removed"}:
-            self.gesture_renewal_policy.invalidate()
         if self.voice_sync is not None:
             if t == "voice_changed" and isinstance(msg.get("data"), dict):
                 self.voice_sync.on_changed(msg["data"])
@@ -276,40 +268,7 @@ class AgentLink:
         return items
 
     def send_event(self, event_type, data=None):
-        if event_type == "gesture_exec":
-            data = data or {}
-            with self._session_condition:
-                active = (self.connected and self.gesture_ready
-                          and self._gesture_session_synced and self.be_session_id is not None
-                          and time.monotonic() < self.session_until_mono)
-                session_id = self.be_session_id
-            if active and self.gesture_renewal_policy.can_renew(
-                    data.get('name'), data.get('context'),
-                    foreground_context_chain(data.get('hwnd')) if data.get('context') is None else None):
-                # WS session_state must be able to update while MCP is in flight.
-                ok, _ = self.call('session.extend')
-                if ok is not True:
-                    print('[GESTURE BLOCKED] reason=session_extend_failed')
-                    return False
-                with self._session_condition:
-                    if (not self.connected or not self.gesture_ready
-                            or not self._gesture_session_synced
-                            or self.be_session_id != session_id):
-                        return False
         return self._send({"type": event_type, "data": data or {}})
-
-    def _read_gesture_policy(self, path):
-        with self._agent_request(path, timeout=2) as response:
-            return json.load(response)
-
-    def _gesture_policy_loop(self):
-        while not self._stop:
-            if self.connected:
-                try:
-                    self.gesture_renewal_policy.refresh()
-                except Exception:
-                    self.gesture_renewal_policy.invalidate()
-            time.sleep(1.0)
 
     def _agent_request(self, path, method="GET", payload=None, headers=None, timeout=15):
         if not self.rt:
