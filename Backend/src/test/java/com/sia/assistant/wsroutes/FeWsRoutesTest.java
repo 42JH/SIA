@@ -104,6 +104,15 @@ class FeWsRoutesTest {
     }
 
     @Test
+    @DisplayName("wakeword_enroll_start 는 후보 호출어를 실은 채로 등록 중계에 넘어간다")
+    void wakewordStartCarriesWord() throws Exception {
+        routes.on(new WsEvents.FeMessage("wakeword_enroll_start", om.readTree("{\"wakeWord\":\"하늘아\"}")));
+
+        verify(enrollment).startWakeword(argThat(node ->
+                "하늘아".equals(node.path("wakeWord").asText())));
+    }
+
+    @Test
     @DisplayName("wakeword_enroll_cancel 은 등록 중계로 넘어간다 — 보이스의 voice_reg_cancel 과 같은 자리")
     void wakewordCancelIsRouted() throws Exception {
         routes.on(new WsEvents.FeMessage("wakeword_enroll_cancel", om.readTree("{}")));
