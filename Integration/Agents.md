@@ -89,17 +89,11 @@ npm test
 - 최종 sidecar 이름과 실행 인자
 - 동적 포트 또는 고정 포트 선택
 - Frontend 및 Extension의 포트 주입 방식
-- **[위험, 우선 처리 필요] Tauri `bundle.resources`에 포함할 Backend 보조
-  파일** — AI onedir의 `sia-ai-support/`는 `bundle.resources`에 등록했지만,
-  Backend의 두 폴더는 아직 등록하지 않았다.
-  `scripts/build-sidecars.ps1`은 jpackage 산출물(`<sidecar>.exe` + `app/` +
-  `runtime/`)을 로컬 `src-tauri/binaries/`에 나란히 배치하지만, Tauri의
-  `externalBin`은 이름·타깃트리플이 맞는 sidecar 실행파일 하나만 최종 설치
-  번들에 포함시키고 옆의 `app/`·`runtime/` 폴더는 자동으로 넣어주지 않는다.
-  지금 설정 그대로 `tauri build`를 돌리면 설치된 앱에서 BE가 이 폴더들을 못
-  찾아 실행에 실패할 가능성이 높다. `bundle.resources`에 `binaries/app`,
-  `binaries/runtime`을 명시적으로 추가해야 한다. 다른 항목과 달리 포트
-  정책과 무관하게 지금 바로 고칠 수 있다.
-
-위 항목(마지막 리소스 항목 제외)은 Backend와 AI 파일 정리가 끝나기 전에
+위 항목은 Backend와 AI 파일 정리가 끝나기 전에
 임의로 확정하지 않는다.
+
+## 설치 리소스 배치 (2026-09-21 확정)
+
+- Backend jpackage의 `app/`·`runtime/`과 AI onedir의 `sia-ai-support/`를
+  `tauri.conf.json`의 `bundle.resources`에 등록했다.
+- `build-sidecars.ps1`은 Tauri 최종 빌드 직전에 세 폴더가 모두 있는지 검사한다.

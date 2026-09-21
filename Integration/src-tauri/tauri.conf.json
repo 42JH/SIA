@@ -49,6 +49,8 @@
       "binaries/sia-ai"
     ],
     "resources": {
+      "binaries/app": "app",
+      "binaries/runtime": "runtime",
       "binaries/sia-ai-support": "sia-ai-support"
     },
     "android": {

@@ -6,6 +6,8 @@
 
 - `sia-backend-x86_64-pc-windows-msvc.exe`
   — Backend를 jpackage(또는 jlink 커스텀 런타임)로 만든 JRE 내장 실행파일.
+- `app/`, `runtime/`
+  — Backend exe가 사용하는 애플리케이션 파일과 Java 런타임. exe와 형제 경로를 유지해야 한다.
 - `sia-ai-x86_64-pc-windows-msvc.exe`
   — AI를 PyInstaller onedir로 얼린 실행파일.
 - `sia-ai-support/`

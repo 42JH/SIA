@@ -15,15 +15,9 @@
 # 를 쓰고, 읽기 전용 모델만 `_MEIPASS`(asset_path)를 본다. 온보딩 데이터가 재시작마다
 # 사라지는 문제는 더 이상 없다. 이 스크립트로 사이드카를 새로 만들 때 추가로 손볼 것 없음.
 #
-# !!! 이 스크립트가 못 고치는, 여전히 남은 문제 — Integration/Agents.md 참고 !!!
-# jpackage app-image로 만든 BE는 `<beName>.exe` 옆에 `app/`·`runtime/` 폴더가 상대경로로
-# 같이 있어야 실행된다. 이 스크립트는 그 셋을 `src-tauri/binaries/`에 나란히 복사해서
-# [5/5]의 로컬 `tauri build`(디버그)까지는 되게 만들지만, `tauri.conf.json`의
-# `bundle.resources`에는 AI onedir 보조 폴더만 등록돼 있고 BE의 `binaries/app`·
-# `binaries/runtime`은 아직 등록하지 않았다.
-# Tauri의 `externalBin`은 sidecar 실행파일 하나만 최종 설치 번들에 넣고 옆 폴더는 자동으로
-# 안 넣으므로, 이 상태로 만든 설치 파일(인스톨러)에서는 BE가 `app/`·`runtime/`을 못 찾아
-# 실행이 깨질 수 있다. `bundle.resources`를 채우는 작업이 먼저 필요하다.
+# jpackage app-image의 `app/`·`runtime/`과 PyInstaller onedir의 `sia-ai-support/`는
+# sidecar exe 옆에 있어야 한다. 스크립트가 세 폴더를 `src-tauri/binaries/`에 배치하고,
+# `tauri.conf.json`의 `bundle.resources`가 최종 설치본의 exe 옆에도 함께 넣는다.
 
 param(
     # 사이드카(BE·AI)만 빌드해서 binaries/에 배치하고 끝낸다 — 최종 exe 패키징(tauri
@@ -173,6 +167,14 @@ if ($SkipTauriBuild) {
 
 Write-Host ""
 Write-Host "=== [5/5] 전체 패키징 (tauri build) ===" -ForegroundColor Cyan
+$requiredBundleResources = @("app", "runtime", "sia-ai-support")
+foreach ($name in $requiredBundleResources) {
+    $resourcePath = Join-Path $binariesDir $name
+    if (-not (Test-Path $resourcePath -PathType Container)) {
+        throw "최종 설치본에 필요한 보조 폴더를 못 찾았습니다: $resourcePath"
+    }
+}
+
 Push-Location $integrationDir
 try {
     npm run build
