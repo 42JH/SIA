@@ -14,6 +14,7 @@ from collections import deque
 import numpy as np
 
 from hands import CustomGestures, LANDMARK_WEIGHTS, normalize_landmarks
+from static_hand_shape import read_shapes, FEATURE_SIZE
 
 FRAMES = 24
 MATCH_DISTANCE = 0.22  # RMS landmark error, in initial palm lengths
@@ -57,6 +58,8 @@ WORLD_DISTANCE_SCALE = 1.5
 
 def empty_templates():
     return dict(X=np.empty((0, 42), np.float32), names=np.array([], dtype="U1"),
+                static_shapes=np.empty((0, FEATURE_SIZE), np.float32),
+                static_shape_valid=np.array([], dtype=bool),
                 sequences=np.empty((0, FRAMES, 2, 21, 2), np.float32),
                 sequence_names=np.array([], dtype="U1"), motions=np.array([], dtype="U7"),
                 hand_counts=np.array([], dtype=np.int32), durations=np.array([], dtype=np.float32),
@@ -221,22 +224,22 @@ def encode_sequence(times, points):
 
 
 def encode_world_sequence(times, points):
-    """Encode two-hand 3D shape without using invalid inter-hand world origins.
+    """Encode one/two-hand 3D shape without using invalid inter-hand origins.
 
     MediaPipe world coordinates have a separate origin for each hand.  Each
     wrist is therefore centred independently; one shared scale keeps the two
     hand shapes comparable while their relative palm orientation is retained.
     """
     times, points = np.asarray(times), np.asarray(points, dtype=np.float32)
-    if points.ndim != 4 or points.shape[1:] != (2, 21, 3) or len(times) < 2:
-        raise ValueError("invalid two-hand world landmark sequence")
+    if points.ndim != 4 or points.shape[1] not in (1, 2) or points.shape[2:] != (21, 3) or len(times) < 2:
+        raise ValueError("invalid world landmark sequence")
     centred = points - points[:, :, :1]
     scale = np.linalg.norm(centred[0, :, 9], axis=-1).mean()
     centred /= max(float(scale), 1e-6)
     flat = centred.reshape(len(times), -1)
     grid = np.linspace(times[0], times[-1], FRAMES)
     sampled = np.stack([np.interp(grid, times, col) for col in flat.T], axis=-1)
-    return sampled.reshape(FRAMES, 2, 21, 3).astype(np.float32)
+    return sampled.reshape(FRAMES, points.shape[1], 21, 3).astype(np.float32)
 
 
 def world_matching_distance(a, b):
@@ -247,7 +250,7 @@ def world_matching_distance(a, b):
     (opposing palms) remains distinct from a roof (roughly parallel palms).
     """
     values = []
-    weights = np.tile(np.asarray(LANDMARK_WEIGHTS, dtype=np.float32), 2)
+    weights = np.tile(np.asarray(LANDMARK_WEIGHTS, dtype=np.float32), a.shape[1])
     weights /= weights.sum()
     for current, reference in zip(a, b):
         x = current.reshape(-1, 3)
@@ -444,7 +447,7 @@ def _align_curve(a, b, count=1):
     return a[ia[::-1]], b[ib[::-1]]
 
 
-def motion_comparison(a, b, count, _feature_cache=None):
+def motion_comparison(a, b, count, _feature_cache=None, world_a=None, world_b=None):
     """동적 중복/실행/후보 검사 공통 점수. 한 특징 차이가 평균에 묻히지 않게 한다.
 
     각 손의 시간 RMS 중 큰 값을 사용한다. 거리와 형태는 손바닥 길이 단위,
@@ -537,6 +540,12 @@ def motion_comparison(a, b, count, _feature_cache=None):
                 result.update(**parts, score=score, mirrored=is_mirrored,
                               score_source='ALIGNED_CURVE' if count == 1 else 'ALIGNED_TWO_HAND',
                               aligned_pairs=len(aa))
+    if (world_a is not None and world_b is not None
+            and world_a.shape == world_b.shape and world_a.shape[1] == count):
+        world_score = 1.5 * world_matching_distance(world_a, world_b)
+        result['world_score'] = world_score
+        result['score'] = max(result['score'], world_score)
+        result['score_source'] = '2D+WORLD_3D'
     return result
 
 
@@ -563,6 +572,7 @@ def read_templates(payload, name=None):
         for key in result:
             if key in data:
                 result[key] = np.array(data[key])
+        result["static_shapes"], result["static_shape_valid"] = read_shapes(data, len(result["X"]))
     x, seq = result["X"], result["sequences"]
     if x.ndim != 2 or x.shape[1:] != (42,) or not np.isfinite(x).all():
         raise ValueError("잘못된 정적 제스처 템플릿입니다")
@@ -609,6 +619,7 @@ class CustomGestureStore:
         self.legacy = CustomGestures(path)
         self.data = read_templates(Path(path).read_bytes()) if Path(path).exists() else empty_templates()
         self.history = deque(maxlen=1000)
+        self.world_history = deque(maxlen=1000)
         self.latched = False
         self.latched_name = None
         self.missing_since = None
@@ -622,11 +633,11 @@ class CustomGestureStore:
     def class_names(self):
         return sorted(set(self.legacy.class_names()) | set(self.data["sequence_names"]))
 
-    def nearest_class(self, feats):
-        return self.legacy.nearest_class(feats)
+    def nearest_class(self, feats, shapes=None):
+        return self.legacy.nearest_class(feats, shapes=shapes)
 
-    def classify_with_distance(self, landmarks, disabled=()):
-        return self.legacy.classify_with_distance(landmarks, disabled=disabled)
+    def classify_with_distance(self, landmarks, disabled=(), world_landmarks=None):
+        return self.legacy.classify_with_distance(landmarks, disabled=disabled, world_landmarks=world_landmarks)
 
     def sequence_comparisons(self, sequence, motion, count, world_sequence=None):
         # 기존 템플릿도 비교할 때만 정지 구간을 잘라 신규 촬영과 기준을 맞춘다.
@@ -642,7 +653,13 @@ class CustomGestureStore:
             if m != motion or h != count:
                 continue
             reference = comparison(s)
-            details = (motion_comparison(sequence, reference, count) if motion == 'DYNAMIC'
+            world_reference = (self.data["world_sequences"][index]
+                               if index < len(self.data["world_valid"])
+                               and bool(self.data["world_valid"][index]) else None)
+            details = (motion_comparison(sequence, reference, count,
+                                         world_a=world_sequence,
+                                         world_b=world_reference)
+                       if motion == 'DYNAMIC'
                        else dict(score=matching_distance(sequence, reference, count)))
             if (motion == "STATIC" and count == 2 and world_sequence is not None
                     and bool(self.data["world_valid"][index])):
@@ -707,6 +724,7 @@ class CustomGestureStore:
 
     def reset_motion(self):
         self.history.clear()
+        self.world_history.clear()
         self.latched = False
         self.latched_name = None
         self.missing_since = None
@@ -829,6 +847,7 @@ class CustomGestureStore:
             elapsed = now - self.missing_since
             if elapsed >= TRACKING_GRACE_S:
                 self.history.clear()
+                self.world_history.clear()
                 self._curve_prefix = None
             if elapsed >= 0.3:
                 self.latched = False
@@ -836,6 +855,7 @@ class CustomGestureStore:
             return None, None, claimed, None
         if self.missing_since is not None and now - self.missing_since >= TRACKING_GRACE_S:
             self.history.clear()
+            self.world_history.clear()
             self._last_claimed = False
             self._curve_prefix = None
         self.missing_since = None
@@ -846,9 +866,17 @@ class CustomGestureStore:
         if self.history and (now - self.history[-1][0] > 0.25 or now <= self.history[-1][0]
                              or identity != self.history[-1][2]):
             self.history.clear()
+            self.world_history.clear()
             self._curve_prefix = None
         if not self.history or now - self.history[-1][0] >= 0.05:
             self.history.append((now, points, identity))
+            world_points = None
+            if len(points) in (1, 2):
+                candidates = [h.get('world_landmarks') for h in hands]
+                wp = np.asarray(candidates, dtype=np.float32)
+                if wp.shape == (len(points), 21, 3) and np.isfinite(wp).all():
+                    world_points = wp
+            self.world_history.append((now, world_points))
         count = len(points)
         current_world = None
         if count == 2:
@@ -928,6 +956,13 @@ class CustomGestureStore:
                 if len(window) < 6 or window[-1][0] - window[0][0] < span * 0.9:
                     continue
                 current = sequence_for(window)
+                world_window = [item for item in self.world_history
+                                if item[0] >= now - span - 0.04 and item[1] is not None]
+                current_world = None
+                if (len(world_window) >= 6 and len(world_window) == len(window)
+                        and all(item[1].shape[0] == count for item in world_window)):
+                    current_world = encode_world_sequence(
+                        [item[0] for item in world_window], [item[1] for item in world_window])
                 if _curved_motion(seq, count):
                     # Registration removes stationary lead-in/out before
                     # normalizing its origin. Use that same active interval
@@ -936,13 +971,19 @@ class CustomGestureStore:
                     if (len(active) >= 6
                             and active[-1][0] - active[0][0] >= float(duration) * .5):
                         current = sequence_for(active)
-                score = motion_matching_distance(current, seq, count, feature_cache)
+                reference_world = (self.data['world_sequences'][index]
+                                   if index < len(self.data['world_valid'])
+                                   and bool(self.data['world_valid'][index]) else None)
+                details = motion_comparison(current, seq, count, feature_cache,
+                                            world_a=current_world, world_b=reference_world)
+                score = details['score']
                 if score < best_dynamic[0]:
                     best_dynamic = score, str(name)
         if best_dynamic[1]:
             self.latched = True
             self.latched_name = best_dynamic[1]
             self.history.clear()
+            self.world_history.clear()
             self._last_claimed = True
             return None, best_dynamic[1], True, best_dynamic[0]
         curve_pending = self._curve_prefix_claimed(now, count, disabled)
