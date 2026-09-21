@@ -4,7 +4,7 @@ import styles from './DashboardHome.module.css';
 const colors = ['#f5f8ff', '#88a6d0', '#31ddf2'];
 
 function AxisLabel({ x, y, anchor = 'middle', children }) {
-  const raw = String(children ?? '');
+  const raw = String(children ?? '').replace(/^\d{2,4}\s*년\s*/, '');
   const week = raw.match(/^(\d{1,2}월)\s*(\d주차)$/);
   if (week) {
     return <text x={x} y={y - 10} textAnchor={anchor}><tspan x={x} dy="0">{week[1]}</tspan><tspan x={x} dy="13">{week[2]}</tspan></text>;

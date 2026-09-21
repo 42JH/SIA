@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   deleteGesture,
   fetchAllGestures,
@@ -281,23 +282,23 @@ export default function GesturePanel() {
   if (registration) return <GestureRegistration onClose={() => {}} onSaved={load} />;
 
   return (
-    <>
+    <div className={styles.panel}>
       <div className={styles.toolbar}>
         <span />
         <div className={styles.toolbarActions}>
           {deleteMode ? <>
             <button onClick={() => { setDeleteMode(false); setSelectedIds([]); }}>취소</button>
             <button className={styles.danger} disabled={!selectedIds.length || deleting} onClick={() => setConfirmBulkDelete(true)}>선택 삭제 ({selectedIds.length})</button>
-          </> : <button disabled={!custom.length} onClick={() => { setDeleteMode(true); setSelected(null); setSelectedIds([]); window.scrollTo(0, 0); }}>제스처 삭제</button>}
+          </> : <button disabled={!custom.length} onClick={() => { setDeleteMode(true); setSelected(null); setSelectedIds([]); }}>제스처 삭제</button>}
           {!deleteMode && <button className={styles.primary} onClick={beginRegistration}>+ 새 제스처 등록</button>}
         </div>
       </div>
       {loading && <p role="status">제스처를 불러오는 중입니다.</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
-      {!loading && <>
+      {!loading && <div className={styles.list}>
         {!deleteMode && <GestureSection title="기본 제스처" items={basic} onSelect={setSelected} onToggle={toggle} apps={appCatalog} />}
         <GestureSection title="내 커스텀 제스처" items={custom} onSelect={setSelected} onToggle={toggle} deleteMode={deleteMode} selectedIds={selectedIds} onSelectForDelete={toggleDeleteSelection} apps={appCatalog} empty="등록한 커스텀 제스처가 없습니다." />
-      </>}
+      </div>}
       {selected && <GestureDetail
         gesture={selected}
         tools={tools}
@@ -309,8 +310,8 @@ export default function GesturePanel() {
         onDelete={remove}
         deleting={deleting}
       />}
-      {confirmBulkDelete && <div className={styles.backdrop}><div className={`${styles.confirm}`} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>선택한 제스처 {selectedIds.length}개를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmBulkDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={removeSelected}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
-    </>
+      {confirmBulkDelete && createPortal(<div className={styles.backdrop}><div className={`${styles.confirm}`} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>선택한 제스처 {selectedIds.length}개를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmBulkDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={removeSelected}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>, document.body)}
+    </div>
   );
 }
 
@@ -327,7 +328,7 @@ function GestureSection({ title, items, onSelect, onToggle, deleteMode = false, 
             <i />
           </label>}
           <HoverPreview gesture={gesture} />
-          <div className={styles.cardInfo}><strong>{displayName(gesture)}</strong><span>{gesture.steps?.[0] ? displayLinkedAction(gesture.steps[0], apps) : gesture.custom ? '연결 기능 없음' : '기본 제공'}</span><small className={styles.cardAction}>{deleteMode && gesture.custom ? '선택해서 삭제' : '상세 보기'} <b>›</b></small></div>
+          <div className={styles.cardInfo}><strong>{displayName(gesture)}</strong><span>{gesture.steps?.[0] ? displayLinkedAction(gesture.steps[0], apps) : gesture.custom ? '연결 기능 없음' : '기본 제공'}</span>{!(deleteMode && gesture.custom) && <small className={styles.cardAction}>상세 보기 <b>›</b></small>}</div>
           {gesture.custom && !gesture.runnable && <small className={styles.warning}>현재 사용할 수 없는 기능이 포함되어 있습니다.</small>}
         </article>
       ))}</div> : <p className={styles.empty}>{empty}</p>}
@@ -388,7 +389,7 @@ function GestureDetail({ gesture, tools, apps, appCatalog = [], onClose, onToggl
     }
   };
 
-  return (
+  return createPortal(
     <div className={styles.backdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={styles.detailModal} role="dialog" aria-modal="true" aria-labelledby="gesture-detail-title">
         <header><button onClick={onClose} aria-label="닫기">‹</button><h2 id="gesture-detail-title">{editing ? (gesture.custom ? '제스처 수정' : '기본 제스처 기능 수정') : gesture.custom ? '제스처 상세' : '기본 제스처 상세'}</h2><button onClick={onClose} aria-label="닫기">×</button></header>
@@ -418,7 +419,8 @@ function GestureDetail({ gesture, tools, apps, appCatalog = [], onClose, onToggl
         </div>
         {confirmDelete && <div className={styles.innerBackdrop}><div className={`${styles.confirm}`} role="alertdialog" aria-modal="true"><div className={styles.alertIcon}>!</div><h3>제스처 삭제</h3><p>‘{displayName(gesture)}’ 제스처를 삭제하시겠습니까?</p><div className={styles.actions}><button onClick={() => setConfirmDelete(false)}>취소</button><button className={styles.primary} disabled={deleting} onClick={onDelete}>{deleting ? '삭제 중' : '삭제'}</button></div></div></div>}
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
 

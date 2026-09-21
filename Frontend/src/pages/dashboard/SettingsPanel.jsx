@@ -7,18 +7,30 @@ import { useOnboardingStore } from '../../store/onboardingStore';
 import { syncAutostart } from '../../utils/nativeAutostart';
 import styles from './DashboardHome.module.css';
 
+const WAKE_WORD_MIN_LENGTH = 2;
 const WAKE_WORD_MAX_LENGTH = 8;
-const WAKE_WORD_LIMIT_MESSAGE = '최대 8글자까지만 등록이 가능합니다.';
-const koreanWakeWordPattern = /^[가-힣]+(?:\s+[가-힣]+)*$/;
+const koreanWakeWordPattern = /^[가-힣]+$/;
 
 function normalizeWakeWord(value) {
   const next = typeof value === 'string' ? value.trim() : '';
   return next;
 }
 
+function wakeWordIssue(value) {
+  const next = typeof value === 'string' ? value.trim() : '';
+  if (!next) return '';
+  if (!koreanWakeWordPattern.test(next)) {
+    return '호출명(wakeWord) 설정은 완성된 한글로만 이루어져야 합니다 (예: "시아야"). 자모 · 영문 · 숫자 · 기호 · 공백은 쓸 수 없습니다';
+  }
+  if (next.length < WAKE_WORD_MIN_LENGTH || next.length > WAKE_WORD_MAX_LENGTH) {
+    return `호출명(wakeWord) 설정은 2~8글자여야 합니다 (지금 ${next.length}글자)`;
+  }
+  return '';
+}
+
 export default function SettingsPanel() {
   const navigate = useNavigate(); const [config, setConfig] = useState(null); const [devices, setDevices] = useState({ mics: [], cameras: [] }); const [error, setError] = useState(''); const [pending, setPending] = useState(false); const [wakeWord, setWakeWord] = useState(''); const [wakeWordError, setWakeWordError] = useState(''); const [confirmKind, setConfirmKind] = useState(null); const [changeKind, setChangeKind] = useState(null); const [selected, setSelected] = useState(''); const [dialog, setDialog] = useState(null);
-  const wakeWordTooLong = wakeWord.length > WAKE_WORD_MAX_LENGTH;
+  const wakeWordInvalid = Boolean(wakeWordIssue(wakeWord));
   useEffect(() => {
     Promise.all([fetchSettings(), fetchDevices()]).then(([nextConfig, nextDevices]) => {
       setDevices(nextDevices);
@@ -70,38 +82,21 @@ export default function SettingsPanel() {
   }
   function changeWakeWord(value) {
     setWakeWord(value);
-    setWakeWordError(value.length > WAKE_WORD_MAX_LENGTH ? WAKE_WORD_LIMIT_MESSAGE : '');
+    setWakeWordError(wakeWordIssue(value));
   }
-  async function saveWakeWord() {
+  function saveWakeWord() {
     const next = wakeWord.trim();
-    if (wakeWord.length > WAKE_WORD_MAX_LENGTH || next.length > WAKE_WORD_MAX_LENGTH) {
-      setWakeWordError(WAKE_WORD_LIMIT_MESSAGE);
-      return;
-    }
-    if (!koreanWakeWordPattern.test(next)) { setWakeWordError('한국어 이름으로 입력해주세요.'); return; }
-    setWakeWordError('');
+    const issue = wakeWordIssue(next);
+    if (issue) { setWakeWordError(issue); return; }
     const previous = normalizeWakeWord(config.settings.wakeWord);
-    setPending(true); setError('');
-    try {
-      const saved = await updateSettings({ settings: { ...config.settings, wakeWord: next }, updatedAt: config.updatedAt });
-      setConfig(saved);
-      setWakeWord(saved.settings.wakeWord);
-      if (normalizeWakeWord(saved.settings.wakeWord) === previous) return;
-      useOnboardingStore.getState().resetVoiceEnrollment();
-      navigate('/onboarding?step=micStart&mode=wake', { state: { previousWakeWord: previous, wakeWord: saved.settings.wakeWord } });
-    } catch (e) {
-      if (e.code === 'SETTINGS_STALE') {
-        try {
-          const latest = await fetchSettings();
-          setConfig(latest);
-          setWakeWord(normalizeWakeWord(latest.settings.wakeWord));
-        } catch (reloadError) { setError(reloadError.message); return; }
-      }
-      setError(e.message);
-    } finally { setPending(false); }
+    if (next === previous) return;
+    setWakeWordError('');
+    useOnboardingStore.getState().resetVoiceEnrollment();
+    try { sessionStorage.setItem('siaPendingWakeWord', next); } catch { /* 호출명 변경 기준 유지 */ }
+    navigate(`/onboarding?step=micStart&mode=wake&wakeWord=${encodeURIComponent(next)}`, { state: { previousWakeWord: previous, wakeWord: next } });
   }
   return <div className={styles.settings}><div className={styles.settingsVisual} aria-hidden="true"><ScannerVisual /></div>
-    <div className={`${styles.settingRow} ${styles.wakeRow}`}><label className={styles.settingLabel}>호출명 (Wake Word)<input value={wakeWord} aria-invalid={Boolean(wakeWordError)} onChange={(event) => changeWakeWord(event.target.value)} /></label><button className={styles.primary} onClick={saveWakeWord} disabled={pending || !wakeWord.trim() || wakeWordTooLong}>저장</button><small className={wakeWordError ? styles.wakeValidation : undefined}>{wakeWordError || '한국어 이름으로 입력해주세요.'}</small></div>
+    <div className={`${styles.settingRow} ${styles.wakeRow}`}><label className={styles.settingLabel}>호출명 (Wake Word)<input value={wakeWord} aria-invalid={Boolean(wakeWordError)} onChange={(event) => changeWakeWord(event.target.value)} /></label><button className={styles.primary} onClick={saveWakeWord} disabled={pending || !wakeWord.trim() || wakeWordInvalid}>저장</button><small className={wakeWordError ? styles.wakeValidation : undefined}>{wakeWordError || '한국어 이름으로 입력해주세요.'}</small></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.micRow}`}><label className={styles.settingLabel}>마이크<div className={styles.deviceValue} title={deviceLabel('mic')}>{deviceLabel('mic')}</div></label><button onClick={() => beginChange('mic')}>변경</button></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.cameraRow}`}><label className={styles.settingLabel}>카메라<div className={styles.deviceValue} title={deviceLabel('camera')}>{deviceLabel('camera')}</div></label><button onClick={() => beginChange('camera')}>변경</button></div>
     <Toggle area="startToggle" group="실행" label="컴퓨터 시작 시 자동 실행" description="컴퓨터 전원을 켜면 SIA가 자동으로 함께 실행됩니다." checked={config.settings.autoStart} onChange={async (checked) => { try { const next = await updateSettings({ settings: { ...config.settings, autoStart: checked }, updatedAt: config.updatedAt }); setConfig(next); await syncAutostart(checked); } catch (e) { setError(e.message); } }} />
