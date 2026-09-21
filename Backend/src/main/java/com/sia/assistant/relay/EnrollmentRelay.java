@@ -43,7 +43,7 @@ public class EnrollmentRelay {
     /**
      * FE wakeword_enroll_start {wakeWord?} — 이름 불러보기 시작.
      * {@code wakeWord} 가 없으면 지금 설정된 호출어로 등록한다 (온보딩 경로 — 고를 기회가 없었다).
-     * 완성된 한글 3~6글자가 아니면 여기서 끊는다: 5번을 다 부르고 나서 거절하면 사용자가 처음부터 다시 해야 한다.
+     * 글자 규칙(SettingsSchema)에 걸리면 여기서 끊는다: 5번을 다 부르고 나서 거절하면 사용자가 처음부터 다시 해야 한다.
      * AI 에는 <b>항상</b> 단어를 실어 보낸다 — 무엇과 비교해 MISMATCH 를 판정할지가 그 값이다.
      */
     public void startWakeword(JsonNode d) {
