@@ -78,10 +78,11 @@ button:disabled { cursor: default; opacity: .45; }
 .loading, .error { position: fixed; z-index: 40; top: 64px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--gaze-line); background: white; transform: translateX(-50%); }
 .error { color: #a32838; }
 
-.backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(39 61 91 / 56%); }
-.modal { position: relative; width: min(480px, calc(100vw - 48px)); min-height: 0; box-sizing: border-box; padding: 40px 36px 32px; border: 2px solid var(--gaze-line); border-radius: 8px; background: white; color: var(--gaze-navy); text-align: center; }
+.backdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(39 61 91 / 56%); }
+.modal { position: relative; width: min(840px, 100%); max-height: calc(100dvh - 32px); min-height: 0; box-sizing: border-box; overflow-y: auto; padding: clamp(28px, 5vh, 40px) clamp(20px, 4vw, 48px) 32px; border: 2px solid var(--gaze-line); border-radius: 8px; background: white; color: var(--gaze-navy); text-align: center; }
 .modal h2 { margin: 18px 0; font-size: 27px; }
 .modal p { color: #7695c7; font-size: 17px; line-height: 1.7; }
+.modal p span { display: block; white-space: nowrap; }
 .modal > .primary { min-width: 190px; margin-top: 22px; }
 .modalIcon { position: relative; display: grid; width: 84px; height: 84px; place-items: center; margin: 0 auto 16px; border: 2px solid var(--gaze-navy); border-radius: 50%; font-size: 42px; font-weight: 400; line-height: 1; }
 .modalIcon i { width: 14px; height: 14px; border-radius: 50%; background: var(--gaze-navy); }
@@ -103,4 +104,4 @@ button:disabled { cursor: default; opacity: .45; }
   .bottomBar { min-height: 62px; }
 }
 @media (max-width: 1000px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
-@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 36px 24px 32px; } .modalActions { flex-wrap: wrap; } }
+@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 30px 20px 26px; } .modal p span { white-space: normal; } .modalActions { flex-direction: column; } .modalActions button { width: 100%; min-width: 0; } }

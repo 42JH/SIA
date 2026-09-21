@@ -647,7 +647,6 @@ export function GestureRegistration({ onClose, onSaved }) {
       }
     },
     reg_frame: (data) => {
-      // TODO(BE): 카운트다운 중 실시간 프레임 이벤트가 없어 직전 화면만 유지 가능
       if (!registrationRequested.current) return;
       if (ignoredTempIds.current.has(data.tempId)) return;
       const current = useGestureStore.getState().registration;
@@ -814,7 +813,6 @@ export function GestureRegistration({ onClose, onSaved }) {
           {(registration.frame || registration.previewFrame) ? <img src={registration.frame || registration.previewFrame} alt="제스처 촬영 화면" /> : <span>카메라 화면을 기다리고 있습니다.</span>}
           <b className={registration.motion === 'DYNAMIC' && registration.takePhase === 'RECORDING' ? styles.recordingIndicator : undefined}>● {registration.motion === 'STATIC' ? 'PHOTO' : 'REC'} {registration.take || 1}/3</b>
           {registration.takePhase === 'COUNTDOWN' && <strong className={styles.countdown} aria-live="assertive">{countdown ?? 3}</strong>}
-          {registration.takePhase === 'COUNTDOWN' && registration.frame && <small className={styles.frameNotice}>직전 화면</small>}
           {flashTake && <span className={styles.captureFlash} key={flashTake} aria-hidden="true" />}
         </div>
         <div className={styles.progress}><i style={{ width: `${Math.max(registration.take - (registration.takePhase === 'DONE' ? 0 : 1), 0) / 3 * 100}%` }} /></div>
