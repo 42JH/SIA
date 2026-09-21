@@ -8,6 +8,7 @@ import { startGesturePreview, stopGesturePreview, subscribeGestures } from '../.
 import { useSessionStore } from '../../store/sessionStore';
 import { useOnboardingStore } from '../../store/onboardingStore';
 import { useOnboarding } from './useOnboarding';
+import OnboardingWakeView from './OnboardingWakeView';
 import GazeMeasurement from '../../components/onboarding/GazeMeasurement';
 import VoiceEnrollment from '../../components/onboarding/VoiceEnrollment';
 import MicLevelWaveform from '../../components/onboarding/MicLevelWaveform';
@@ -47,6 +48,9 @@ function clearPendingWakeWord() {
 function quotedWakeWord(reason, expected) {
   if (!reason || !expected) return reason;
   return reason.replace(/[“”"']([^“”"']+)[“”"']/g, `“${expected}”`);
+}
+function breakSentences(text) {
+  return String(text ?? '').replace(/([.!?])\s+/g, '$1\n').trim();
 }
 function isOnboardingRoute() {
   return window.location.pathname.includes('/onboarding');
@@ -261,7 +265,7 @@ export default function OnboardingFlow() {
   const [wakeWordReady, setWakeWordReady] = useState(!incomingWakeWord);
 
   const ready = connected && f.status?.agentConnected && !f.interrupted && wakeWordReady;
-  const micPreviewActive = ['wake', 'voice', 'voiceProcessing', 'voiceReview'].includes(f.step);
+  const micPreviewActive = (f.step === 'wake' ? !f.wakeDone : ['voice', 'voiceProcessing', 'voiceReview'].includes(f.step));
   const voiceWaveN = f.voiceSentence?.n ?? (f.step === 'voice' ? Math.min((f.voiceCompleted || 0) + 1, 5) : (f.voiceResult?.n ?? f.voiceCompleted));
   const wakeRejectionMessage = /호출어가|새 이름/.test(f.wakeRejection?.reason ?? '')
     ? `호출어가 “${enrollWakeWord}”(으)로 바뀌었어요. 새 이름으로 다시 5번 불러주세요.`
@@ -279,7 +283,6 @@ export default function OnboardingFlow() {
       if (cancelled) return;
       const current = normalizeWakeWord(data.settings.wakeWord);
       if (!previousWakeWord) loadedWakeRef.current = current;
-      if (!incomingWakeWord && !isWakeOnly) setName(current);
     }).catch(() => {}).finally(() => {
       if (!cancelled) setWakeWordReady(true);
     });
@@ -392,9 +395,7 @@ export default function OnboardingFlow() {
       if (settingsResult.status === 'fulfilled') {
         const data = settingsResult.value;
         setConfig(data);
-        const next = normalizeWakeWord(data.settings.wakeWord);
-        loadedWakeRef.current = next;
-        setName(next);
+        loadedWakeRef.current = normalizeWakeWord(data.settings.wakeWord);
         if (devicesResult.status === 'fulfilled') {
           setMic(devicesResult.value.mics.find((d) => data.settings.micDeviceId ? d.id === data.settings.micDeviceId : d.name === data.settings.micDevice)?.id ?? '');
           setCamera(devicesResult.value.cameras.find((d) => data.settings.cameraDeviceId ? d.id === data.settings.cameraDeviceId : d.name === data.settings.cameraDevice)?.id ?? '');
@@ -440,12 +441,31 @@ export default function OnboardingFlow() {
   const foot = (children) => <footer className={styles.footer}>{children}</footer>;
   const center = (children, className = '') => <div className={`${styles.center} ${className}`}>{children}</div>;
   const done = (title, heading, message, action) => <><FrameTitle>{title}</FrameTitle>{center(<><CheckGraphic /><h2>{heading}</h2><p>{message}</p></>, styles.doneCenter)}{foot(action)}</>;
+  if (isWakeOnly) {
+    return <OnboardingWakeView
+      step={f.step}
+      wakeDone={f.wakeDone}
+      wake={f.wake}
+      enrollWakeWord={enrollWakeWord}
+      rejection={f.wakeRejection ? breakSentences(wakeRejectionMessage) : ''}
+      micLevels={micPreview.levels}
+      micError={micPreview.error}
+      canStart={ready && !wakeWordIssue(enrollWakeWord)}
+      pending={f.pending}
+      error={f.error}
+      connectionError={f.connectionError}
+      delayed={f.request?.delayed}
+      onStart={startWakeEnrollment}
+      onCancel={cancelMicEnrollment}
+      onFinish={finishWakeChange}
+    />;
+  }
   let content;
   switch (f.step) {
     case 'welcome': content = <><div className={styles.welcomeContent}><div className={styles.welcomeCopy}><h1>어서오세요!</h1><span className={styles.titleRule} /><h2>SIA</h2><p>당신의 AI 비서</p></div><WelcomeOrb /></div>{foot(btn('SIA 시작하기', basic))}</>; break;
     case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} /><small>{wakeWordIssue(name) || '한국어 이름으로 입력해주세요.'}</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || Boolean(wakeWordIssue(name))))}</>; break;
     case 'micStart': content = <><FrameTitle>{isWakeOnly ? '호출명 변경' : '마이크 설정'}</FrameTitle>{center(<><p className={styles.lead}>{isWakeOnly ? '호출명을 등록합니다' : '마이크 설정을 시작합니다'}</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.</p><MicGraphic /></>, styles.startCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', startWakeEnrollment, !ready || Boolean(wakeWordIssue(enrollWakeWord)))}</>)}</>; break;
-    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p><MicLevelWaveform levels={micPreview.levels} />{f.wakeRejection && <p className={styles.rejection} role="status">{wakeRejectionMessage}</p>}{micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isWakeOnly && btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
+    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<>{f.wakeDone ? <><h2>호출명 학습이 완료되었습니다</h2>{!isWakeOnly && <p>화자등록으로 넘어가 주세요.</p>}</> : <><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p></>}{!f.wakeDone && <MicLevelWaveform levels={micPreview.levels} />}{f.wakeRejection && <p className={styles.rejection} role="status">{breakSentences(wakeRejectionMessage)}</p>}{!f.wakeDone && micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isWakeOnly && btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
       content = <VoiceEnrollment mode="recording" current={current} total={5} sentence={sentences[current - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} micLevels={micPreview.levels} />; break;
