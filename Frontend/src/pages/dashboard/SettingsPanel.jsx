@@ -7,9 +7,37 @@ import { useOnboardingStore } from '../../store/onboardingStore';
 import { syncAutostart } from '../../utils/nativeAutostart';
 import styles from './DashboardHome.module.css';
 
+const WAKE_WORD_MIN_LENGTH = 2;
+const WAKE_WORD_MAX_LENGTH = 8;
+const koreanWakeWordPattern = /^[가-힣]+$/;
+
+function normalizeWakeWord(value) {
+  const next = typeof value === 'string' ? value.trim() : '';
+  return next;
+}
+
+function wakeWordIssue(value) {
+  const next = typeof value === 'string' ? value.trim() : '';
+  if (!next) return '';
+  if (!koreanWakeWordPattern.test(next)) {
+    return '호출명(wakeWord) 설정은 완성된 한글로만 이루어져야 합니다 (예: "시아야"). 자모 · 영문 · 숫자 · 기호 · 공백은 쓸 수 없습니다';
+  }
+  if (next.length < WAKE_WORD_MIN_LENGTH || next.length > WAKE_WORD_MAX_LENGTH) {
+    return `호출명(wakeWord) 설정은 2~8글자여야 합니다 (지금 ${next.length}글자)`;
+  }
+  return '';
+}
+
 export default function SettingsPanel() {
-  const navigate = useNavigate(); const [config, setConfig] = useState(null); const [devices, setDevices] = useState({ mics: [], cameras: [] }); const [error, setError] = useState(''); const [pending, setPending] = useState(false); const [wakeWord, setWakeWord] = useState(''); const [confirmKind, setConfirmKind] = useState(null); const [changeKind, setChangeKind] = useState(null); const [selected, setSelected] = useState(''); const [dialog, setDialog] = useState(null);
-  useEffect(() => { Promise.all([fetchSettings(), fetchDevices()]).then(([nextConfig, nextDevices]) => { setConfig(nextConfig); setWakeWord(nextConfig.settings.wakeWord); setDevices(nextDevices); }).catch((e) => setError(e.message)); }, []);
+  const navigate = useNavigate(); const [config, setConfig] = useState(null); const [devices, setDevices] = useState({ mics: [], cameras: [] }); const [error, setError] = useState(''); const [pending, setPending] = useState(false); const [wakeWord, setWakeWord] = useState(''); const [wakeWordError, setWakeWordError] = useState(''); const [confirmKind, setConfirmKind] = useState(null); const [changeKind, setChangeKind] = useState(null); const [selected, setSelected] = useState(''); const [dialog, setDialog] = useState(null);
+  const wakeWordInvalid = Boolean(wakeWordIssue(wakeWord));
+  useEffect(() => {
+    Promise.all([fetchSettings(), fetchDevices()]).then(([nextConfig, nextDevices]) => {
+      setDevices(nextDevices);
+      setConfig(nextConfig);
+      setWakeWord(normalizeWakeWord(nextConfig.settings.wakeWord));
+    }).catch((e) => setError(e.message));
+  }, []);
   if (!config) return <p>{error || '설정을 불러오는 중입니다.'}</p>;
   const current = (kind) => config.settings[kind === 'mic' ? 'micDeviceId' : 'cameraDeviceId'];
   const deviceLabel = (kind) => {
@@ -52,31 +80,27 @@ export default function SettingsPanel() {
       state: { deviceChange: { kind: changeKind, deviceId: item?.id ?? null, deviceName: item?.name ?? null } },
     });
   }
-  async function saveWakeWord() {
+  function changeWakeWord(value) {
+    setWakeWord(value);
+    setWakeWordError(wakeWordIssue(value));
+  }
+  function saveWakeWord() {
     const next = wakeWord.trim();
-    if (!next) { setError('호출명을 입력해주세요.'); return; }
-    setPending(true); setError('');
-    try {
-      const saved = await updateSettings({ settings: { ...config.settings, wakeWord: next }, updatedAt: config.updatedAt });
-      setConfig(saved);
-      setWakeWord(saved.settings.wakeWord);
-    } catch (e) {
-      if (e.code === 'SETTINGS_STALE') {
-        try {
-          const latest = await fetchSettings();
-          setConfig(latest);
-          setWakeWord(latest.settings.wakeWord);
-        } catch (reloadError) { setError(reloadError.message); return; }
-      }
-      setError(e.message);
-    } finally { setPending(false); }
+    const issue = wakeWordIssue(next);
+    if (issue) { setWakeWordError(issue); return; }
+    const previous = normalizeWakeWord(config.settings.wakeWord);
+    if (next === previous) return;
+    setWakeWordError('');
+    useOnboardingStore.getState().resetVoiceEnrollment();
+    try { sessionStorage.setItem('siaPendingWakeWord', next); } catch { /* 호출명 변경 기준 유지 */ }
+    navigate(`/onboarding?step=micStart&mode=wake&wakeWord=${encodeURIComponent(next)}`, { state: { previousWakeWord: previous, wakeWord: next } });
   }
   return <div className={styles.settings}><div className={styles.settingsVisual} aria-hidden="true"><ScannerVisual /></div>
-    <div className={`${styles.settingRow} ${styles.wakeRow}`}><label className={styles.settingLabel}>호출명 (Wake Word)<input value={wakeWord} onChange={(event) => setWakeWord(event.target.value)} maxLength="20" /></label><button className={styles.primary} onClick={saveWakeWord} disabled={pending || !wakeWord.trim()}>저장</button><small>한국어 이름으로 입력해주세요.</small></div>
+    <div className={`${styles.settingRow} ${styles.wakeRow}`}><label className={styles.settingLabel}>호출명 (Wake Word)<input value={wakeWord} aria-invalid={Boolean(wakeWordError)} onChange={(event) => changeWakeWord(event.target.value)} /></label><button className={styles.primary} onClick={saveWakeWord} disabled={pending || !wakeWord.trim() || wakeWordInvalid}>저장</button><small className={wakeWordError ? styles.wakeValidation : undefined}>{wakeWordError || '한국어 이름으로 입력해주세요.'}</small></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.micRow}`}><label className={styles.settingLabel}>마이크<div className={styles.deviceValue} title={deviceLabel('mic')}>{deviceLabel('mic')}</div></label><button onClick={() => beginChange('mic')}>변경</button></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.cameraRow}`}><label className={styles.settingLabel}>카메라<div className={styles.deviceValue} title={deviceLabel('camera')}>{deviceLabel('camera')}</div></label><button onClick={() => beginChange('camera')}>변경</button></div>
     <Toggle area="startToggle" group="실행" label="컴퓨터 시작 시 자동 실행" description="컴퓨터 전원을 켜면 SIA가 자동으로 함께 실행됩니다." checked={config.settings.autoStart} onChange={async (checked) => { try { const next = await updateSettings({ settings: { ...config.settings, autoStart: checked }, updatedAt: config.updatedAt }); setConfig(next); await syncAutostart(checked); } catch (e) { setError(e.message); } }} />
-    {error && <p className={styles.error}>{error}</p>}{confirmKind && <Modal><DeviceIcon kind={confirmKind} /><h2>{confirmKind === 'mic' ? '마이크' : '카메라'} 변경</h2><label className={styles.deviceChoice}>{confirmKind === 'mic' ? '마이크' : '카메라'}<select value={selected} onChange={(e) => setSelected(e.target.value)}>{confirmKind === 'mic' && <option value="">시스템 기본 마이크</option>}{list.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? ' (기본)' : ''}</option>)}</select></label><p>장치를 변경하면 해당 장치의 기존 학습 데이터를 자동 전환합니다.</p><div className={styles.dialogActions}><button onClick={finishChange}>취소</button><button className={styles.primary} onClick={() => { setConfirmKind(null); saveDevice(); }} disabled={pending || (confirmKind === 'camera' && !selected)}>변경</button></div></Modal>}{dialog && <ProfileDialog dialog={dialog} kind={changeKind} pending={pending} close={finishChange} activate={activate} enroll={startEnrollment} removeAndEnroll={removeAndEnroll} />}
+    {error && <p className={styles.error}>{error}</p>}{confirmKind && !dialog && <Modal><DeviceIcon kind={confirmKind} /><h2>{confirmKind === 'mic' ? '마이크' : '카메라'} 변경</h2><label className={styles.deviceChoice}>{confirmKind === 'mic' ? '마이크' : '카메라'}<select value={selected} onChange={(e) => setSelected(e.target.value)}>{confirmKind === 'mic' && <option value="">시스템 기본 마이크</option>}{list.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? ' (기본)' : ''}</option>)}</select></label><p>장치를 변경하면 해당 장치의 기존 학습 데이터를 자동 전환합니다.</p><div className={styles.dialogActions}><button onClick={finishChange}>취소</button><button className={styles.primary} onClick={() => { setConfirmKind(null); saveDevice(); }} disabled={pending || (confirmKind === 'camera' && !selected)}>변경</button></div></Modal>}{dialog && <ProfileDialog dialog={dialog} kind={changeKind} pending={pending} close={finishChange} activate={activate} enroll={startEnrollment} removeAndEnroll={removeAndEnroll} />}
   </div>;
 }
 

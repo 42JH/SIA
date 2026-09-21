@@ -73,13 +73,14 @@ button:disabled { cursor: default; opacity: .45; }
 .completeFrame p { margin: 0 0 44px; color: var(--calib-copy); font-size: 18px; }
 .completeFrame button { position: absolute; right: 42px; bottom: 28px; min-width: 150px; }
 
-.backdrop { position: fixed; z-index: 2100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(12 28 58 / 78%); }
-.modal { position: relative; width: min(480px, calc(100vw - 48px)); min-height: 0; box-sizing: border-box; padding: 40px 36px 32px; border: 2px solid var(--calib-navy); border-radius: 8px; background: #fff; text-align: center; }
+.backdrop { position: fixed; z-index: 2100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(12 28 58 / 78%); }
+.modal { position: relative; width: min(820px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; padding: clamp(28px, 5vh, 40px) clamp(20px, 4vw, 48px) 30px; border: 2px solid var(--calib-navy); border-radius: 8px; background: #fff; text-align: center; }
 .modalIcon { display: grid; width: 60px; height: 60px; place-items: center; margin: 0 auto 16px; border: 2px solid var(--calib-navy); border-radius: 50%; font-size: 32px; line-height: 1; }
 .modal h2 { margin: 0 0 15px; font-size: 25px; }
 .modal p { color: var(--calib-copy); font-size: 17px; line-height: 1.6; }
 .modal > div:last-child { display: flex; justify-content: center; gap: 12px; margin-top: 28px; }
 .modal button { min-width: 170px; min-height: 48px; border: 2px solid var(--calib-navy); background: white; color: var(--calib-navy); font: inherit; font-weight: 800; cursor: pointer; }
+@media (max-width: 620px) { .modal > div:last-child { flex-direction: column; } .modal button { width: 100%; min-width: 0; } }
 .status, .error { position: fixed; z-index: 2200; top: 94px; left: 50%; margin: 0; padding: 10px 18px; border: 1px solid var(--calib-line); background: white; transform: translateX(-50%); }
 .error { color: #a32838; }
 

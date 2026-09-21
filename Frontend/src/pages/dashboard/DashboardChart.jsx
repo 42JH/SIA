@@ -4,7 +4,7 @@ import styles from './DashboardHome.module.css';
 const colors = ['#f5f8ff', '#88a6d0', '#31ddf2'];
 
 function AxisLabel({ x, y, anchor = 'middle', children }) {
-  const raw = String(children ?? '');
+  const raw = String(children ?? '').replace(/^\d{2,4}\s*년\s*/, '');
   const week = raw.match(/^(\d{1,2}월)\s*(\d주차)$/);
   if (week) {
     return <text x={x} y={y - 10} textAnchor={anchor}><tspan x={x} dy="0">{week[1]}</tspan><tspan x={x} dy="13">{week[2]}</tspan></text>;
@@ -40,7 +40,7 @@ export function BarChart({ buckets, series, lineKey = null, minimumMax = 1, valu
     {buckets.map((bucket, i) => {
       const visible = series.map((item, s) => ({ item, s, value: bucket[item.key] })).filter((entry) => Number(entry.value) > 0);
       const clickable = Boolean(onBucketClick) && visible.length > 0;
-      return <g key={bucket.key} onClick={clickable ? () => onBucketClick(bucket) : undefined} style={{ cursor: clickable ? 'pointer' : 'default' }}><rect x={left + i * groupW} y={top} width={groupW} height={height - top} fill="transparent" />{visible.map((entry, visibleIndex) => { const h = entry.value / max * innerH; const visualW = barW - 5; const cluster = visible.length * visualW + Math.max(visible.length - 1, 0) * 5; const xx = left + i * groupW + (groupW - cluster) / 2 + visibleIndex * barW; return <rect key={entry.item.key} x={xx} y={top + innerH - h} width={visualW} height={h} fill={colors[entry.s]} />; })}<AxisLabel x={center(i)} y={height - 16}>{bucket.label}</AxisLabel></g>;
+      return <g key={bucket.key} role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : undefined} aria-label={clickable ? `${bucket.label} 상세 보기` : undefined} onClick={clickable ? () => onBucketClick(bucket) : undefined} onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') onBucketClick(bucket); } : undefined} style={{ cursor: clickable ? 'pointer' : 'default' }}><rect x={left + i * groupW} y={top} width={groupW} height={height - top} fill="transparent" />{visible.map((entry, visibleIndex) => { const h = entry.value / max * innerH; const visualW = barW - 5; const cluster = visible.length * visualW + Math.max(visible.length - 1, 0) * 5; const xx = left + i * groupW + (groupW - cluster) / 2 + visibleIndex * barW; return <rect key={entry.item.key} x={xx} y={top + innerH - h} width={visualW} height={h} fill={colors[entry.s]} />; })}<AxisLabel x={center(i)} y={height - 16}>{bucket.label}</AxisLabel></g>;
     })}
     {linePoints && <><polyline points={linePoints} fill="none" stroke={colors[2]} strokeWidth="2.5" strokeDasharray="5 5" />{buckets.map((bucket, index) => Number.isFinite(bucket[lineKey]) ? <circle key={bucket.key} cx={center(index)} cy={y(bucket[lineKey])} r="4" fill="#fff" stroke={colors[2]} strokeWidth="2" /> : null)}</>}
   </svg>;

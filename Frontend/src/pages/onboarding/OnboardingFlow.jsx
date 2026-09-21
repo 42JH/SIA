@@ -25,6 +25,33 @@ function normalizeWakeWord(value) {
   return next || DEFAULT_WAKE_WORD;
 }
 
+function wakeWordIssue(value) {
+  const next = typeof value === 'string' ? value.trim() : '';
+  if (!next) return '한국어 이름으로 입력해주세요.';
+  if (!/^[가-힣]+$/.test(next)) {
+    return '호출명(wakeWord) 설정은 완성된 한글로만 이루어져야 합니다 (예: "시아야"). 자모 · 영문 · 숫자 · 기호 · 공백은 쓸 수 없습니다';
+  }
+  if (next.length < 2 || next.length > 8) {
+    return `호출명(wakeWord) 설정은 2~8글자여야 합니다 (지금 ${next.length}글자)`;
+  }
+  return '';
+}
+
+function readPendingWakeWord() {
+  try { return (sessionStorage.getItem('siaPendingWakeWord') || '').trim(); }
+  catch { return ''; }
+}
+function clearPendingWakeWord() {
+  try { sessionStorage.removeItem('siaPendingWakeWord'); } catch { /* ignore */ }
+}
+function quotedWakeWord(reason, expected) {
+  if (!reason || !expected) return reason;
+  return reason.replace(/[“”"']([^“”"']+)[“”"']/g, `“${expected}”`);
+}
+function isOnboardingRoute() {
+  return window.location.pathname.includes('/onboarding');
+}
+
 const GRADE_EXCELLENT_PX = 160;
 const GRADE_GOOD_PX = 250;
 
@@ -209,7 +236,11 @@ export default function OnboardingFlow() {
   const connected = useSessionStore((s) => s.wsConnected);
   const [config, setConfig] = useState(null);
   const [devices, setDevices] = useState({ mics: [], cameras: [] });
-  const [name, setName] = useState(DEFAULT_WAKE_WORD);
+  const [name, setName] = useState(() => {
+    const fromState = typeof location.state?.wakeWord === 'string' ? location.state.wakeWord.trim() : '';
+    const fromQuery = (new URLSearchParams(location.search).get('wakeWord') || '').trim();
+    return fromState || fromQuery || readPendingWakeWord() || DEFAULT_WAKE_WORD;
+  });
   const [mic, setMic] = useState('');
   const [camera, setCamera] = useState('');
   const [cameraSettingsOnly, setCameraSettingsOnly] = useState(false);
@@ -217,22 +248,43 @@ export default function OnboardingFlow() {
   const loadedWakeRef = useRef(DEFAULT_WAKE_WORD);
   const savedWakeThisSessionRef = useRef(false);
   const flowMode = new URLSearchParams(location.search).get('mode');
+  const previousWakeWord = typeof location.state?.previousWakeWord === 'string' ? location.state.previousWakeWord.trim() : '';
+  const incomingWakeWord = (typeof location.state?.wakeWord === 'string' ? location.state.wakeWord.trim() : '')
+    || (new URLSearchParams(location.search).get('wakeWord') || '').trim()
+    || readPendingWakeWord();
+  const isWakeOnly = flowMode === 'wake';
   const isMicOnly = flowMode === 'mic';
   const isCameraOnly = flowMode === 'camera';
+  const enrollWakeWord = (isWakeOnly ? (incomingWakeWord || readPendingWakeWord()) : name).trim();
+  const fromSettings = isWakeOnly || isMicOnly;
   const deviceChange = location.state?.deviceChange;
+  const [wakeWordReady, setWakeWordReady] = useState(!incomingWakeWord);
 
-  const ready = connected && f.status?.agentConnected && !f.interrupted;
+  const ready = connected && f.status?.agentConnected && !f.interrupted && wakeWordReady;
   const micPreviewActive = ['wake', 'voice', 'voiceProcessing', 'voiceReview'].includes(f.step);
   const voiceWaveN = f.voiceSentence?.n ?? (f.step === 'voice' ? Math.min((f.voiceCompleted || 0) + 1, 5) : (f.voiceResult?.n ?? f.voiceCompleted));
+  const wakeRejectionMessage = /호출어가|새 이름/.test(f.wakeRejection?.reason ?? '')
+    ? `호출어가 “${enrollWakeWord}”(으)로 바뀌었어요. 새 이름으로 다시 5번 불러주세요.`
+    : quotedWakeWord(f.wakeRejection?.reason, enrollWakeWord);
   const micPreview = useMicPreview(micPreviewActive && connected, `${f.step}-${f.wake.n}-${voiceWaveN}`);
   const change = f.change;
   useEffect(() => {
+    let cancelled = false;
+    if (previousWakeWord) {
+      loadedWakeRef.current = previousWakeWord;
+      savedWakeThisSessionRef.current = true;
+    }
+    if (incomingWakeWord) setName(incomingWakeWord);
     fetchSettings().then((data) => {
-      const next = normalizeWakeWord(data.settings.wakeWord);
-      loadedWakeRef.current = next;
-      setName(next);
-    }).catch(() => {});
-  }, []);
+      if (cancelled) return;
+      const current = normalizeWakeWord(data.settings.wakeWord);
+      if (!previousWakeWord) loadedWakeRef.current = current;
+      if (!incomingWakeWord && !isWakeOnly) setName(current);
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setWakeWordReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [previousWakeWord, incomingWakeWord, isWakeOnly]);
   useEffect(() => {
     if (f.step !== 'voiceReview') return;
     if (!micPreview.envelope.some((level) => level > 0.08)) return;
@@ -242,16 +294,22 @@ export default function OnboardingFlow() {
   useEffect(() => {
     if (f.step === 'micDone') voiceCommittedRef.current = true;
   }, [f.step]);
-  async function restoreDefaultWakeWord() {
-    if (isMicOnly || isCameraOnly || voiceCommittedRef.current || !savedWakeThisSessionRef.current) return;
-    try {
-      const latest = await fetchSettings();
-      const current = normalizeWakeWord(latest.settings.wakeWord);
-      if (current === DEFAULT_WAKE_WORD || current === loadedWakeRef.current) return;
-      await updateSettings({ settings: { ...latest.settings, wakeWord: DEFAULT_WAKE_WORD }, updatedAt: latest.updatedAt });
-    } catch { /* 이탈 시 화면 상태 초기화 우선 */ }
+  useEffect(() => {
+    if (!isWakeOnly || f.step !== 'wake' || !f.wakeDone) return undefined;
+    voiceCommittedRef.current = true;
+    fetchSettings().then((data) => {
+      setName(normalizeWakeWord(data.settings.wakeWord));
+    }).catch(() => {}).finally(() => {
+      clearPendingWakeWord();
+      change({ step: 'micDone', pending: false, request: null });
+    });
+    return undefined;
+  }, [isWakeOnly, f.step, f.wakeDone, change]);
+  async function restorePreviousWakeWord() {
+    return;
   }
   useEffect(() => () => {
+    if (isOnboardingRoute()) return;
     const state = useOnboardingStore.getState();
     if (state.step === 'wake') {
       try { sendOnboarding('wakeword_enroll_cancel', {}); } catch { /* 이탈 시 화면 상태 초기화 우선 */ }
@@ -259,9 +317,9 @@ export default function OnboardingFlow() {
     if (state.voiceTempId && ['voice', 'voiceProcessing', 'voiceReview'].includes(state.step)) {
       try { sendOnboarding('voice_reg_cancel', { tempId: state.voiceTempId }); } catch { /* 이탈 시 화면 상태 초기화 우선 */ }
     }
-    if (isMicOnly) state.resetVoiceEnrollment();
-    if (VOICE_INCOMPLETE_STEPS.includes(state.step)) restoreDefaultWakeWord();
-  }, [isMicOnly, isCameraOnly]);
+    if (isMicOnly || isWakeOnly) state.resetVoiceEnrollment();
+    if (VOICE_INCOMPLETE_STEPS.includes(state.step)) restorePreviousWakeWord();
+  }, [isMicOnly, isWakeOnly, isCameraOnly, previousWakeWord]);
   useEffect(() => {
     const requestedStep = new URLSearchParams(window.location.search).get('step');
     if (requestedStep === 'micStart' || requestedStep === 'gazeStart') {
@@ -288,15 +346,21 @@ export default function OnboardingFlow() {
       navigate('/dashboard?view=settings');
     });
   }
-  function cancelMicEnrollment() {
+  function finishWakeChange() {
+    clearPendingWakeWord();
+    change({ step: 'welcome', pending: false, interrupted: false });
+    navigate('/dashboard?view=settings');
+  }
+  async function cancelMicEnrollment() {
     if (f.step === 'wake' && connected) {
       try { sendOnboarding('wakeword_enroll_cancel', {}); } catch (error) { change({ error: error.message }); }
     }
     if (f.voiceTempId && connected) {
       try { sendOnboarding('voice_reg_cancel', { tempId: f.voiceTempId }); } catch (error) { change({ error: error.message }); }
     }
-    restoreDefaultWakeWord();
-    if (!isMicOnly) setName(DEFAULT_WAKE_WORD);
+    await restorePreviousWakeWord();
+    if (!isMicOnly) setName(loadedWakeRef.current);
+    clearPendingWakeWord();
     change({ step: 'welcome', pending: false, interrupted: true, request: null });
     navigate('/dashboard?view=settings');
   }
@@ -310,6 +374,15 @@ export default function OnboardingFlow() {
       change({ pending: true, error: '', ...patch });
     }
     catch (error) { change({ pending: false, error: error.message }); }
+  }
+  function startWakeEnrollment() {
+    const word = enrollWakeWord.trim();
+    const issue = wakeWordIssue(word);
+    if (issue) {
+      change({ error: issue, pending: false });
+      return;
+    }
+    send('wakeword_enroll_start', { wakeWord: word }, { step: 'wake', wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null, pending: false });
   }
   async function basic() {
     go('basic');
@@ -336,7 +409,7 @@ export default function OnboardingFlow() {
     await run(async () => {
       try {
         const nextName = name.trim();
-        setConfig(await updateSettings({ settings: { ...config.settings, wakeWord: nextName, micDevice: label(mic, 'mics'), micDeviceId: mic || null, cameraDevice: label(camera, 'cameras'), cameraDeviceId: camera || null }, updatedAt: config.updatedAt }));
+        setConfig(await updateSettings({ settings: { ...config.settings, micDevice: label(mic, 'mics'), micDeviceId: mic || null, cameraDevice: label(camera, 'cameras'), cameraDeviceId: camera || null }, updatedAt: config.updatedAt }));
         savedWakeThisSessionRef.current = nextName !== loadedWakeRef.current;
       }
       catch (error) { if (error.code === 'SETTINGS_STALE') setConfig(await fetchSettings()); throw error; }
@@ -370,9 +443,9 @@ export default function OnboardingFlow() {
   let content;
   switch (f.step) {
     case 'welcome': content = <><div className={styles.welcomeContent}><div className={styles.welcomeCopy}><h1>어서오세요!</h1><span className={styles.titleRule} /><h2>SIA</h2><p>당신의 AI 비서</p></div><WelcomeOrb /></div>{foot(btn('SIA 시작하기', basic))}</>; break;
-    case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} maxLength="20" /><small>한국어 이름으로 입력해주세요.</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || !name.trim()))}</>; break;
-    case 'micStart': content = <><FrameTitle>마이크 설정</FrameTitle>{center(<><p className={styles.lead}>마이크 설정을 시작합니다</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.</p><MicGraphic /></>, styles.startCenter)}{foot(<>{isMicOnly && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', () => send('wakeword_enroll_start', {}, { step: 'wake', wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null, pending: false }), !ready)}</>)}</>; break;
-    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<><h2>“{name}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p><MicLevelWaveform levels={micPreview.levels} />{f.wakeRejection && <p className={styles.rejection} role="status">{f.wakeRejection.reason}</p>}{micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{isMicOnly && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
+    case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} /><small>{wakeWordIssue(name) || '한국어 이름으로 입력해주세요.'}</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || Boolean(wakeWordIssue(name))))}</>; break;
+    case 'micStart': content = <><FrameTitle>{isWakeOnly ? '호출명 변경' : '마이크 설정'}</FrameTitle>{center(<><p className={styles.lead}>{isWakeOnly ? '호출명을 등록합니다' : '마이크 설정을 시작합니다'}</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.</p><MicGraphic /></>, styles.startCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', startWakeEnrollment, !ready || Boolean(wakeWordIssue(enrollWakeWord)))}</>)}</>; break;
+    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p><MicLevelWaveform levels={micPreview.levels} />{f.wakeRejection && <p className={styles.rejection} role="status">{wakeRejectionMessage}</p>}{micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isWakeOnly && btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
       content = <VoiceEnrollment mode="recording" current={current} total={5} sentence={sentences[current - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} micLevels={micPreview.levels} />; break;
@@ -388,7 +461,9 @@ export default function OnboardingFlow() {
         : send('voice_sentence_next', { tempId }, { step: 'voice', voiceSentence: null, voiceResult: null, finalVoiceReview: null, voiceWaveform: [] });
       content = <VoiceEnrollment mode="review" review={review ?? {}} waveform={(f.voiceWaveform ?? []).some((level) => level > 0.08) ? f.voiceWaveform : micPreview.envelope} current={current} total={5} rejected={review?.rejected === true} ready={ready} pending={f.pending} canRetry={Boolean(tempId)} canAccept={current < 5 || Boolean(f.finalVoiceReview)} onRetry={retry} onAccept={accept} />; break;
     }
-    case 'micDone': content = done('마이크 설정', '마이크 설정 완료!', '목소리 등록이 완료되었습니다.', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;
+    case 'micDone': content = isWakeOnly
+      ? done('호출명 변경', '등록완료', '호출명이 변경되었습니다.', btn('설정으로 돌아가기', finishWakeChange))
+      : done('마이크 설정', '마이크 설정 완료!', '목소리 등록이 완료되었습니다.', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;
     case 'gazeStart': content = <><FrameTitle>시선 설정</FrameTitle>{center(<><p className={styles.lead}>시선 설정을 시작합니다</p><div className={styles.gazeStartGraphic} aria-hidden="true"><span className={styles.scopeOuter} /><span className={styles.scopeMiddle} /><span className={styles.scopeInner} /><i className={styles.scopeCross} /><b className={styles.scopeDot} /></div></>, styles.startCenter)}{foot(btn('시작하기', () => send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, poorCount: 0, gazeWaitingSince: Date.now(), gazeDelayed: false, pending: false }), !ready))}</>; break;
     case 'position': {
       const validPosition = Boolean(f.precheck?.face && f.precheck.distance === 'ok' && f.precheck.lighting === 'ok');
@@ -411,5 +486,5 @@ export default function OnboardingFlow() {
     default: content = done('설정 완료', '완료!', '이제 SIA를 시작할 수 있습니다.', <Link className={styles.linkButton} to="/dashboard">완료</Link>);
   }
   const stepClassName = styles[`step_${f.step}`] ?? '';
-  return <main className={styles.page}><section className={`${styles.card} ${stepClassName}`} aria-label="첫 설정"><FrameChrome /><img className={styles.logo} src={logo} alt="SIA" />{content}<div className={styles.systemMessages}>{f.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{f.request?.delayed && <p role="status">{f.request.type} 응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요.</p>}{f.connectionError && <p className={styles.error} role="alert">{f.connectionError}</p>}{f.error && <p className={styles.error} role="alert">{f.error}</p>}{f.interrupted && btn('처음부터 다시 설정', () => { restoreDefaultWakeWord(); setName(DEFAULT_WAKE_WORD); change({ interrupted: false }); go('welcome'); }, !connected, 'secondary')}</div></section><p className={styles.connection}>실시간 연결: {connected ? '연결됨' : '대기 중'} · AI: {f.status?.agentConnected ? '연결됨' : '대기 중'}</p></main>;
+  return <main className={styles.page}><section className={`${styles.card} ${stepClassName}`} aria-label="첫 설정"><FrameChrome /><img className={styles.logo} src={logo} alt="SIA" />{content}<div className={styles.systemMessages}>{f.pending && <p role="status">서버 응답을 기다리고 있습니다.</p>}{f.request?.delayed && <p role="status">{f.request.type} 응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요.</p>}{f.connectionError && <p className={styles.error} role="alert">{f.connectionError}</p>}{f.error && <p className={styles.error} role="alert">{f.error}</p>}{f.interrupted && btn('처음부터 다시 설정', () => { restorePreviousWakeWord(); setName(loadedWakeRef.current); change({ interrupted: false }); go('welcome'); }, !connected, 'secondary')}</div></section><p className={styles.connection}>실시간 연결: {connected ? '연결됨' : '대기 중'} · AI: {f.status?.agentConnected ? '연결됨' : '대기 중'}</p></main>;
 }
