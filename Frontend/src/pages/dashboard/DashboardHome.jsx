@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { fetchDashboardOverview, fetchDashboardAccuracy, fetchDashboardLatency, fetchDashboardUsage, fetchDashboardApps } from '../../api/dashboard';
+import { fetchDashboardAccuracy, fetchDashboardLatency, fetchDashboardUsage, fetchDashboardApps } from '../../api/dashboard';
 import { BarChart, HorizontalBars } from './DashboardChart';
 import GesturePanel from './GesturePanel';
 import SettingsPanel from './SettingsPanel';
@@ -93,6 +93,19 @@ function isFutureWindow(period, date) {
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()) > todayStart;
 }
+function isCurrentWindow(period, date) {
+  const today = new Date();
+  if (period === 'year') return date.getFullYear() === today.getFullYear();
+  if (period === 'month') return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (period === 'day') return target.getTime() === todayStart.getTime();
+  const monday = new Date(todayStart);
+  monday.setDate(todayStart.getDate() - ((todayStart.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return target >= monday && target <= sunday;
+}
 function currentWindowDate(anchor, buckets) {
   return parseBucketDate(anchor?.key ?? buckets.find((bucket) => parseBucketDate(bucket.key))?.key) ?? new Date();
 }
@@ -180,6 +193,12 @@ function expandSelectedBucket(kind, axis, bucket, seed) {
 function applyAnchor(kind, period, data, selection) {
   const axis = axisForPeriod(period, selection?.key);
   if (!axis || !data) return data;
+  if (kind === 'apps') {
+    const date = parseBucketDate(selection.key);
+    // TODO(BE): GET /api/dashboard/apps 는 period만 받아 현재 창 items만 준다. 다른 해 조회 파라미터가 없다
+    if (date && isCurrentWindow(period, date)) return data;
+    return { ...data, items: [], summary: { totalLaunches: 0, topAppKey: null, topDisplayName: null, topCount: 0 } };
+  }
   const byKey = new Map((data.buckets ?? []).map((bucket) => [String(bucket.key), bucket]));
   const hasMatchingRange = axis.some((slot) => byKey.has(slot.key));
   const buckets = axis.map((slot) => ({ ...emptyBucket(kind, slot), ...(byKey.get(slot.key) ?? {}) , key: slot.key, label: slot.label }));
@@ -189,6 +208,10 @@ function applyAnchor(kind, period, data, selection) {
   return { ...data, buckets: expandSelectedBucket(kind, axis, fallback, selection.key), summary: selectedSummary(kind, fallback), generated: true };
 }
 function latestBucketWithData(kind, data) { return [...(data?.buckets ?? [])].reverse().find((bucket) => bucketHasData(kind, bucket)) ?? null; }
+function keepThroughCurrentMonth(buckets) {
+  const cutoff = `${new Date().getFullYear()}-${pad2(new Date().getMonth() + 1)}`;
+  return (buckets ?? []).filter((bucket) => String(bucket.key ?? '').slice(0, 7) <= cutoff);
+}
 function graphPeriodLabel(period, anchor, buckets) {
   const fallbackKey = buckets.find((bucket) => parseBucketDate(bucket.key))?.key;
   const date = parseBucketDate(anchor?.key ?? fallbackKey) ?? new Date();
@@ -235,36 +258,46 @@ export default function DashboardHome() {
   }, [menu]);
   useEffect(() => {
     if (!details[view]) return undefined;
-    setDetail(null);
-    load(async () => {
-      // TODO(BE): GET /api/dashboard/* 는 period만 받아 오늘 기준 창만 준다. 좌우 이동용 기준일(from/to 또는 date)이 없다
-      const data = await fetchers[view](period, anchor ? { anchor: anchor.key } : {});
-      if (anchor) return applyAnchor(view, period, data, await resolveAnchor(view, period, anchor));
-      if ((period === 'week' || period === 'day') && !latestBucketWithData(view, data)) {
-        const parent = await fetchers[view](period === 'week' ? 'month' : 'week');
-        let latest = latestBucketWithData(view, parent);
-        if (!latest && period === 'day') latest = latestBucketWithData(view, await fetchers[view]('month'));
-        if (latest) return applyAnchor(view, period, data, { key: latest.key, bucket: latest });
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    (async () => {
+      try {
+        // TODO(BE): GET /api/dashboard/* 는 period만 받아 오늘 기준 창만 준다. 좌우 이동용 기준일(from/to 또는 date)이 없다
+        const data = await fetchers[view](period, anchor ? { anchor: anchor.key } : {});
+        let next = data;
+        if (cancelled) return;
+        if (anchor) next = applyAnchor(view, period, data, await resolveAnchor(view, period, anchor));
+        else if ((period === 'week' || period === 'day') && !latestBucketWithData(view, data)) {
+          const parent = await fetchers[view](period === 'week' ? 'month' : 'week');
+          if (cancelled) return;
+          let latest = latestBucketWithData(view, parent);
+          if (!latest && period === 'day') latest = latestBucketWithData(view, await fetchers[view]('month'));
+          if (latest) next = applyAnchor(view, period, data, { key: latest.key, bucket: latest });
+        }
+        if (!cancelled) setDetail(next);
+      } catch (requestError) {
+        if (!cancelled) setError(requestError.message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      return data;
-    }, setDetail);
-    return undefined;
+    })();
+    return () => { cancelled = true; };
   }, [view, period, anchor]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
   function loadHome() {
     load(async () => {
-      const [base, accuracy, latency, usage, apps] = await Promise.all([
-        fetchDashboardOverview(),
+      // TODO(BE): overview는 week 고정. 홈 누적 표시는 year 창 요약을 사용
+      const [accuracy, latency, usage, apps] = await Promise.all([
         fetchDashboardAccuracy('year'),
         fetchDashboardLatency('year'),
         fetchDashboardUsage('year'),
         fetchDashboardApps('year'),
       ]);
       return {
-        ...base,
         accuracy: { period: 'year', ...(accuracy.summary ?? {}) },
         latency: { period: 'year', ...(latency.summary ?? {}) },
-        usage: { period: 'year', bucketUnit: usage.bucketUnit, buckets: usage.buckets ?? [], total: usage.summary?.total ?? 0 },
+        usage: { period: 'year', bucketUnit: usage.bucketUnit, buckets: keepThroughCurrentMonth(usage.buckets ?? []), total: usage.summary?.total ?? 0 },
         topApps: apps.items ?? [],
       };
     }, setOverview);
@@ -298,7 +331,7 @@ export default function DashboardHome() {
   return <main className={`${styles.page} ${styles[`view_${view}`] ?? ''}`}>
     <header className={styles.header}><button className={styles.brand} onClick={() => open('home')} aria-label="대시보드 홈"><SiaLogo /></button><span />{!(registration && ['form', 'complete'].includes(registration.stage)) && <button className={styles.menuButton} onClick={() => setMenu((value) => !value)} aria-label="메뉴"><i /><i /><i /></button>}</header>
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['home', '대시보드'], ['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
-    <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
+    <section className={styles.content}>{loading && !(details[view] && detail) && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
       {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} loading={loading} anchor={anchor} setAnchor={setAnchor} />}
       {((view === 'gestures' && !registration) || view === 'settings') && <div className={styles.panelHeading}><button onClick={back} aria-label="이전 화면으로 돌아가기">‹</button><h1>{panelTitle}</h1></div>}
