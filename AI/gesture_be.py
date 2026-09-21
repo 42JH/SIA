@@ -354,6 +354,9 @@ class GestureRegistration:
     STATIC_HOLD_S = 0.4
     MIN_STATIC_SAMPLES = 8
     MIN_STATIC_MOTION_FRAMES = 4  # 2손 정적: 회차당 평균낼 프레임이 너무 적으면 떨림이 안 지워진다
+    # Partial 3D streams must not silently fall back to ambiguous 2D checks.
+    # A completely unavailable world stream remains a compatibility fallback.
+    TWO_HAND_WORLD_MIN_RATIO = 0.70
     FRAME_MARGIN = 0.02  # 정규화 좌표가 이만큼 넘게 [0,1]을 벗어나면 화면 밖으로 본다
     OUT_OF_FRAME_HOLD_S = 0.50
     OUT_OF_FRAME_RATIO = 0.35
@@ -1389,7 +1392,7 @@ class GestureRegistration:
             return points
         frames = [(t, world_points(hands)) for t, hands in raw]
         valid = [(t, points) for t, points in frames if points is not None]
-        if not valid or len(valid) < max(2, int(np.ceil(len(raw) * 0.7))):
+        if not valid or len(valid) < max(2, int(np.ceil(len(raw) * self.TWO_HAND_WORLD_MIN_RATIO))):
             return None
         if static:
             average = np.mean([points for _, points in valid], axis=0)
@@ -1398,6 +1401,17 @@ class GestureRegistration:
 
     def _two_hand_world_sequence(self, take, static=False):
         return self._world_sequence(take, 2, static=static)
+
+    def _two_hand_world_coverage(self, take):
+        """Return the fraction of two-hand frames carrying both 3D hands."""
+        raw = self.take_frames.get(take, [])
+        total = sum(1 for _, hands in raw if len(hands) == 2)
+        if not total:
+            return None
+        valid = sum(1 for _, hands in raw
+                    if len(hands) == 2 and ordered_world_landmarks(hands) is not None)
+        return (valid / total) if valid else None
+
 
     def _one_hand_take_observations(self, take):
         """1손 촬영에서 순간적인 두 번째 손 오검출을 제거해 주 손만 반환한다.
@@ -1570,6 +1584,14 @@ class GestureRegistration:
                     raise ValueError(f"{take}회차의 움직임이 너무 작아 동적 제스처로 구분하기 어렵습니다. 동작을 조금 더 크게 해주세요")
             sequences.append(seq)
             if hand_count in (1, 2):
+                if self.motion == self.STATIC and hand_count == 2:
+                    world_coverage = self._two_hand_world_coverage(take)
+                    if (world_coverage is not None
+                            and world_coverage < self.TWO_HAND_WORLD_MIN_RATIO):
+                        raise ValueError(
+                            f"{take}???? 3D ? ???? ??? ??????? "
+                            f"({world_coverage:.0%}). ? ?? ???? ? ???? ?????"
+                        )
                 world_seq = self._world_sequence(take, hand_count,
                                                  static=self.motion == self.STATIC)
                 world_valid.append(world_seq is not None)
