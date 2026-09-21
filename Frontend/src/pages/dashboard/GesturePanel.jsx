@@ -114,7 +114,10 @@ function CameraIcon({ video = false }) {
   );
 }
 
-const directionLabels = { up: '위', down: '아래', left: '왼쪽', right: '오른쪽' };
+const directionLabels = {
+  up: '위', down: '아래', left: '왼쪽', right: '오른쪽',
+  forward: '앞으로', backward: '뒤로',
+};
 const presetLabels = { LEFT_HALF: '화면 왼쪽 절반', RIGHT_HALF: '화면 오른쪽 절반', CENTER: '화면 가운데' };
 const argumentLabels = {
   appRef: '앱', winRef: '대상 창', query: '검색어', path: '경로', name: '파일 이름', content: '내용',
@@ -167,7 +170,7 @@ const requiredArgs = {
   'app.launch': ['appRef'],
   'browser.search': ['query'],
   'window.focus': ['winRef'], 'window.minimize': ['winRef'], 'window.maximize': ['winRef'], 'window.restore': ['winRef'], 'window.resize': ['winRef', 'preset'],
-  'scroll.step': ['dir'], 'volume.step': ['dir'], 'volume.set': ['level'], 'files.open': ['path'], 'files.save': ['name'],
+  'scroll.step': ['dir'], 'media.seek': ['dir'], 'volume.step': ['dir'], 'volume.set': ['level'], 'files.open': ['path'], 'files.save': ['name'],
   'screen.capture_region': ['x1', 'y1', 'x2', 'y2'],
 };
 
@@ -436,7 +439,7 @@ function parseSteps(steps) {
     ['amount', 'level', 'x1', 'y1', 'x2', 'y2'].forEach((key) => {
       if (args[key] !== undefined) args[key] = Number(args[key]);
     });
-    if (step.tool === 'scroll.step' && Number.isFinite(args.amount)) args.amount = Math.min(10, Math.max(1, args.amount));
+    if (['scroll.step', 'media.seek'].includes(step.tool) && Number.isFinite(args.amount)) args.amount = Math.min(10, Math.max(1, args.amount));
     return { tool: step.tool, args };
   });
 }
@@ -473,6 +476,7 @@ function StepSettings({ step, apps, update }) {
   if (step.tool === 'window.resize') return <div className={styles.stepSettings}>{text('winRef', '창 참조값')}<select value={step.args.preset ?? ''} onChange={(event) => set('preset', event.target.value)}><option value="">위치 선택</option><option value="LEFT_HALF">왼쪽 절반</option><option value="RIGHT_HALF">오른쪽 절반</option><option value="CENTER">가운데</option></select></div>;
   if (step.tool === 'explorer.items') return <div className={styles.stepSettings}>{text('winRef', '탐색기 창 참조값 (선택)')}</div>;
   if (step.tool === 'scroll.step') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">방향 선택</option><option value="up">위</option><option value="down">아래</option><option value="left">왼쪽</option><option value="right">오른쪽</option></select><input type="number" min="1" max="10" value={step.args.amount ?? ''} onChange={(event) => { const raw = event.target.value; if (raw === '') { set('amount', ''); return; } const next = Number(raw); if (!Number.isFinite(next)) return; set('amount', String(Math.min(10, Math.max(1, Math.round(next))))); }} placeholder="이동량 1~10 (선택)" /></div>;
+  if (step.tool === 'media.seek') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">이동 방향 선택</option><option value="forward">앞으로 이동</option><option value="backward">뒤로 이동</option></select><input type="number" min="1" max="10" value={step.args.amount ?? ''} onChange={(event) => { const raw = event.target.value; if (raw === '') { set('amount', ''); return; } const next = Number(raw); if (!Number.isFinite(next)) return; set('amount', String(Math.min(10, Math.max(1, Math.round(next))))); }} placeholder="이동 횟수 1~10 (선택, 기본 1)" />{text('winRef', '영상 창 참조값 (선택, 예: win:1)')}</div>;
   if (step.tool === 'volume.step') return <div className={styles.stepSettings}><select value={step.args.dir ?? ''} onChange={(event) => set('dir', event.target.value)}><option value="">방향 선택</option><option value="up">볼륨 올리기</option><option value="down">볼륨 내리기</option></select></div>;
   if (step.tool === 'volume.set') return <div className={styles.stepSettings}><input type="number" min="0" max="100" value={step.args.level ?? ''} onChange={(event) => set('level', event.target.value)} placeholder="볼륨 0~100" /></div>;
   if (step.tool === 'files.open') return <FileTargetPicker path={step.args.path ?? ''} onChange={(path) => set('path', path)} />;
