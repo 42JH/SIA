@@ -212,9 +212,6 @@ class AgentLink:
         if self.wake_store is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
             # 호출어 설정을 먼저 적용한다. 다운로드 시작 뒤 설정이 바뀌면 받은 파일이 폐기된다.
             self.wake_store.on_settings(d.get("settings"))   # settings.wakeWord — 호출어 문자열 자체
-            if self.wake is not None:
-                # 수집 중이면 새 이름으로 다시 받게 한다 — 옛 이름으로 5개를 채운 뒤 버리지 않도록
-                self.wake.on_word_changed(self.wake_store.wake_word())
             blobs = d.get("blobs")
             if isinstance(blobs, dict) and "wakeword" in blobs:
                 self.wake_store.on_blob(blobs["wakeword"])   # 전역 호출어 템플릿 참조 (sha256 또는 null)
@@ -252,7 +249,7 @@ class AgentLink:
             elif t == "calib_changed":     c.on_changed(d)
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
         elif t == "wakeword_enroll_start" and self.wake:
-            self.wake.on_start()
+            self.wake.on_start(d.get("wakeWord"))
         # 온보딩 "명령 문장 말하기"(command_*) 단계는 폐기됐다(229) — 그 낭독 5문장이 곧 위 voice_* 등록이다
         # 마이크·제스처 설정은 메인 루프, 활성 보이스 참조는 위 동기화 워커로 넘긴다.
         # NOTE(한계): wipe 수신은 아직 처리하지 않는다. 모르는 type은 무시한다(프로토콜 §1.5).

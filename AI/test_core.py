@@ -1093,7 +1093,6 @@ def test_wake_enroll():
     class FakeStore:
         """등록이 쓰는 저장소 면만 흉내낸다 — 서버 쓰기도 저장소를 지난다(차례표로 순서를 지킨다)."""
         def __init__(self): self.committed, self.seq, self.broken, self.hold = [], 0, False, None
-        def wake_word(self): return "시아야"
         def reserve_write(self):
             self.seq += 1
             return self.seq, 0
@@ -1142,7 +1141,7 @@ def test_wake_enroll():
     we = WakeEnroll(link, FakeSpeaker(), store, model)
     we.on_utter(clip())                              # 시작 전 발화는 무시
     assert not we.active and link.sent == []
-    we.on_start()
+    we.on_start("시아야")
     we.on_utter(clip(0.1))                           # 헛기침 — 안 센다
     we.on_utter(clip(3.0))                           # 문장 — 안 센다
     scores["hit"] = 0.1
@@ -1165,14 +1164,14 @@ def test_wake_enroll():
     we.on_utter(clip())                              # 끝난 뒤 발화는 안 센다
     assert len(link.sent) == WAKE_TOTAL + 4
     link.sent.clear()
-    we.on_start()                                    # 두 번째 회차 — 처음부터
+    we.on_start("시아야")                            # 두 번째 회차 — 처음부터
     we.on_utter(clip())
     assert link.sent == [("wakeword_sample", {"n": 1, "total": WAKE_TOTAL})]
     # 로컬 저장만 실패한 경우 — 모은 5개를 그대로 두고, 다음 발화를 여섯 번째 샘플이 아니라 저장 재시도로 쓴다
     link.sent.clear()
     puts.clear()
     store.broken = True
-    we.on_start()
+    we.on_start("시아야")
     for _ in range(WAKE_TOTAL):
         we.on_utter(clip())
     rejected = [d for t, d in link.sent if t == "wakeword_rejected"]
@@ -1188,14 +1187,14 @@ def test_wake_enroll():
     link.sent.clear()
     puts.clear()
     store.committed.clear()
-    we.on_start()
+    we.on_start("시아야")
     for _ in range(WAKE_TOTAL - 1):
         we.on_utter(clip())
     store.hold = (threading.Event(), threading.Event())
     stale = threading.Thread(target=lambda: we.on_utter(clip()))   # 5번째 → 확정 → PUT 에 매달린다
     stale.start()
     assert store.hold[0].wait(3)
-    we.on_start()                                    # 매달린 사이 재시작 (회차가 올라간다)
+    we.on_start("시아야")                            # 매달린 사이 재시작 (회차가 올라간다)
     store.hold[1].set()
     stale.join(5)
     assert not stale.is_alive() and not store.committed
@@ -1223,8 +1222,7 @@ def test_wake_enroll_custom():
         def _send(self, o): self.sent.append((o["type"], o["data"]))
 
     class FakeStore:
-        def __init__(self): self.committed, self.word, self.seq = [], "철수야", 0
-        def wake_word(self): return self.word
+        def __init__(self): self.committed, self.seq = [], 0
         def reserve_write(self):
             self.seq += 1
             return self.seq, 0
@@ -1283,26 +1281,26 @@ def test_wake_enroll_custom():
     with patch.object(wake_head, "load_bank", fake_bank), patch.object(wake_head, "train_head", fake_train):
         # ① 5개 통과 → 헤드를 학습해 담은 등록본으로 확정
         we = WakeEnroll(link, FakeSpeaker(), store, None, scorer)
-        we.on_start()
+        we.on_start("하늘아")
         for _ in range(WAKE_TOTAL):
             we.on_utter(clip())
         we._trainer.join(20)
         assert [t for t, _ in link.sent].count("wakeword_sample") == WAKE_TOTAL
-        assert trains == [WAKE_TOTAL] and words == ["철수야"] * WAKE_TOTAL     # 등록 대상 호출어로 채점한다
+        assert trains == [WAKE_TOTAL] and words == ["하늘아"] * WAKE_TOTAL     # 설정이 아닌 등록 후보로 채점한다
         assert ("notice", {"message": "이름을 익히는 중이에요. 잠시만 기다려 주세요."}) in link.sent, link.sent
         assert [t for t, _ in link.sent][-1] == "wakeword_done" and not we.active
         template = store.committed[0]
-        assert template.has_head and template.wake_text == "철수야" and len(puts) == 1
+        assert template.has_head and template.wake_text == "하늘아" and len(puts) == 1
         assert template.scores == (-2.0,) * WAKE_TOTAL                         # 기록은 단어 확률이다
 
         # ② 단어 확률이 하한 미만이면 MISMATCH — 순번은 그대로, 하한 위(-4.3)는 통과
         link.sent.clear()
-        we.on_start()
+        we.on_start("하늘아")
         lp["v"] = -4.7
         we.on_utter(clip())
         assert link.sent == [("wakeword_rejected", {
             "n": 1, "total": WAKE_TOTAL, "code": "MISMATCH",
-            "reason": '"철수야" 로 들리지 않았어요. 또박또박 다시 불러주세요.'})]
+            "reason": '"하늘아" 로 들리지 않았어요. 또박또박 다시 불러주세요.'})]
         link.sent.clear()
         lp["v"] = -4.3
         we.on_utter(clip())
@@ -1319,7 +1317,7 @@ def test_wake_enroll_custom():
         # ④ 부정 뱅크가 없으면 한 번도 부르게 하지 않고 접는다 — 5번 부른 뒤에 실패를 알리지 않는다
         link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
         bank_ok["v"] = False
-        we.on_start()
+        we.on_start("하늘아")
         we._preload.join(20)
         lp["v"] = -2.0
         assert not we.active and not we._samples, "뱅크가 없으면 수집을 이어 가지 않는다"
@@ -1330,35 +1328,38 @@ def test_wake_enroll_custom():
         assert not we._samples and not trains, "접은 뒤 발화는 샘플이 아니다 — 명령으로 가야 한다"
 
         bank_ok["v"] = True
-        we.on_start()
+        we.on_start("하늘아")
         for _ in range(WAKE_TOTAL):
             we.on_utter(clip())
         we._trainer.join(20)
         assert trains == [WAKE_TOTAL] and len(puts) == 1 and store.committed[0].has_head
         assert [t for t, _ in link.sent][-1] == "wakeword_done"
 
-        # ④-2 수집 중에 설정 호출어가 바뀌면 모은 샘플을 버리고 새 이름으로 다시 받는다
+        # ④-2 새 등록은 이전 후보와 샘플을 무효화하고 새 후보로 다시 받는다
         link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear(); words.clear()
-        we.on_start()
+        we.on_start("하늘아")
         for _ in range(3):
             we.on_utter(clip())
         assert len(we._samples) == 3
-        store.word = "대길이"
-        assert we.on_word_changed(store.word) and not we.on_word_changed(store.word)
+        we.on_start("대길이")
         assert we.active and not we._samples and we.wake_text == "대길이"
-        assert link.sent[-1] == ("wakeword_rejected", {
-            "n": 1, "total": WAKE_TOTAL,
-            "reason": '호출어가 "대길이" 로 바뀌었어요. 새 이름으로 다시 5번 불러주세요.'}), link.sent[-1]
         for _ in range(WAKE_TOTAL):
             we.on_utter(clip())
         we._trainer.join(20)
-        assert words == ["철수야"] * 3 + ["대길이"] * WAKE_TOTAL       # 바뀐 뒤로는 새 이름으로 채점한다
+        assert words == ["하늘아"] * 3 + ["대길이"] * WAKE_TOTAL
         assert store.committed[0].wake_text == "대길이" and trains == [WAKE_TOTAL]
-        store.word = "철수야"
+
+        # ④-3 수집 중 취소는 후보 샘플만 버리고 저장하지 않는다
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
+        we.on_start("하늘아")
+        for _ in range(3):
+            we.on_utter(clip())
+        assert we.cancel() and not we.active and not we._samples
+        assert not store.committed and not puts
 
         # ⑤ 학습 중에 재시작하면 그 결과는 새 회차에 반영하지 않는다 (학습 중 발화도 세지 않는다)
         link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
-        we.on_start()
+        we.on_start("하늘아")
         for _ in range(WAKE_TOTAL - 1):
             we.on_utter(clip())
         hold["v"] = (threading.Event(), threading.Event())
@@ -1367,7 +1368,7 @@ def test_wake_enroll_custom():
         assert gate[0].wait(5)
         we.on_utter(clip())
         assert len(we._samples) == WAKE_TOTAL            # 학습 중 발화는 샘플이 아니다
-        we.on_start()                                    # 매달린 사이 재시작 (회차가 올라간다)
+        we.on_start("하늘아")                            # 매달린 사이 재시작 (회차가 올라간다)
         hold["v"] = None
         gate[1].set()
         stale.join(5)
@@ -1379,9 +1380,24 @@ def test_wake_enroll_custom():
         assert len(store.committed) == 1 and len(puts) == 1
         assert [t for t, _ in link.sent][-1] == "wakeword_done"
 
+        # ⑤-2 학습 중 취소는 늦게 끝난 결과를 적용하지 않는다
+        link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
+        we.on_start("하늘아")
+        for _ in range(WAKE_TOTAL - 1):
+            we.on_utter(clip())
+        hold["v"] = (threading.Event(), threading.Event())
+        we.on_utter(clip())
+        stale, gate = we._trainer, hold["v"]
+        assert gate[0].wait(5) and we.cancel()
+        hold["v"] = None
+        gate[1].set()
+        stale.join(5)
+        assert not stale.is_alive() and not store.committed and not puts
+        assert not any(t == "wakeword_done" for t, _ in link.sent)
+
         # ⑥ 단어 확률 미달이 이어지면 호출어를 바꾸라고 권한다 — 한 번 통과하면 셈이 풀린다
         link.sent.clear()
-        we.on_start()
+        we.on_start("하늘아")
         lp["v"] = -5.0
         for _ in range(WAKE_ENROLL_WORD_FAILS):
             we.on_utter(clip())
@@ -1397,9 +1413,8 @@ def test_wake_enroll_custom():
         # ⑦ "시아야" 는 고정 모델 그대로 — 헤드를 학습하지도, 단어 확률을 묻지도 않는다
         link.sent.clear(); puts.clear(); trains.clear(); store.committed.clear()
         n_words = len(words)
-        store.word = "시아야"
         we.wake_model = SimpleNamespace(predict_clip=predict_clip)
-        we.on_start()
+        we.on_start("시아야")
         for _ in range(WAKE_TOTAL):
             we.on_utter(clip())
         assert not trains and len(words) == n_words       # 헤드 학습도, 단어 확률 질의도 없다
