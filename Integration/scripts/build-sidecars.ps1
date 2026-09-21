@@ -1,4 +1,4 @@
-# BE(jpackage)·AI(PyInstaller)를 빌드해서 Tauri sidecar 규칙에 맞는 이름으로
+﻿# BE(jpackage)·AI(PyInstaller)를 빌드해서 Tauri sidecar 규칙에 맞는 이름으로
 # src-tauri/binaries/ 에 배치하고, 이어서 `tauri build`로 최종 설치파일까지 만든다.
 # `npm run build:sidecars`로 실행 (사이드카만 필요하면 `-SkipTauriBuild` 옵션).
 #
