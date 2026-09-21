@@ -48,6 +48,9 @@
       "binaries/sia-backend",
       "binaries/sia-ai"
     ],
+    "resources": {
+      "binaries/sia-ai-support": "sia-ai-support"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

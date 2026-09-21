@@ -5,5 +5,5 @@
 # 직접 실행해서 붙여야 한다. 실제 sia-backend/sia-ai 바이너리가 생기면 이 스크립트 대신
 # 그냥 `npm run dev`를 쓰면 된다.
 $ErrorActionPreference = "Stop"
-$env:TAURI_CONFIG = '{"bundle":{"externalBin":[]}}'
+$env:TAURI_CONFIG = '{"bundle":{"externalBin":[],"resources":[]}}'
 npx tauri dev

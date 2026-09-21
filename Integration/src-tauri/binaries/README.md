@@ -7,8 +7,9 @@
 - `sia-backend-x86_64-pc-windows-msvc.exe`
   — Backend를 jpackage(또는 jlink 커스텀 런타임)로 만든 JRE 내장 실행파일.
 - `sia-ai-x86_64-pc-windows-msvc.exe`
-  — AI를 PyInstaller로 얼리거나, 포터블 파이썬 + 래퍼로 만든 실행파일.
-    (패키징 방식은 아직 미정 — AI 패키징 논의 결과에 따라 확정)
+  — AI를 PyInstaller onedir로 얼린 실행파일.
+- `sia-ai-support/`
+  — AI exe가 사용하는 Python 런타임·DLL·모델. exe와 형제 경로를 유지해야 한다.
 
 이 폴더 안의 실제 바이너리는 git에 커밋하지 않는다 (용량 큼, 빌드 산출물).
 루트 `.gitignore`에 추가 필요 — 지금은 이 README만 커밋됨.

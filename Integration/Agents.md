@@ -85,12 +85,13 @@ npm test
 ## 아직 확정하지 않는 항목
 
 - Backend의 jpackage/jlink 최종 구성과 동반 런타임 폴더 구조
-- AI의 PyInstaller 최종 spec, 숨은 import, 모델 포함 범위
+- AI의 PyInstaller hidden import·패키지 데이터 수집 범위
 - 최종 sidecar 이름과 실행 인자
 - 동적 포트 또는 고정 포트 선택
 - Frontend 및 Extension의 포트 주입 방식
-- **[위험, 우선 처리 필요] Tauri `bundle.resources`에 포함할 Backend/AI 보조
-  파일** — `tauri.conf.json`의 `bundle`에 `resources` 키가 아직 없다.
+- **[위험, 우선 처리 필요] Tauri `bundle.resources`에 포함할 Backend 보조
+  파일** — AI onedir의 `sia-ai-support/`는 `bundle.resources`에 등록했지만,
+  Backend의 두 폴더는 아직 등록하지 않았다.
   `scripts/build-sidecars.ps1`은 jpackage 산출물(`<sidecar>.exe` + `app/` +
   `runtime/`)을 로컬 `src-tauri/binaries/`에 나란히 배치하지만, Tauri의
   `externalBin`은 이름·타깃트리플이 맞는 sidecar 실행파일 하나만 최종 설치

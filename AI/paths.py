@@ -4,10 +4,11 @@
 지금까지는 둘 다 `HERE = Path(__file__).parent` 아래 `models/` 한 곳에 있었다. 소스로
 돌릴 때는 같은 폴더라 문제가 없지만, PyInstaller 로 얼리면 갈라진다.
 
-- onefile 로 얼리면 `__file__` 은 매 실행마다 새로 만들어지는 임시 추출 폴더
-  (`sys._MEIPASS`)를 가리킨다. 읽기 전용 모델을 찾는 데는 그게 맞다 — 거기로 풀리니까.
-- 그런데 온보딩이 새로 쓰는 사용자 데이터(wake·speaker·calib npz)도 같은 곳에 쓴다.
-  그 폴더는 앱이 끝나면 지워진다. **켤 때마다 온보딩을 다시 해야 하는 상태**가 된다.
+- PyInstaller 로 얼리면 `__file__` 은 번들의 지원 파일 폴더(`sys._MEIPASS`)를
+  가리킨다. 현재 onedir 배포에서는 exe 옆 `sia-ai-support`, onefile 배포에서는
+  매 실행 만드는 임시 추출 폴더다. 읽기 전용 모델을 찾는 데는 그 경로가 맞다.
+- 온보딩이 새로 쓰는 사용자 데이터(wake·speaker·calib npz)는 설치·번들 폴더에
+  쓰면 안 된다. 업데이트 때 사라질 수 있고 Program Files 아래에서는 쓰기 권한도 없다.
 
 그래서 둘을 나눈다.
 
@@ -31,7 +32,7 @@ from pathlib import Path
 
 FROZEN = bool(getattr(sys, "frozen", False))
 
-# PyInstaller 는 번들을 _MEIPASS 에 푼다. 소스 실행이면 이 파일 옆이 곧 자산 폴더다.
+# PyInstaller frozen 실행에서는 _MEIPASS가 번들 지원 폴더다. 소스 실행이면 이 파일 옆이 자산 폴더다.
 ASSET_DIR = Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent)
 
 

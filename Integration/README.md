@@ -13,14 +13,14 @@ Frontend/Backend/AI 세 프로세스를 하나의 데스크톱 앱으로 묶는 
 ## 아직 안 된 것 / 확정 안 된 것
 
 - **sidecar 바이너리 자체가 없음** — `src-tauri/binaries/`에 놓을
-  `sia-backend-*.exe`(jpackage), `sia-ai-*.exe`(PyInstaller or 포터블
-  파이썬) 를 만드는 작업이 선행돼야 실제로 뜬다.
+  `sia-backend-*.exe`(jpackage), `sia-ai-*.exe`(PyInstaller onedir)를 만드는
+  작업이 선행돼야 실제로 뜬다. AI는 exe 옆에 `sia-ai-support/`가 필요하다.
 - **sidecar 파일명은 임시 계약** — 현재는 `sia-backend`와 `sia-ai`를 사용한다.
   최종 패키징 방식이 정해지면 실행 인자와 리소스 디렉터리까지 함께 확정해야 한다.
-- **`bundle.resources` 미등록 (설치본에서 BE가 못 뜰 위험)** — jpackage
+- **BE 보조 폴더 `bundle.resources` 미등록 (설치본에서 BE가 못 뜰 위험)** — jpackage
   app-image는 `<sidecar>.exe` 옆에 `app/`·`runtime/` 폴더가 상대경로로
-  같이 있어야 동작하는데, `tauri.conf.json`의 `bundle`에는 아직
-  `resources` 키가 없다. `externalBin`은 sidecar 실행파일 하나만 최종
+  같이 있어야 동작하는데, `tauri.conf.json`의 `bundle.resources`에는
+  AI의 `sia-ai-support/`만 등록돼 있다. `externalBin`은 sidecar 실행파일 하나만 최종
   번들에 넣고 옆 폴더는 자동으로 안 넣으므로, 지금 상태로 `tauri build`를
   돌리면 로컬 `src-tauri/binaries/`에서는 되던 게 설치 파일에서는 BE가 못
   떠서 안 될 수 있다. `bundle.resources`에 `binaries/app`,

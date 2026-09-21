@@ -19,7 +19,8 @@
 # jpackage app-image로 만든 BE는 `<beName>.exe` 옆에 `app/`·`runtime/` 폴더가 상대경로로
 # 같이 있어야 실행된다. 이 스크립트는 그 셋을 `src-tauri/binaries/`에 나란히 복사해서
 # [5/5]의 로컬 `tauri build`(디버그)까지는 되게 만들지만, `tauri.conf.json`의
-# `bundle.resources`에 `binaries/app`·`binaries/runtime`을 아직 등록하지 않았다.
+# `bundle.resources`에는 AI onedir 보조 폴더만 등록돼 있고 BE의 `binaries/app`·
+# `binaries/runtime`은 아직 등록하지 않았다.
 # Tauri의 `externalBin`은 sidecar 실행파일 하나만 최종 설치 번들에 넣고 옆 폴더는 자동으로
 # 안 넣으므로, 이 상태로 만든 설치 파일(인스톨러)에서는 BE가 `app/`·`runtime/`을 못 찾아
 # 실행이 깨질 수 있다. `bundle.resources`를 채우는 작업이 먼저 필요하다.
@@ -88,8 +89,8 @@ $beImageDir = Join-Path $bePackageOut $beName
 
 # app-image 산출물은 <beName>.exe + app\ + runtime\ 세 가지가 서로 상대경로로 얽혀
 # 있어서 통째로 옮겨야 한다. exe 하나만 binaries\ 최상단에 두고 app\·runtime\ 도
-# 그 옆(형제 폴더)에 같이 둔다 — sia-ai 쪽은 onefile이라 이 두 폴더를 안 쓰므로
-# 이름 충돌 없음.
+# 그 옆(형제 폴더)에 같이 둔다. AI onedir 보조 파일은 별도의
+# `sia-ai-support\`를 쓰므로 이 두 폴더와 충돌하지 않는다.
 foreach ($name in @("$beName.exe", "app", "runtime")) {
     $destPath = Join-Path $binariesDir $name
     Remove-Item $destPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -98,9 +99,9 @@ foreach ($name in @("$beName.exe", "app", "runtime")) {
 Write-Host "BE sidecar 배치 완료: $binariesDir\$beName.exe (+ app\, runtime\)"
 
 # ---------------------------------------------------------------------------
-# [3/5] AI 빌드 (PyInstaller --onefile)
+# [3/5] AI 빌드 (PyInstaller --onedir)
 # ---------------------------------------------------------------------------
-Write-Host "=== [3/5] AI 빌드 (PyInstaller --onefile) ===" -ForegroundColor Cyan
+Write-Host "=== [3/5] AI 빌드 (PyInstaller --onedir) ===" -ForegroundColor Cyan
 
 if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
     throw "pyinstaller 를 PATH에서 못 찾았습니다. 'pip install pyinstaller' 먼저 실행하세요."
@@ -109,15 +110,32 @@ if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
 $aiName = "sia-ai-$target"
 Push-Location (Join-Path $root "AI")
 try {
-    # 내장 모델(4개, models/*.task·*.onnx)은 읽기 전용 자산이라 exe 안에 같이 얼린다.
+    # 내장 모델과 호출어 학습용 부정 뱅크는 읽기 전용 자산이라
+    # onedir의 sia-ai-support 폴더에 같이 넣는다.
     # wake.npz·speaker.npz·calib.npz 같은 사용자 생성 파일은 빌드 시점에 존재하지
-    # 않으므로 여기 안 들어간다 — 위 경고 블록 참고, 그 파일들의 런타임 저장 위치는
-    # AI 코드가 frozen 여부를 구분해서 별도로 정해야 한다.
-    pyinstaller --noconfirm --onefile --name $aiName `
+    # 않으므로 여기 안 들어간다. 해당 파일들은 AI/paths.py가 %APPDATA%\SIA\ai 아래에서
+    # 별도로 관리한다.
+    $requiredAiAssets = @(
+        "models\face_landmarker.task",
+        "models\gesture_recognizer.task",
+        "models\pose_landmarker_full.task",
+        "models\siaya_v2.onnx",
+        "models\eth-xgaze_resnet18.pth",
+        "models\wake_neg_bank.npz"
+    )
+    foreach ($asset in $requiredAiAssets) {
+        if (-not (Test-Path $asset)) {
+            throw "AI 빌드 자산을 못 찾았습니다: $asset"
+        }
+    }
+
+    pyinstaller --noconfirm --onedir --contents-directory "sia-ai-support" --name $aiName `
         --add-data "models\face_landmarker.task;models" `
         --add-data "models\gesture_recognizer.task;models" `
         --add-data "models\pose_landmarker_full.task;models" `
         --add-data "models\siaya_v2.onnx;models" `
+        --add-data "models\eth-xgaze_resnet18.pth;models" `
+        --add-data "models\wake_neg_bank.npz;models" `
         assistant.py
     if ($LASTEXITCODE -ne 0) { throw "pyinstaller 실패 (exit $LASTEXITCODE)" }
 } finally {
@@ -125,13 +143,20 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# [4/5] AI 산출물 배치 -> src-tauri/binaries/
+# [4/5] AI onedir 산출물 배치 -> src-tauri/binaries/
 # ---------------------------------------------------------------------------
-Write-Host "=== [4/5] AI 산출물 배치 ===" -ForegroundColor Cyan
-$aiExe = Join-Path $root "AI\dist\$aiName.exe"
+Write-Host "=== [4/5] AI onedir 산출물 배치 ===" -ForegroundColor Cyan
+$aiDistDir = Join-Path $root "AI\dist\$aiName"
+$aiExe = Join-Path $aiDistDir "$aiName.exe"
+$aiSupport = Join-Path $aiDistDir "sia-ai-support"
 if (-not (Test-Path $aiExe)) { throw "AI 빌드 산출물을 못 찾았습니다: $aiExe" }
+if (-not (Test-Path $aiSupport)) { throw "AI onedir 보조 폴더를 못 찾았습니다: $aiSupport" }
+
 Copy-Item $aiExe $binariesDir -Force
-Write-Host "AI sidecar 배치 완료: $binariesDir\$aiName.exe"
+$aiSupportDest = Join-Path $binariesDir "sia-ai-support"
+Remove-Item $aiSupportDest -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item $aiSupport $aiSupportDest -Recurse
+Write-Host "AI sidecar 배치 완료: $binariesDir\$aiName.exe (+ sia-ai-support\)"
 
 Write-Host ""
 Write-Host "=== 사이드카 배치 완료 — $binariesDir ===" -ForegroundColor Green
