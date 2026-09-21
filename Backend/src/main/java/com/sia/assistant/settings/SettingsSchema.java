@@ -32,6 +32,10 @@ final class SettingsSchema {
      */
     static final int DEFAULT_SESSION_SECONDS = 15;
 
+    /** 호출어 글자 수 — 너무 짧으면 생활 소음에 걸리고, 길면 한 번에 부르기 어렵다 (2026-09-21 확정). */
+    static final int WAKE_WORD_MIN = 2;
+    static final int WAKE_WORD_MAX = 8;
+
     /** 값의 허용 형태. */
     private enum Kind {
         /** 비어 있지 않은 문자열. */
@@ -121,6 +125,43 @@ final class SettingsSchema {
                 default -> throw new IllegalStateException("알 수 없는 설정 타입: " + key.kind());
             }
         }
+    }
+
+    /**
+     * 호출어 한 개를 검사한다 — 설정 문서가 아니라 <b>새로 정해지는 단어</b>용이다
+     * ({@code wakeword_enroll_start} 의 후보와 {@code SettingsService.commitWakeWord} 의 확정값).
+     * 등록을 시작하기 전에 걸러야 사용자가 5번을 다 부르고 나서 저장 단계에서 거절당하는 일이 없다.
+     *
+     * <p>★ 이 규칙을 {@link #validate}(설정 문서)에 넣지 않는 이유 — PUT 은 호출어를 바꿀 수 없으므로
+     * 거기서 글자 규칙을 강제하면, 규칙이 생기기 전에 저장된 호출어를 가진 DB 는 호출어와 무관한 설정
+     * 하나를 바꿀 때마다 400 을 맞는다. 옛 규칙은 "비어 있지 않은 문자열" 이라 영문·기호·한 글자까지
+     * 무엇이든 저장돼 있을 수 있고, 그걸 푸는 길인 재등록도 설정 저장을 거치면 같이 막힌다.
+     * 규칙은 값이 새로 들어오는 길목에서만 건다. 상·하한이 바뀌어도 이 구조는 그대로 간다.
+     *
+     * @throws ApiException 완성된 한글 {@value #WAKE_WORD_MIN}~{@value #WAKE_WORD_MAX}글자가 아니면 INVALID_REQUEST
+     */
+    static void validateWakeWord(String wakeWord) {
+        Key key = KEYS.stream().filter(k -> k.name().equals("wakeWord")).findFirst().orElseThrow();
+        if (wakeWord == null || wakeWord.isBlank()) {
+            throw bad(key, "비어 있지 않은 문자열이어야 합니다");
+        }
+        if (!isCompleteHangul(wakeWord)) {
+            throw bad(key, "완성된 한글로만 이루어져야 합니다 (예: \"시아야\")."
+                    + " 자모 · 영문 · 숫자 · 기호 · 공백은 쓸 수 없습니다");
+        }
+        int letters = wakeWord.codePointCount(0, wakeWord.length());
+        if (letters < WAKE_WORD_MIN || letters > WAKE_WORD_MAX) {
+            throw bad(key, WAKE_WORD_MIN + "~" + WAKE_WORD_MAX + "글자여야 합니다 (지금 " + letters + "글자)");
+        }
+    }
+
+    /**
+     * 완성형 한글 음절(U+AC00 가 ~ U+D7A3 힣)로만 이루어졌는지.
+     * 자모 단독(ㄱ · ㅏ) · 영문 · 숫자 · 기호는 물론 <b>공백도 허용하지 않는다</b> —
+     * 앞뒤 공백을 BE 가 말없이 다듬으면 사용자가 저장한 값과 감지 대상이 달라진다. 다듬기는 FE 몫이다.
+     */
+    private static boolean isCompleteHangul(String s) {
+        return s.codePoints().allMatch(cp -> cp >= 0xAC00 && cp <= 0xD7A3);
     }
 
     private static JsonNode pick(JsonNode current, JsonNode seed, String name) {

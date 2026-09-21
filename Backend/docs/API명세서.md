@@ -176,7 +176,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 
 | 키 | 타입 | 기본값 | 읽는 쪽 · 의미 |
 |---|---|---|---|
-| `wakeWord` | 비어 있지 않은 문자열 | `"시아야"` | AI (호출어 감지). 온보딩 문장은 FE · AI 의 고정 상수라 이 값과 무관하다 |
+| `wakeWord` | 완성된 한글 2~8글자 | `"시아야"` | AI (호출어 감지). 이름 불러보기로만 바뀐다 — 이 API 로는 바꿀 수 없다. 보이스 낭독 5문장은 FE · AI 의 고정 상수라 이 값과 무관하다 |
 | `sessionSeconds` | 1 이상 정수 | `15` | BE 세션 유지 시간. 변경은 다음 세션 개시 · 갱신부터 적용 |
 | `autoStart` | boolean | `true` | FE 가 집행한다. BE 는 저장 · 중계만 한다 |
 | `gazeCursor` | boolean | `false` | AI 가 `true` 일 때만 `gaze_cursor` 를 보낸다 |
@@ -191,7 +191,9 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 - 이름은 프로필의 `deviceLabel` 로 복사되어 장비 교체 자동 맵핑(§1.32)의 키가 된다. 프로필 확정 시 FE 가 `deviceLabel` 을 함께 보내면 그 값이 설정값보다 우선한다.
 - 이 네 키는 모두 AI 에게 `settings_changed` 로 그대로 전달된다 — 선택 결과를 AI 에 알리는 별도 엔드포인트는 없다.
 - **`null` 의 뜻은 마이크와 카메라가 다르다.** Windows 에는 기본 입력 장치(마이크)가 있지만 **기본 카메라는 없다**. 그래서 마이크의 `null` 은 "시스템 기본 장치를 따른다" 는 지시이고, 카메라의 `null` 은 "고르지 않았다" — AI 가 열거 순서 첫 장치를 연다.
-- `wakeWord` 를 바꿔도 호출어 모델(`blob:wakeword`)은 재학습되지 않는다.
+- `wakeWord` 와 호출어 모델(`blob:wakeword`)은 함께 바뀐다. 이름 불러보기로 새 단어를 5번 부르면 AI 가 모델을 올리고, BE 는 그 끝(`wakeword_done`)에서 `wakeWord` 를 확정한다. 중간에 그만두면 둘 다 그대로다.
+- 새 호출어의 글자 규칙은 **완성된 한글 2~8글자**다. 자모(`ㅅ`) · 영문 · 숫자 · 기호 · 공백은 쓸 수 없고, 앞뒤 공백도 다듬지 않고 거절한다.
+- 글자 규칙은 값이 **새로 정해지는 길목**(이름 불러보기)에서만 검사한다. 이 API 는 호출어를 바꿀 수 없으므로 저장된 값의 글자 수를 따지지 않는다 — 규칙보다 먼저 저장된 호출어를 가진 설치본도 다른 설정을 그대로 저장할 수 있다.
 
 ### 1.3 `PUT /api/settings` — 설정 교체
 
@@ -227,6 +229,7 @@ FE 가 주기적으로 폴링하는 엔드포인트다.
 | 완전성 | 본문에 **없는** 알려진 키는 기존 값(없으면 기본값)으로 채워 저장한다 |
 | 명시적 `null` | `micDevice: null` 처럼 키가 있고 값이 `null` 이면 그대로 저장한다. 채우지 않는다 |
 | 타입 안전 | 알려진 키의 타입이 틀리면 저장하지 않고 **400** |
+| 호출어 | `wakeWord` 는 이 API 로 바꿀 수 없다. 저장분과 다르면 **400** — 변경은 이름 불러보기(§4.2 `wakeword_enroll_start`)로만 한다. 같은 값을 실어 보내는 것은 통과하고, 그 값의 글자 수는 따지지 않는다 |
 | 미지의 키 | 검사 · 보정하지 않고 그대로 저장한다 |
 
 **400 INVALID_REQUEST**
@@ -2213,8 +2216,8 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 | `reg_start` | `{replaceGestureId?: long, motion?: STATIC \| DYNAMIC}` | 커스텀 제스처 등록 시작. `motion` 은 정적/동적 등록 창 중 사용자가 고른 쪽이다 — 생략하면 `DYNAMIC` 이다. `replaceGestureId` 가 있으면 그 제스처의 동작 재촬영. `motion` 이 두 값이 아니면 `error` |
 | `reg_stop` | `{tempId: string}` | 등록 구간 종료. 3회차 촬영이 끝난 뒤 FE 가 보낸다 |
 | `macro_assign` | 아래 상세 | 매크로 지정 · 저장 |
-| `wakeword_enroll_start` | `{}` | 이름 불러보기 시작 |
-| `wakeword_enroll_cancel` | `{}` | 이름 불러보기 중단. 등록 화면을 벗어날 때 보낸다 — 보내지 않으면 AI 가 수집 모드로 남는다. `tempId` 는 없다 |
+| `wakeword_enroll_start` | `{wakeWord?: string}` | 이름 불러보기 시작. `wakeWord` 는 이번에 등록할 호출어 — 생략하면 지금 설정된 호출어를 쓴다(온보딩). **완성된 한글 2~8글자**여야 하고 아니면 `error`. 설정은 이 시점에 바뀌지 않는다 — `wakeword_done` 때 확정된다 |
+| `wakeword_enroll_cancel` | `{}` | 이름 불러보기 중단. 등록 화면을 벗어날 때 보낸다 — 보내지 않으면 AI 가 수집 모드로 남는다. `tempId` 는 없다. 설정의 호출어는 바뀌지 않은 채로 남는다 |
 | `voice_reg_start` | `{}` | 보이스 등록 시작. 온보딩에서는 `wakeword_done` 뒤 바로 보낸다 |
 | `voice_sentence_next` | `{tempId: string}` | 판독 결과 확인 후 "다음" — 다음 문장 발급. 통과하지 않은 문장과 마지막 문장에서는 무시 |
 | `voice_sentence_retry` | `{tempId: string}` | 화면에 떠 있는 문장 다시. 다시 읽어 통과할 때까지 `voice_sentence_next` 는 무시된다 |
@@ -2343,7 +2346,7 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 |---|---|---|
 | `wakeword_progress` | `{n: int, total: int}` | 이름 불러보기 진행 (total 5) |
 | `wakeword_rejected` | `{n: int, total: int, reason: string, code?: string}` | 샘플 n 실패. `code` 는 사유 분류(`TOO_SHORT` · `TOO_LONG` · `NOISY` · `INCONSISTENT` · `MISMATCH`), 없거나 모르는 값이면 `reason` 을 쓴다. 순번은 오르지 않는다. 5/5 뒤에 오면 모델 저장 실패다 |
-| `wakeword_done` | `{}` | 호출어 모델 생성 완료 |
+| `wakeword_done` | `{}` | 호출어 모델 생성 완료. 등록한 단어가 설정의 호출어로 확정된 뒤에 온다 — 직전에 `settings_sync` 가 먼저 간다 |
 | `voice_sentence` | `{tempId: string, n: int, total: int}` | 읽을 낭독 문장의 순번 (total 5). 원문은 FE 상수. `tempId` 는 FE→BE 재시도·취소·커밋에 되돌려 보낸다 |
 | `voice_progress` | `{tempId: string, n: int, total: int}` | 문장 n 낭독 완료. 다음 문장은 자동으로 오지 않는다 — 판독 결과를 확인하고 `voice_sentence_next` 를 보내면 발급된다 |
 | `voice_sentence_rejected` | `{tempId: string, n: int, total: int, reason: string, code?: string}` | 문장 n 낭독 실패. `code` 는 사유 분류(`TOO_SHORT` · `TOO_LONG` · `NOISY` · `INCONSISTENT`), 없거나 모르는 값이면 `reason` 을 쓴다. 순번은 진행하지 않는다 |
@@ -2518,7 +2521,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 |---|---|---|
 | `wakeword_sample` | `{n: int, total: int}` | 호출어 샘플 수집 진행 (total 5) |
 | `wakeword_rejected` | `{n: int, total: int, reason: string, code?: string}` | 샘플 검사 실패. FE 에 그대로 중계한다 — 순번도 `total` 도 BE 가 고치지 않는다. 호출어 모델 저장 실패도 이 이벤트다 |
-| `wakeword_done` | `{}` | 호출어 모델 생성 완료. 모델은 미리 `PUT /api/agent/blobs/wakeword` |
+| `wakeword_done` | `{}` | 호출어 모델 생성 완료. 모델은 미리 `PUT /api/agent/blobs/wakeword`. BE 는 이때 등록 중이던 단어를 `settings.wakeWord` 로 확정하고 `settings_changed` 를 보낸다 |
 | `voice_ready` | `{tempId: string}` | 보이스 녹음 준비 완료 |
 | `voice_progress` | `{tempId: string, n: int}` | 문장 n 낭독 완료 |
 | `voice_sentence_rejected` | `{tempId: string, n: int, reason: string, code?: string}` | 문장 n 낭독 실패. 문장은 재발급되지 않는다 — 같은 n 을 계속 기다린다 |
@@ -2600,7 +2603,7 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 
 | `type` | `data` | 설명 |
 |---|---|---|
-| `wakeword_enroll_start` | `{}` | 이름 불러보기 시작 지시 |
+| `wakeword_enroll_start` | `{wakeWord: string}` | 이름 불러보기 시작 지시. `wakeWord` 는 이번에 등록할 호출어이자 샘플 판정(`MISMATCH`)의 기준이다 — 아직 설정에 없는 후보이므로 `settings.wakeWord` 가 아니라 이 값을 쓴다. 완성된 한글 2~8글자만 온다 |
 | `wakeword_enroll_cancel` | `{}` | 수집 중단 지시. 모은 샘플은 버리고 기존 호출어 템플릿은 유지한다. 수집 중이 아니면 무시된다 |
 | `voice_reg_start` | `{tempId: string, total: int}` | 보이스 등록 모드 진입. `total` 은 5. 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다 |
 | `voice_collect` | `{tempId: string, n: int}` | 문장 n 수집 시작. 같은 n 이 다시 오면 교체 수집 |

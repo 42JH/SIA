@@ -66,8 +66,9 @@ public class FeWsRoutes {
             }
             case "reg_stop" -> registration.stop(d.path("tempId").asText());
             case "macro_assign" -> registration.assign(d);
-            // ---- 온보딩: 이름 불러보기
-            case "wakeword_enroll_start" -> enrollment.startWakeword();
+            // ---- 온보딩 · 호출어 변경: 이름 불러보기
+            //      wakeWord 는 선택 — 없으면 지금 설정된 호출어로 등록한다 (온보딩). 확정은 wakeword_done 때다
+            case "wakeword_enroll_start" -> enrollment.startWakeword(d);
             //      취소는 tempId 를 받지 않는다 — 호출어 템플릿은 전역 1개라 지목할 대상이 없다
             case "wakeword_enroll_cancel" -> enrollment.cancelWakeword();
             // ---- 보이스 등록 (5문장 → 녹음 확인 → 등록) — 온보딩의 "명령하듯 말해보세요" 단계가 곧 이것이다

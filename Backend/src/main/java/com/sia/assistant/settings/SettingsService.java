@@ -94,8 +94,10 @@ public class SettingsService {
         // ★ 통째 교체이지만 알려진 키는 유실되지 않는다 (SettingsSchema 참고) —
         //   micDevice 하나가 빠지면 이후 프로필의 장비 라벨이 비어 자동 맵핑이 영구히 깨진다.
         ObjectNode merged = ((ObjectNode) settings).deepCopy();
-        List<String> filled = SettingsSchema.fillMissing(merged, parse(r.json()), parse(readSeed()));
+        JsonNode current = parse(r.json());
+        List<String> filled = SettingsSchema.fillMissing(merged, current, parse(readSeed()));
         SettingsSchema.validate(merged);   // 타입이 틀리면 저장 없이 INVALID_REQUEST
+        rejectWakeWordChange(merged, current);
         if (!filled.isEmpty()) {
             log.warn("설정 저장 본문에 알려진 키 {} 가 없어 기존 값으로 채웠습니다 — 클라이언트는 GET 으로 읽은"
                     + " settings 를 그대로 돌려보내야 합니다", filled);
@@ -105,6 +107,59 @@ public class SettingsService {
                 merged.toString(), newVersion, Times.now());
         notifySettingsChanged();
         return newVersion;
+    }
+
+    /**
+     * ★ PUT 으로는 호출어를 바꿀 수 없다 — 바꾸려면 이름 불러보기를 다시 해야 한다 (PROTOCOL.md §8.7).
+     * 글자만 바꾸면 설정은 새 단어를 가리키는데 호출어 모델(blob:wakeword)은 옛 단어로 남아
+     * <b>불러도 대답하지 않는 상태</b>가 조용히 만들어진다. 그래서 확정은 {@link #commitWakeWord}
+     * 한 곳 — 실제로 5번을 불러 모델이 만들어진 순간 — 으로만 들어온다.
+     *
+     * <p>값이 같으면 통과시킨다. PUT 은 통째 교체라 세션 시간 하나를 바꿔도 wakeWord 가 늘 실려 온다.
+     */
+    private void rejectWakeWordChange(JsonNode merged, JsonNode current) {
+        JsonNode now = current == null ? null : current.path("wakeWord");
+        if (now == null || !now.isTextual()) {
+            return; // 저장된 값이 없다 — 비교할 기준이 없으니 막지 않는다
+        }
+        if (!now.asText().equals(merged.path("wakeWord").asText())) {
+            throw new ApiException(ErrorCode.INVALID_REQUEST,
+                    "호출어는 설정 저장으로 바꿀 수 없습니다. 이름 불러보기를 다시 해 주세요");
+        }
+    }
+
+    /**
+     * 이름 불러보기가 끝난 순간 호출어를 확정한다 (EnrollmentRelay 가 {@code wakeword_done} 에서 부른다).
+     * 낙관적 잠금이 없다 — 방금 사용자가 5번 부른 발화가 근거라 저장된 값을 덮는 게 맞다.
+     * 값이 같으면 아무것도 하지 않는다: version 을 올리면 AI 가 쓸데없이 전체 동기화를 다시 한다.
+     *
+     * @return 새 settings_version. 바뀐 것이 없으면 {@code null}
+     */
+    public synchronized Integer commitWakeWord(String wakeWord) {
+        SettingsSchema.validateWakeWord(wakeWord);
+        Row r = row();
+        JsonNode current = parse(r.json());
+        JsonNode now = current.path("wakeWord");
+        if (now.isTextual() && wakeWord.equals(now.asText())) {
+            return null;
+        }
+        ObjectNode merged = current.isObject() ? ((ObjectNode) current).deepCopy() : om.createObjectNode();
+        merged.put("wakeWord", wakeWord);
+        int newVersion = r.version() + 1;
+        jdbc.update("UPDATE app_settings SET settings_json = ?, settings_version = ?, settings_updated_at = ? WHERE id = 1",
+                merged.toString(), newVersion, Times.now());
+        log.info("호출어를 '{}' 로 확정했습니다 (settings_version {})", wakeWord, newVersion);
+        notifySettingsChanged();   // AI — 새 단어와 새 모델 해시를 함께 본다
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("settingsVersion", newVersion);
+        body.put("agentSyncedVersion", r.agentSyncedVersion());
+        feHub.send("settings_sync", body);   // FE — BE 가 스스로 바꾼 설정이라 알려주지 않으면 모른다
+        return newVersion;
+    }
+
+    /** 등록을 시작하기 전 후보 단어를 검사한다 — 5번을 다 부른 뒤에 거절당하지 않도록. */
+    public void validateWakeWord(String wakeWord) {
+        SettingsSchema.validateWakeWord(wakeWord);
     }
 
     public int version() {
