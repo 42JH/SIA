@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { fetchDashboardOverview, fetchDashboardAccuracy, fetchDashboardLatency, fetchDashboardUsage, fetchDashboardApps } from '../../api/dashboard';
 import { BarChart, HorizontalBars } from './DashboardChart';
-import { demoDetail, demoOverview, monthAxisLabel } from './dashboardDemo';
 import GesturePanel from './GesturePanel';
 import SettingsPanel from './SettingsPanel';
 import VoicePanel from './VoicePanel';
@@ -35,6 +34,184 @@ function usageCount(bucket) {
   return (Number(bucket?.voice) || 0) + (Number(bucket?.gesture) || 0);
 }
 
+const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+
+function monthAxisLabel(bucket) {
+  const date = String(bucket?.key ?? '').match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (date) {
+    const parsed = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3]));
+    if (!Number.isNaN(parsed.getTime())) {
+      const week = [1, 7, 14, 21, 28].indexOf(parsed.getDate());
+      const weekNum = week >= 0 ? week + 1 : Math.ceil(parsed.getDate() / 7);
+      return `${parsed.getMonth() + 1}월 ${weekNum}주차`;
+    }
+  }
+  const label = String(bucket?.label ?? '').replace(/\s+/g, ' ').trim();
+  return /^\d{1,2}월\s*\d주차$/.test(label) ? label : String(bucket?.label ?? '');
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function toYmd(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function parseBucketDate(key) {
+  const text = String(key ?? '');
+  const month = text.match(/^(20\d{2})-(\d{2})$/);
+  if (month) return new Date(Number(month[1]), Number(month[2]) - 1, 1);
+  const stamp = text.match(/^(20\d{2})-(\d{2})-(\d{2})/);
+  if (stamp) return new Date(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]));
+  return null;
+}
+
+function monthWeekAxis(anchorKey) {
+  const date = parseBucketDate(anchorKey);
+  if (!date) return null;
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  return [1, 7, 14, 21, 28].map((day, index) => ({
+    key: toYmd(new Date(year, month, day)),
+    label: `${month + 1}월 ${index + 1}주차`,
+  }));
+}
+
+function weekDayAxis(anchorKey) {
+  const start = parseBucketDate(anchorKey);
+  if (!start) return null;
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return { key: toYmd(date), label: WEEKDAY_LABELS[(date.getDay() + 6) % 7] };
+  });
+}
+
+function dayHourAxis(anchorKey) {
+  const date = parseBucketDate(anchorKey);
+  if (!date) return null;
+  const day = toYmd(date);
+  return Array.from({ length: 8 }, (_, index) => {
+    const hour = pad2(index * 3);
+    return { key: `${day}T${hour}`, label: `${hour}시` };
+  });
+}
+
+function axisForPeriod(period, anchorKey) {
+  if (!anchorKey) return null;
+  if (period === 'month') return monthWeekAxis(anchorKey);
+  if (period === 'week') return weekDayAxis(anchorKey);
+  if (period === 'day') return dayHourAxis(anchorKey);
+  return null;
+}
+
+function emptyBucket(kind, slot) {
+  if (kind === 'usage') return { ...slot, count: 0, voice: 0, gesture: 0 };
+  if (kind === 'accuracy') return { ...slot, voice: null, gaze: null, motion: null, sampleCount: 0 };
+  if (kind === 'latency') return { ...slot, simpleMs: null, complexMs: null, simpleCount: 0, complexCount: 0 };
+  return { ...slot };
+}
+
+function alignBuckets(kind, axis, buckets) {
+  const byKey = new Map((buckets ?? []).map((bucket) => [String(bucket.key), bucket]));
+  return axis.map((slot) => {
+    const hit = byKey.get(slot.key);
+    return hit ? { ...hit, key: slot.key, label: slot.label } : emptyBucket(kind, slot);
+  });
+}
+
+function bucketsOverlap(axis, buckets) {
+  const keys = new Set((buckets ?? []).map((bucket) => String(bucket.key)));
+  return axis.some((slot) => keys.has(slot.key));
+}
+
+function bucketHasData(kind, bucket) {
+  if (!bucket) return false;
+  if (kind === 'usage') return usageCount(bucket) > 0;
+  if (kind === 'accuracy') {
+    return (Number(bucket.sampleCount) || 0) > 0
+      || Number.isFinite(bucket.voice)
+      || Number.isFinite(bucket.motion)
+      || Number.isFinite(bucket.gaze);
+  }
+  if (kind === 'latency') {
+    return (Number(bucket.simpleCount) || 0) + (Number(bucket.complexCount) || 0) > 0
+      || Number.isFinite(bucket.simpleMs)
+      || Number.isFinite(bucket.complexMs);
+  }
+  return false;
+}
+
+function summaryFromBuckets(kind, buckets, fallback) {
+  if (kind === 'usage') {
+    const voiceTotal = buckets.reduce((sum, bucket) => sum + (Number(bucket.voice) || 0), 0);
+    const gestureTotal = buckets.reduce((sum, bucket) => sum + (Number(bucket.gesture) || 0), 0);
+    return { total: voiceTotal + gestureTotal, voiceTotal, gestureTotal };
+  }
+  if (kind === 'accuracy') {
+    const mean = (key) => {
+      const values = buckets.map((bucket) => bucket[key]).filter((value) => Number.isFinite(value));
+      if (!values.length) return null;
+      return values.reduce((sum, value) => sum + value, 0) / values.length;
+    };
+    return {
+      voice: mean('voice'),
+      motion: mean('motion'),
+      gaze: mean('gaze'),
+      sampleCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.sampleCount) || 0), 0),
+    };
+  }
+  if (kind === 'latency') {
+    const simple = buckets.map((bucket) => bucket.simpleMs).filter((value) => Number.isFinite(value));
+    const complex = buckets.map((bucket) => bucket.complexMs).filter((value) => Number.isFinite(value));
+    const simpleMs = simple.length ? simple.reduce((sum, value) => sum + value, 0) / simple.length : null;
+    const complexMs = complex.length ? complex.reduce((sum, value) => sum + value, 0) / complex.length : null;
+    return {
+      simpleMs,
+      complexMs,
+      overallMs: simpleMs != null && complexMs != null ? (simpleMs + complexMs) / 2 : simpleMs ?? complexMs,
+      simpleCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.simpleCount) || 0), 0),
+      complexCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.complexCount) || 0), 0),
+    };
+  }
+  return fallback ?? {};
+}
+
+function summaryFromSample(kind, bucket) {
+  if (!bucket) return {};
+  if (kind === 'usage') {
+    const voiceTotal = Number(bucket.voice) || 0;
+    const gestureTotal = Number(bucket.gesture) || 0;
+    return { total: usageCount(bucket), voiceTotal, gestureTotal };
+  }
+  if (kind === 'accuracy') {
+    return { voice: bucket.voice ?? null, motion: bucket.motion ?? null, gaze: bucket.gaze ?? null, sampleCount: bucket.sampleCount ?? 0 };
+  }
+  if (kind === 'latency') {
+    const simpleMs = bucket.simpleMs ?? null;
+    const complexMs = bucket.complexMs ?? null;
+    return {
+      simpleMs,
+      complexMs,
+      overallMs: simpleMs != null && complexMs != null ? (simpleMs + complexMs) / 2 : simpleMs ?? complexMs,
+      simpleCount: bucket.simpleCount ?? 0,
+      complexCount: bucket.complexCount ?? 0,
+    };
+  }
+  return {};
+}
+
+function applyAnchor(kind, period, data, selection) {
+  const axis = axisForPeriod(period, selection?.key);
+  if (!axis || !data) return data;
+  const aligned = alignBuckets(kind, axis, data.buckets);
+  if (bucketsOverlap(axis, data.buckets)) {
+    return { ...data, buckets: aligned, summary: summaryFromBuckets(kind, aligned, data.summary) };
+  }
+  return { ...data, buckets: aligned, summary: summaryFromSample(kind, selection.bucket) };
+}
+
 function bucketAnchor(bucket, period, currentAnchor = '') {
   const key = String(bucket?.key ?? '');
   if (key) return key;
@@ -42,12 +219,13 @@ function bucketAnchor(bucket, period, currentAnchor = '') {
   const week = label.match(/(\d{1,2})월\s*(\d)주차/);
   if (week) {
     const year = String(currentAnchor).match(/(20\d{2})/) ? currentAnchor.slice(0, 4) : String(new Date().getFullYear());
-    return `${year}-${String(Number(week[1])).padStart(2, '0')}-W${week[2]}`;
+    const day = [1, 7, 14, 21, 28][Number(week[2]) - 1] ?? 1;
+    return `${year}-${pad2(Number(week[1]))}-${pad2(day)}`;
   }
   const month = label.match(/(\d{1,2})월/);
   if (period === 'year' && month) {
     const year = String(currentAnchor).match(/(20\d{2})/) ? currentAnchor.slice(0, 4) : String(new Date().getFullYear());
-    return `${year}-${String(Number(month[1])).padStart(2, '0')}`;
+    return `${year}-${pad2(Number(month[1]))}`;
   }
   return label;
 }
@@ -56,12 +234,11 @@ export default function DashboardHome() {
   const location = useLocation(); const navigate = useNavigate();
   const query = new URLSearchParams(location.search);
   const requestedView = query.get('view');
-  const demo = query.get('demo') === '1';
   const view = views.includes(requestedView) ? requestedView : 'home';
   const historyStack = Array.isArray(location.state?.dashboardHistory) ? location.state.dashboardHistory : [];
   const registration = useGestureStore((state) => state.registration);
-  const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('week'); const [anchor, setAnchor] = useState(''); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  useEffect(() => { if (view === 'home') loadHome(); }, [view, demo]);
+  const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('week'); const [anchor, setAnchor] = useState(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  useEffect(() => { if (view === 'home') loadHome(); }, [view]);
   useEffect(() => {
     if (!menu) return undefined;
     const html = document.documentElement;
@@ -88,16 +265,13 @@ export default function DashboardHome() {
   }, [menu]);
   useEffect(() => {
     if (!details[view]) return undefined;
-    // TODO(BE): 선택한 과거 월·일을 기준으로 조회할 anchor 파라미터가 명세에 추가되면 period와 함께 전달할 것
-    load(() => (demo ? Promise.resolve(demoDetail(view, period, anchor)) : fetchers[view](period)), setDetail);
+    setDetail(null);
+    // TODO(BE): GET /api/dashboard/* 는 period만 받고 선택한 날짜(anchor)를 무시함. 명세에 기간 파라미터가 생기면 그 값을 그대로 전달할 것
+    load(() => fetchers[view](period).then((data) => applyAnchor(view, period, data, anchor)), setDetail);
     return undefined;
-  }, [view, period, anchor, demo]);
+  }, [view, period, anchor]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
   function loadHome() {
-    if (demo) {
-      load(() => Promise.resolve(demoOverview()), setOverview);
-      return;
-    }
     load(async () => {
       const overview = await fetchDashboardOverview();
       // TODO(BE): overview.topApps 는 오늘(day)만이라 주간 사용량 카드와 기간이 다름. 명세에 주간 필드가 생기면 /apps?period=week 호출을 제거할 것
@@ -108,14 +282,13 @@ export default function DashboardHome() {
   const href = (next) => {
     const params = new URLSearchParams();
     if (next && next !== 'home') params.set('view', next);
-    if (demo) params.set('demo', '1');
     const search = params.toString();
     return search ? `/dashboard?${search}` : '/dashboard';
   };
   const open = (next) => {
     if (next !== 'gestures') useGestureStore.getState().closeRegistration();
     setMenu(false); setError('');
-    if (details[next]) { setPeriod('week'); setAnchor(''); setDetail(null); }
+    if (details[next]) { setPeriod('week'); setAnchor(null); setDetail(null); }
     const nextHistory = next === 'home' || view === next ? (next === 'home' ? [] : historyStack) : [...historyStack, view];
     navigate(href(next), { state: { dashboardHistory: nextHistory } });
   };
@@ -175,11 +348,11 @@ function Detail({ kind, data, period, setPeriod, open, loading, anchor, onBucket
   // TODO(BE): 선택한 과거 월·일을 기준으로 조회할 anchor 파라미터가 명세에 추가되면 선택 bucket key를 API에 전달 필요
   const canDrill = Boolean(nextPeriod[period]) && !loading;
   const drillDown = (bucket) => {
-    if (!canDrill) return;
-    onBucket(bucketAnchor(bucket, period, anchor));
+    if (!canDrill || !bucketHasData(kind, bucket)) return;
+    onBucket({ key: bucketAnchor(bucket, period, anchor?.key ?? ''), bucket });
     setPeriod(nextPeriod[period] ?? period);
   };
-  const choosePeriod = (next) => { onBucket(''); setPeriod(next); };
+  const choosePeriod = (next) => { onBucket(null); setPeriod(next); };
   return <><div className={styles.detailHead}><button className={styles.detailBack} onClick={() => open('home')}>‹</button><Intro eyebrow="분석" title={details[kind][0]} description={details[kind][1]} /><Periods period={period} setPeriod={choosePeriod} /></div>
     <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} period={period} />
       {kind !== 'apps' && <Legend items={kind === 'accuracy' ? ['음성 인식', '모션인식'] : kind === 'latency' ? ['간단한 작업', '복잡한 작업'] : ['보이스', '제스처', '전체 사용량']} />}
