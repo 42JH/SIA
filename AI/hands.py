@@ -11,6 +11,7 @@ import time
 
 import numpy as np
 from gesture_pose import verified_finger_gesture
+from static_hand_shape import hand_shape, shape_distances, read_shapes, FEATURE_SIZE
 
 PINCH_ON, PINCH_OFF = 0.35, 0.45  # (엄지-검지 거리 / 손 크기) 히스테리시스
 
@@ -394,12 +395,14 @@ class CustomGestures:
         self.thresh = thresh
         self.X = np.zeros((0, 42))
         self.names = []
+        self.static_shapes, self.static_shape_valid = read_shapes({}, 0)
         if os.path.exists(self.path):
             # 파일이 있는데 못 읽으면(잠김·손상) 조용히 빈 상태로 시작하면 안 된다 —
             # 다음 add()가 기존 등록을 통째로 덮어쓴다. 예외를 올려 호출자가 알게 한다.
             d = np.load(self.path, allow_pickle=False)
             self.X = d["X"]
             self.names = [str(n) for n in d["names"]]
+            self.static_shapes, self.static_shape_valid = read_shapes(d, len(self.names))
 
     @property
     def n(self):
@@ -412,21 +415,26 @@ class CustomGestures:
         import os
 
         tmp = self.path + ".tmp.npz"  # 임시파일→교체: 쓰다 죽어도 기존 파일 안 깨짐
-        np.savez(tmp, X=self.X, names=np.array(self.names))
+        np.savez(tmp, X=self.X, names=np.array(self.names), static_shapes=self.static_shapes,
+                 static_shape_valid=self.static_shape_valid)
         os.replace(tmp, self.path)
 
     def add(self, name, feats):
         self.X = np.vstack([self.X, np.asarray(feats, dtype=float)])
+        self.static_shapes = np.vstack([self.static_shapes, np.zeros((len(feats), FEATURE_SIZE))])
+        self.static_shape_valid = np.r_[self.static_shape_valid, np.zeros(len(feats), bool)]
         self.names += [name] * len(feats)
         self._save()
 
     def remove(self, name):
         keep = [i for i, n in enumerate(self.names) if n != name]
         self.X = self.X[keep]
+        self.static_shapes = self.static_shapes[keep]
+        self.static_shape_valid = self.static_shape_valid[keep]
         self.names = [self.names[i] for i in keep]
         self._save()
 
-    def classify_with_distance(self, lm_xy, k=5, disabled=()):
+    def classify_with_distance(self, lm_xy, k=5, disabled=(), world_landmarks=None):
         """Return a custom label and its nearest template distance.
 
         The normal rejection threshold remains unchanged.  Callers can use a
@@ -444,7 +452,7 @@ class CustomGestures:
         if not keep:
             return None, float("inf")
         f = normalize_landmarks(lm_xy)
-        d = pose_distances(self.X[keep], f)
+        d = self._distances(keep, f, hand_shape(world_landmarks))
         idx = np.argsort(d)[:k]
         nearest = float(d[idx[0]])
         if nearest > self.thresh:
@@ -455,30 +463,19 @@ class CustomGestures:
             weights[name] = weights.get(name, 0.0) + 1.0 / (float(d[i]) + 1e-6)
         return max(weights, key=weights.get), nearest
 
-    def classify(self, lm_xy, k=5, disabled=()):
-        """랜드마크 → 커스텀 제스처 이름 또는 None.
+    def classify(self, lm_xy, k=5, disabled=(), world_landmarks=None):
+        """Use the same matching path as runtime distance reporting."""
+        return self.classify_with_distance(
+            lm_xy, k=k, disabled=disabled, world_landmarks=world_landmarks)[0]
 
-        최근접 거리로 먼저 게이트하고(엉뚱한 손모양 기권), 거리 가중 투표로
-        라벨을 정한다 — 단순 다수결은 경계에서 먼 샘플에 휘둘려 프레임마다 튄다.
-        disabled인 이름은 classify_with_distance와 같은 이유로 후보에서 뺀다.
-        """
-        if self.n == 0:
-            return None
-        keep = [i for i, n in enumerate(self.names) if n not in disabled]
-        if not keep:
-            return None
-        f = normalize_landmarks(lm_xy)
-        d = pose_distances(self.X[keep], f)
-        idx = np.argsort(d)[:k]
-        if float(d[idx[0]]) > self.thresh:  # 가장 가까운 샘플조차 멀면 기권
-            return None
-        w = {}
-        for i in idx:
-            name = self.names[keep[i]]
-            w[name] = w.get(name, 0.0) + 1.0 / (float(d[i]) + 1e-6)
-        return max(w, key=w.get)
+    def _distances(self, indices, feature, shape=None):
+        distances = pose_distances(self.X[indices], feature)
+        if shape is not None:
+            valid = self.static_shape_valid[indices]
+            distances[valid] = shape_distances(self.static_shapes[indices][valid], shape)
+        return distances
 
-    def nearest_class(self, feats):
+    def nearest_class(self, feats, shapes=None):
         """새 샘플 묶음이 기존 클래스와 얼마나 가까운지 → (이름, 최소거리). 혼동도 검사용.
 
         평균이 아니라 '가장 가까운 샘플 쌍'의 거리를 본다 — 평균을 쓰면 일부
@@ -488,8 +485,9 @@ class CustomGestures:
             return None, float("inf")
         best_name, best_d = None, float("inf")
         for name in self.class_names():
-            cls = self.X[[i for i, n in enumerate(self.names) if n == name]]
-            dd = float(min(pose_distances(cls, f).min() for f in feats))
+            indices = [i for i, n in enumerate(self.names) if n == name]
+            dd = float(min(self._distances(indices, f, None if shapes is None else shapes[j]).min()
+                           for j, f in enumerate(feats)))
             if dd < best_d:
                 best_name, best_d = name, dd
         return best_name, best_d
