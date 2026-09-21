@@ -206,24 +206,25 @@ class SettingsServiceTest {
     }
 
     @Test
-    @DisplayName("완성형 한글 3~6글자가 아닌 호출어는 확정 단계에서도 거절한다")
+    @DisplayName("완성된 한글 2~8글자가 아닌 호출어는 확정 단계에서도 거절한다")
     void commitWakeWordValidatesWord() {
         assertThatThrownBy(() -> service.commitWakeWord("Sia"))
                 .isInstanceOfSatisfying(ApiException.class,
                         e -> assertThat(e.code).isEqualTo(ErrorCode.INVALID_REQUEST));
-        assertThatThrownBy(() -> service.commitWakeWord("시아"))
+        assertThatThrownBy(() -> service.commitWakeWord("시"))
                 .isInstanceOfSatisfying(ApiException.class,
-                        e -> assertThat(e.getMessage()).contains("3~6글자"));
+                        e -> assertThat(e.getMessage()).contains("2~8글자"));
         verify(jdbc, never()).update(startsWith("UPDATE app_settings SET settings_json"),
                 any(), any(), any());
     }
 
     @Test
-    @DisplayName("★ 글자 규칙이 생기기 전에 저장된 2글자 호출어를 가진 DB 도 설정을 저장할 수 있다")
-    void legacyShortWakeWordDoesNotBlockSaving() throws Exception {
-        stubRow("{\"wakeWord\":\"시아\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
+    @DisplayName("★ 글자 규칙이 생기기 전에 저장된 호출어를 가진 DB 도 설정을 저장할 수 있다")
+    void legacyWakeWordDoesNotBlockSaving() throws Exception {
+        // 옛 규칙은 "비어 있지 않은 문자열" 이었다 — 지금 규칙에 걸리는 값이 이미 저장돼 있을 수 있다
+        stubRow("{\"wakeWord\":\"sia\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
 
-        assertThat(service.replace(om.readTree("{\"wakeWord\":\"시아\",\"sessionSeconds\":60}"), null))
+        assertThat(service.replace(om.readTree("{\"wakeWord\":\"sia\",\"sessionSeconds\":60}"), null))
                 .isEqualTo(4);
     }
 

@@ -118,22 +118,24 @@ class SettingsSchemaTest {
     }
 
     @Test
-    @DisplayName("★ 새 호출어는 3~6글자다 — 짧으면 생활 소음에 걸리고 길면 한 번에 부르기 어렵다")
+    @DisplayName("★ 새 호출어는 2~8글자다 — 짧으면 생활 소음에 걸리고 길면 한 번에 부르기 어렵다")
     void newWakeWordLengthIsBounded() {
-        SettingsSchema.validateWakeWord("시아야");            // 3
-        SettingsSchema.validateWakeWord("우리집비서야");        // 6
+        SettingsSchema.validateWakeWord("시아");                // 2 — 하한
+        SettingsSchema.validateWakeWord("시아야");
+        SettingsSchema.validateWakeWord("우리집비서야호출");       // 8 — 상한
 
-        assertBadWord("시아", "3~6글자");
-        assertBadWord("아", "3~6글자");
-        assertBadWord("우리집비서야야", "3~6글자");             // 7
+        assertBadWord("아", "2~8글자");
+        assertBadWord("우리집비서야호출어", "2~8글자");            // 9
     }
 
     @Test
     @DisplayName("★ 설정 문서 검사는 호출어 글자 규칙을 걸지 않는다 — PUT 으로 못 바꾸는 값에 규칙을 걸면 옛 DB 가 잠긴다")
     void documentValidationLeavesStoredWakeWordAlone() throws Exception {
-        // 규칙이 생기기 전에 저장된 2글자 호출어. 이걸 400 으로 막으면 호출어와 무관한 설정도 저장할 수 없다
-        SettingsSchema.validate(obj("{\"wakeWord\":\"시아\",\"sessionSeconds\":15}"));
-        assertBad("{\"wakeWord\":\"\"}", "호출명");           // 타입 · 공백 검사는 그대로다
+        // 옛 규칙은 "비어 있지 않은 문자열" 이라 무엇이든 저장돼 있을 수 있다.
+        // 이걸 400 으로 막으면 호출어와 무관한 설정도 저장할 수 없고, 푸는 길인 재등록까지 함께 막힌다
+        SettingsSchema.validate(obj("{\"wakeWord\":\"sia\",\"sessionSeconds\":15}"));
+        SettingsSchema.validate(obj("{\"wakeWord\":\"시\",\"sessionSeconds\":15}"));
+        assertBad("{\"wakeWord\":\"\"}", "호출명");             // 타입 · 공백 검사는 그대로다
     }
 
     @Test
