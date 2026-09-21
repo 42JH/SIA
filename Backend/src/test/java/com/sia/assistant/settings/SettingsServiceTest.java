@@ -151,6 +151,82 @@ class SettingsServiceTest {
                 any(), any(), any());
     }
 
+    @Test
+    @DisplayName("★ PUT 으로는 호출어를 바꿀 수 없다 — 글자만 바꾸면 옛 모델이 남아 불러도 대답하지 않는다")
+    void replaceCannotChangeWakeWord() throws Exception {
+        stubRow("{\"wakeWord\":\"시아야\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
+
+        assertThatThrownBy(() -> service.replace(om.readTree("{\"wakeWord\":\"하늘아\"}"), null))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.code).isEqualTo(ErrorCode.INVALID_REQUEST);
+                    assertThat(e.getMessage()).contains("이름 불러보기");
+                });
+        verify(jdbc, never()).update(startsWith("UPDATE app_settings SET settings_json"),
+                any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 호출어를 실어 보내는 평범한 저장은 막지 않는다 — PUT 은 통째 교체라 늘 실려 온다")
+    void replaceAllowsUnchangedWakeWord() throws Exception {
+        stubRow("{\"wakeWord\":\"시아야\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
+
+        assertThat(service.replace(om.readTree("{\"wakeWord\":\"시아야\",\"sessionSeconds\":60}"), null))
+                .isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("commitWakeWord 는 version+1 로 확정하고 AI(settings_changed)·FE(settings_sync) 양쪽에 알린다")
+    void commitWakeWordSavesAndNotifiesBothSides() {
+        stubRow("{\"wakeWord\":\"시아야\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
+
+        assertThat(service.commitWakeWord("하늘아")).isEqualTo(4);
+
+        verify(jdbc).update(startsWith("UPDATE app_settings SET settings_json"),
+                storedJson(s -> s.contains("\"wakeWord\":\"하늘아\"")
+                        && s.contains("\"sessionSeconds\":15")),   // 나머지 키는 그대로다
+                eq(4), anyString());
+        verify(notifier).notifySettingsChanged();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(feHub).send(eq("settings_sync"), captor.capture());
+        assertThat(captor.getValue()).containsEntry("settingsVersion", 4);
+    }
+
+    @Test
+    @DisplayName("호출어가 그대로면 확정은 아무것도 하지 않는다 — 버전을 올리면 AI 가 헛되이 전체 동기화를 다시 한다")
+    void commitWakeWordIsNoOpWhenUnchanged() {
+        stubRow("{\"wakeWord\":\"시아야\"}", 3, "2026-08-28 10:00:00.000", 3);
+
+        assertThat(service.commitWakeWord("시아야")).isNull();
+
+        verify(jdbc, never()).update(startsWith("UPDATE app_settings SET settings_json"),
+                any(), any(), any());
+        verify(notifier, never()).notifySettingsChanged();
+        verify(feHub, never()).send(eq("settings_sync"), any());
+    }
+
+    @Test
+    @DisplayName("완성형 한글 3~6글자가 아닌 호출어는 확정 단계에서도 거절한다")
+    void commitWakeWordValidatesWord() {
+        assertThatThrownBy(() -> service.commitWakeWord("Sia"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.code).isEqualTo(ErrorCode.INVALID_REQUEST));
+        assertThatThrownBy(() -> service.commitWakeWord("시아"))
+                .isInstanceOfSatisfying(ApiException.class,
+                        e -> assertThat(e.getMessage()).contains("3~6글자"));
+        verify(jdbc, never()).update(startsWith("UPDATE app_settings SET settings_json"),
+                any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 글자 규칙이 생기기 전에 저장된 2글자 호출어를 가진 DB 도 설정을 저장할 수 있다")
+    void legacyShortWakeWordDoesNotBlockSaving() throws Exception {
+        stubRow("{\"wakeWord\":\"시아\",\"sessionSeconds\":15}", 3, "2026-08-28 10:00:00.000", 3);
+
+        assertThat(service.replace(om.readTree("{\"wakeWord\":\"시아\",\"sessionSeconds\":60}"), null))
+                .isEqualTo(4);
+    }
+
     /** jdbc.update 의 가변 인자 자리에서 저장될 JSON 문자열만 검사한다. */
     private static Object storedJson(java.util.function.Predicate<String> check) {
         return org.mockito.ArgumentMatchers.argThat(v -> v instanceof String s && check.test(s));

@@ -102,6 +102,41 @@ class SettingsSchemaTest {
     }
 
     @Test
+    @DisplayName("★ 새 호출어는 완성된 한글만 — 자모 · 영문 · 숫자 · 공백은 AI 감지 모델이 받지 못한다")
+    void newWakeWordMustBeCompleteHangul() {
+        SettingsSchema.validateWakeWord("시아야");
+        SettingsSchema.validateWakeWord("우리집비서");
+
+        assertBadWord("시아ㅇ", "완성된 한글");     // 자모 단독
+        assertBadWord("ㅅㅣ아", "완성된 한글");
+        assertBadWord("Sia야", "완성된 한글");
+        assertBadWord("시아 야", "완성된 한글");    // 공백 — 다듬기는 FE 몫이다
+        assertBadWord("시아야!", "완성된 한글");
+        assertBadWord("시아22", "완성된 한글");
+        assertThatThrownBy(() -> SettingsSchema.validateWakeWord("  ")).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> SettingsSchema.validateWakeWord(null)).isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    @DisplayName("★ 새 호출어는 3~6글자다 — 짧으면 생활 소음에 걸리고 길면 한 번에 부르기 어렵다")
+    void newWakeWordLengthIsBounded() {
+        SettingsSchema.validateWakeWord("시아야");            // 3
+        SettingsSchema.validateWakeWord("우리집비서야");        // 6
+
+        assertBadWord("시아", "3~6글자");
+        assertBadWord("아", "3~6글자");
+        assertBadWord("우리집비서야야", "3~6글자");             // 7
+    }
+
+    @Test
+    @DisplayName("★ 설정 문서 검사는 호출어 글자 규칙을 걸지 않는다 — PUT 으로 못 바꾸는 값에 규칙을 걸면 옛 DB 가 잠긴다")
+    void documentValidationLeavesStoredWakeWordAlone() throws Exception {
+        // 규칙이 생기기 전에 저장된 2글자 호출어. 이걸 400 으로 막으면 호출어와 무관한 설정도 저장할 수 없다
+        SettingsSchema.validate(obj("{\"wakeWord\":\"시아\",\"sessionSeconds\":15}"));
+        assertBad("{\"wakeWord\":\"\"}", "호출명");           // 타입 · 공백 검사는 그대로다
+    }
+
+    @Test
     @DisplayName("세션 유지 시간은 사용자가 바꿀 수 있다 — 1 이상 정수면 통과")
     void sessionSecondsIsChangeable() throws Exception {
         SettingsSchema.validate(obj("{\"sessionSeconds\":1}"));
@@ -129,6 +164,14 @@ class SettingsSchemaTest {
         // 지금 안 꽂혀 있는 장치의 id 여도 저장된다 — 여는 쪽(AI)이 판단할 몫이다
         SettingsSchema.validate(doc);
         SettingsSchema.validate(obj("{\"micDeviceId\":null,\"cameraDeviceId\":null}"));
+    }
+
+    private void assertBadWord(String wakeWord, String messagePart) {
+        assertThatThrownBy(() -> SettingsSchema.validateWakeWord(wakeWord))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.code).isEqualTo(ErrorCode.INVALID_REQUEST);
+                    assertThat(e.getMessage()).contains(messagePart);
+                });
     }
 
     private void assertBad(String json, String messagePart) throws Exception {
