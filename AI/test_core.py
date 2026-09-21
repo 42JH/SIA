@@ -1533,6 +1533,67 @@ def test_mcp_delegation():
 
 
 
+def test_geometry_only_fist_is_detected_but_not_executable():
+    """기하 보정이 지어낸 주먹/손바닥은 실행 자격이 없다 — 감지·라벨 자체는 유지.
+
+    잠그는 성질 셋. ① 보정 주먹/손바닥 실행 불가 ② 모델이 붙인 주먹은 실행 가능
+    (기능 생존) ③ **-339 의 None→Victory/Pointing_Up 복구는 안 막는다**. ③ 이 이
+    테스트의 존재 이유다 — 조건을 pose_verification 비교로 "단순화"하면 브이 복구가
+    조용히 죽는데, 이 줄이 그걸 잡는다.
+    """
+    from assistant import model_labeled, GEOMETRY_ONLY_LABELS
+
+    # 실측 87/117 가 이 형태 — 모델이 포기한 손을 기하 조건이 주먹으로 승격시켰다
+    assert not model_labeled({"gesture": "Closed_Fist", "model_gesture": "None"}, "Closed_Fist")
+    assert not model_labeled({"gesture": "Open_Palm", "model_gesture": None}, "Open_Palm")
+    assert not model_labeled(None, "Closed_Fist")            # 손이 안 잡힌 프레임
+    # GestureStable 이 직전 라벨을 물고 있는 보류 프레임 — 프레임 라벨이 아니면 막는다
+    assert not model_labeled({"gesture": "None", "model_gesture": "Closed_Fist"}, "Closed_Fist")
+    # 모델이 인정한 주먹은 그대로 실행된다
+    assert model_labeled({"gesture": "Closed_Fist", "model_gesture": "Closed_Fist"}, "Closed_Fist")
+    # -339: 브이·검지는 애초에 게이트 대상이 아니다
+    assert "Victory" not in GEOMETRY_ONLY_LABELS
+    assert "Pointing_Up" not in GEOMETRY_ONLY_LABELS
+
+
+def test_geometry_only_gate_is_wired_into_the_hold_condition():
+    """model_labeled 가 '어디에' 붙어 있는지를 고정한다 — 순수 함수 테스트가 못 잡는 배선."""
+    import io as _io
+    import re as _re
+    from pathlib import Path as _Path
+    src = _io.open(_Path(__file__).parent / "assistant.py", encoding="utf-8").read()
+    head = src.index("            for name in static_names:")
+    body = src[head:]
+    body = body[:body.index("            if gesture_active and not gesture_execution_blocked:")]
+
+    assert "if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:" in body, (
+        "게이트가 사라졌거나 GEOMETRY_ONLY_LABELS 범위 제한이 풀렸다 — 범위가 풀리면 "
+        "-339 의 None→Victory/Pointing_Up 복구가 통째로 실행 불가가 된다")
+    assert (body.index("if EXECUTE_MODEL_LABELED_ONLY")
+            < body.index("gesture_toggles[name].update(")), (
+        "게이트가 HoldToggle 조건 뒤로 갔다 — 홀드가 찬 채로 대기하다 라벨이 붙는 순간 발사된다")
+    assert "allowed = allowed and ok" in body, "게이트 결과가 HoldToggle 조건에 반영되지 않는다"
+    assert "model_labeled(hand, name)" in body, (
+        "stable 라벨이 아니라 그 프레임의 hand 로 판정해야 한다")
+    assert "blocked_log_at = {}" not in body, (
+        "차단 로그 throttle 이 프레임 루프 안에서 초기화된다 — 30fps 로그 폭포")
+    assert _re.search(r"^    blocked_log_at = \{\}", src, _re.M), (
+        "blocked_log_at 초기화가 없다 — 첫 차단 프레임에서 NameError 로 루프가 죽는다")
+
+
+def test_hand_dict_still_carries_the_raw_model_label():
+    """실행 게이트가 hand['model_gesture'] 에 걸려 있다 — 키가 바뀌면 주먹/손바닥이 통째로 죽는다."""
+    from hands import parse_hands
+    from test_gesture_finger_pose import result_for
+    from assistant import model_labeled
+
+    fist = parse_hands(result_for("fist"))[0]
+    assert fist["model_gesture"] == "Closed_Fist"
+    assert model_labeled(fist, "Closed_Fist"), "모델이 인정한 주먹이 실행 자격을 잃었다"
+    palm = parse_hands(result_for("palm"))[0]
+    assert model_labeled(palm, "Open_Palm"), "모델이 인정한 손바닥이 실행 자격을 잃었다"
+
+
 def test_confirm_window_is_not_longer_than_what_the_user_sees():
     """확인 수용 시간이 FE 표시보다 길면 안 된다 (-324).
 
@@ -2946,4 +3007,7 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 58/58 통과")
+    test_geometry_only_fist_is_detected_but_not_executable()
+    test_geometry_only_gate_is_wired_into_the_hold_condition()
+    test_hand_dict_still_carries_the_raw_model_label()
+    print("OK - 61/61 통과")
