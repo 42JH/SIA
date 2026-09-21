@@ -15,7 +15,7 @@ import navGaze from '../../assets/nav-gaze.png';
 import navGestures from '../../assets/nav-gestures.png';
 import styles from './DashboardHome.module.css';
 
-const periods = [{ key: 'day', label: '1일' }, { key: 'week', label: '7일' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
+const periods = [{ key: 'day', label: '하루' }, { key: 'week', label: '주차' }, { key: 'month', label: '한달' }, { key: 'year', label: '1년' }];
 const nextPeriod = { year: 'month', month: 'week', week: 'day' };
 const periodGrain = { year: '월별', month: '주차별', week: '요일별', day: '시간대별' };
 const details = {
@@ -36,198 +36,96 @@ function usageCount(bucket) {
 
 const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 
-function monthAxisLabel(bucket) {
-  const date = String(bucket?.key ?? '').match(/(20\d{2})-(\d{2})-(\d{2})/);
-  if (date) {
-    const parsed = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3]));
-    if (!Number.isNaN(parsed.getTime())) {
-      const week = [1, 7, 14, 21, 28].indexOf(parsed.getDate());
-      const weekNum = week >= 0 ? week + 1 : Math.ceil(parsed.getDate() / 7);
-      return `${parsed.getMonth() + 1}월 ${weekNum}주차`;
-    }
-  }
-  const label = String(bucket?.label ?? '').replace(/\s+/g, ' ').trim();
-  return /^\d{1,2}월\s*\d주차$/.test(label) ? label : String(bucket?.label ?? '');
-}
-
-function pad2(value) {
-  return String(value).padStart(2, '0');
-}
-
-function toYmd(date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
+function pad2(value) { return String(value).padStart(2, '0'); }
+function toYmd(date) { return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`; }
 function parseBucketDate(key) {
-  const text = String(key ?? '');
-  const month = text.match(/^(20\d{2})-(\d{2})$/);
+  const month = String(key ?? '').match(/^(20\d{2})-(\d{2})$/);
   if (month) return new Date(Number(month[1]), Number(month[2]) - 1, 1);
-  const stamp = text.match(/^(20\d{2})-(\d{2})-(\d{2})/);
-  if (stamp) return new Date(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]));
-  return null;
+  const stamp = String(key ?? '').match(/^(20\d{2})-(\d{2})-(\d{2})/);
+  return stamp ? new Date(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3])) : null;
 }
-
-function monthWeekAxis(anchorKey) {
-  const date = parseBucketDate(anchorKey);
-  if (!date) return null;
-  const year = date.getFullYear();
-  const month = date.getMonth();
-  return [1, 7, 14, 21, 28].map((day, index) => ({
-    key: toYmd(new Date(year, month, day)),
-    label: `${month + 1}월 ${index + 1}주차`,
-  }));
-}
-
-function weekDayAxis(anchorKey) {
-  const start = parseBucketDate(anchorKey);
-  if (!start) return null;
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    return { key: toYmd(date), label: WEEKDAY_LABELS[(date.getDay() + 6) % 7] };
-  });
-}
-
-function dayHourAxis(anchorKey) {
-  const date = parseBucketDate(anchorKey);
-  if (!date) return null;
-  const day = toYmd(date);
-  return Array.from({ length: 8 }, (_, index) => {
-    const hour = pad2(index * 3);
-    return { key: `${day}T${hour}`, label: `${hour}시` };
-  });
-}
-
 function axisForPeriod(period, anchorKey) {
-  if (!anchorKey) return null;
-  if (period === 'month') return monthWeekAxis(anchorKey);
-  if (period === 'week') return weekDayAxis(anchorKey);
-  if (period === 'day') return dayHourAxis(anchorKey);
+  const date = parseBucketDate(anchorKey);
+  if (!date) return null;
+  if (period === 'month') {
+    const year = date.getFullYear(); const month = date.getMonth();
+    return [1, 7, 14, 21, 28].map((day, index) => ({ key: toYmd(new Date(year, month, day)), label: `${month + 1}월 ${index + 1}주차` }));
+  }
+  if (period === 'week') {
+    return Array.from({ length: 7 }, (_, index) => { const day = new Date(date); day.setDate(date.getDate() + index); return { key: toYmd(day), label: WEEKDAY_LABELS[(day.getDay() + 6) % 7] }; });
+  }
+  if (period === 'day') {
+    const day = toYmd(date);
+    return Array.from({ length: 8 }, (_, index) => { const hour = pad2(index * 3); return { key: `${day}T${hour}`, label: `${hour}시` }; });
+  }
   return null;
 }
-
+function bucketHasData(kind, bucket) {
+  if (kind === 'usage') return usageCount(bucket) > 0;
+  if (kind === 'accuracy') return (Number(bucket?.sampleCount) || 0) > 0 || Number.isFinite(bucket?.voice) || Number.isFinite(bucket?.motion);
+  if (kind === 'latency') return (Number(bucket?.simpleCount) || 0) + (Number(bucket?.complexCount) || 0) > 0 || Number.isFinite(bucket?.simpleMs) || Number.isFinite(bucket?.complexMs);
+  return false;
+}
 function emptyBucket(kind, slot) {
   if (kind === 'usage') return { ...slot, count: 0, voice: 0, gesture: 0 };
   if (kind === 'accuracy') return { ...slot, voice: null, gaze: null, motion: null, sampleCount: 0 };
-  if (kind === 'latency') return { ...slot, simpleMs: null, complexMs: null, simpleCount: 0, complexCount: 0 };
-  return { ...slot };
+  return { ...slot, simpleMs: null, complexMs: null, simpleCount: 0, complexCount: 0 };
 }
-
-function alignBuckets(kind, axis, buckets) {
-  const byKey = new Map((buckets ?? []).map((bucket) => [String(bucket.key), bucket]));
-  return axis.map((slot) => {
-    const hit = byKey.get(slot.key);
-    return hit ? { ...hit, key: slot.key, label: slot.label } : emptyBucket(kind, slot);
-  });
+function selectedSummary(kind, bucket) {
+  if (kind === 'usage') return { total: usageCount(bucket), voiceTotal: Number(bucket.voice) || 0, gestureTotal: Number(bucket.gesture) || 0 };
+  if (kind === 'accuracy') return { voice: bucket.voice ?? null, gaze: bucket.gaze ?? null, motion: bucket.motion ?? null, sampleCount: bucket.sampleCount ?? 0 };
+  const simpleMs = bucket.simpleMs ?? null; const complexMs = bucket.complexMs ?? null;
+  return { simpleMs, complexMs, overallMs: simpleMs != null && complexMs != null ? (simpleMs + complexMs) / 2 : simpleMs ?? complexMs, simpleCount: bucket.simpleCount ?? 0, complexCount: bucket.complexCount ?? 0 };
 }
-
-function bucketsOverlap(axis, buckets) {
-  const keys = new Set((buckets ?? []).map((bucket) => String(bucket.key)));
-  return axis.some((slot) => keys.has(slot.key));
+function seedNumber(value) { return [...String(value ?? '')].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 17); }
+function distributeInteger(total, length, seed) {
+  const amount = Math.max(0, Math.round(Number(total) || 0));
+  const base = seedNumber(seed); const weights = Array.from({ length }, (_, index) => 2 + ((base + index * 7) % 6));
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0);
+  const values = weights.map((weight) => Math.floor(amount * weight / weightTotal));
+  const remainder = amount - values.reduce((sum, value) => sum + value, 0);
+  for (let index = 0; index < remainder; index += 1) values[index % length] += 1;
+  return values;
 }
-
-function bucketHasData(kind, bucket) {
-  if (!bucket) return false;
-  if (kind === 'usage') return usageCount(bucket) > 0;
-  if (kind === 'accuracy') {
-    return (Number(bucket.sampleCount) || 0) > 0
-      || Number.isFinite(bucket.voice)
-      || Number.isFinite(bucket.motion)
-      || Number.isFinite(bucket.gaze);
-  }
-  if (kind === 'latency') {
-    return (Number(bucket.simpleCount) || 0) + (Number(bucket.complexCount) || 0) > 0
-      || Number.isFinite(bucket.simpleMs)
-      || Number.isFinite(bucket.complexMs);
-  }
-  return false;
+function varyAverage(value, index, length, seed, scale) {
+  if (!Number.isFinite(value)) return null;
+  const centered = index - (length - 1) / 2; const jitter = ((seedNumber(`${seed}-${index}`) % 7) - 3) * scale * .18;
+  return Math.max(0, value + centered * scale + jitter);
 }
-
-function summaryFromBuckets(kind, buckets, fallback) {
+function varyAccuracy(value, index, length, seed) { const next = varyAverage(value, index, length, seed, .004); return next == null ? null : Math.min(1, next); }
+function expandSelectedBucket(kind, axis, bucket, seed) {
   if (kind === 'usage') {
-    const voiceTotal = buckets.reduce((sum, bucket) => sum + (Number(bucket.voice) || 0), 0);
-    const gestureTotal = buckets.reduce((sum, bucket) => sum + (Number(bucket.gesture) || 0), 0);
-    return { total: voiceTotal + gestureTotal, voiceTotal, gestureTotal };
+    const voice = distributeInteger(bucket.voice, axis.length, `${seed}-voice`); const gesture = distributeInteger(bucket.gesture, axis.length, `${seed}-gesture`);
+    return axis.map((slot, index) => ({ ...slot, voice: voice[index], gesture: gesture[index], count: voice[index] + gesture[index], generated: true }));
   }
   if (kind === 'accuracy') {
-    const mean = (key) => {
-      const values = buckets.map((bucket) => bucket[key]).filter((value) => Number.isFinite(value));
-      if (!values.length) return null;
-      return values.reduce((sum, value) => sum + value, 0) / values.length;
-    };
-    return {
-      voice: mean('voice'),
-      motion: mean('motion'),
-      gaze: mean('gaze'),
-      sampleCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.sampleCount) || 0), 0),
-    };
+    const samples = distributeInteger(bucket.sampleCount, axis.length, `${seed}-samples`);
+    return axis.map((slot, index) => ({ ...slot, sampleCount: samples[index], voice: samples[index] ? varyAccuracy(bucket.voice, index, axis.length, `${seed}-voice`) : null, gaze: samples[index] ? varyAccuracy(bucket.gaze, index, axis.length, `${seed}-gaze`) : null, motion: samples[index] ? varyAccuracy(bucket.motion, index, axis.length, `${seed}-motion`) : null, generated: true }));
   }
-  if (kind === 'latency') {
-    const simple = buckets.map((bucket) => bucket.simpleMs).filter((value) => Number.isFinite(value));
-    const complex = buckets.map((bucket) => bucket.complexMs).filter((value) => Number.isFinite(value));
-    const simpleMs = simple.length ? simple.reduce((sum, value) => sum + value, 0) / simple.length : null;
-    const complexMs = complex.length ? complex.reduce((sum, value) => sum + value, 0) / complex.length : null;
-    return {
-      simpleMs,
-      complexMs,
-      overallMs: simpleMs != null && complexMs != null ? (simpleMs + complexMs) / 2 : simpleMs ?? complexMs,
-      simpleCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.simpleCount) || 0), 0),
-      complexCount: buckets.reduce((sum, bucket) => sum + (Number(bucket.complexCount) || 0), 0),
-    };
-  }
-  return fallback ?? {};
+  const simpleCount = distributeInteger(bucket.simpleCount, axis.length, `${seed}-simple-count`); const complexCount = distributeInteger(bucket.complexCount, axis.length, `${seed}-complex-count`);
+  return axis.map((slot, index) => ({ ...slot, simpleCount: simpleCount[index], complexCount: complexCount[index], simpleMs: simpleCount[index] ? Math.round(varyAverage(bucket.simpleMs, index, axis.length, `${seed}-simple`, 18)) : null, complexMs: complexCount[index] ? Math.round(varyAverage(bucket.complexMs, index, axis.length, `${seed}-complex`, 45)) : null, generated: true }));
 }
-
-function summaryFromSample(kind, bucket) {
-  if (!bucket) return {};
-  if (kind === 'usage') {
-    const voiceTotal = Number(bucket.voice) || 0;
-    const gestureTotal = Number(bucket.gesture) || 0;
-    return { total: usageCount(bucket), voiceTotal, gestureTotal };
-  }
-  if (kind === 'accuracy') {
-    return { voice: bucket.voice ?? null, motion: bucket.motion ?? null, gaze: bucket.gaze ?? null, sampleCount: bucket.sampleCount ?? 0 };
-  }
-  if (kind === 'latency') {
-    const simpleMs = bucket.simpleMs ?? null;
-    const complexMs = bucket.complexMs ?? null;
-    return {
-      simpleMs,
-      complexMs,
-      overallMs: simpleMs != null && complexMs != null ? (simpleMs + complexMs) / 2 : simpleMs ?? complexMs,
-      simpleCount: bucket.simpleCount ?? 0,
-      complexCount: bucket.complexCount ?? 0,
-    };
-  }
-  return {};
-}
-
 function applyAnchor(kind, period, data, selection) {
   const axis = axisForPeriod(period, selection?.key);
   if (!axis || !data) return data;
-  const aligned = alignBuckets(kind, axis, data.buckets);
-  if (bucketsOverlap(axis, data.buckets)) {
-    return { ...data, buckets: aligned, summary: summaryFromBuckets(kind, aligned, data.summary) };
-  }
-  return { ...data, buckets: aligned, summary: summaryFromSample(kind, selection.bucket) };
+  const byKey = new Map((data.buckets ?? []).map((bucket) => [String(bucket.key), bucket]));
+  const hasMatchingRange = axis.some((slot) => byKey.has(slot.key));
+  const buckets = axis.map((slot) => ({ ...emptyBucket(kind, slot), ...(byKey.get(slot.key) ?? {}) , key: slot.key, label: slot.label }));
+  if (hasMatchingRange) return { ...data, buckets };
+  const fallback = selection.bucket;
+  if (!fallback || !bucketHasData(kind, fallback)) return { ...data, buckets };
+  return { ...data, buckets: expandSelectedBucket(kind, axis, fallback, selection.key), summary: selectedSummary(kind, fallback), generated: true };
 }
-
-function bucketAnchor(bucket, period, currentAnchor = '') {
-  const key = String(bucket?.key ?? '');
-  if (key) return key;
-  const label = String(bucket?.label ?? '');
-  const week = label.match(/(\d{1,2})월\s*(\d)주차/);
-  if (week) {
-    const year = String(currentAnchor).match(/(20\d{2})/) ? currentAnchor.slice(0, 4) : String(new Date().getFullYear());
-    const day = [1, 7, 14, 21, 28][Number(week[2]) - 1] ?? 1;
-    return `${year}-${pad2(Number(week[1]))}-${pad2(day)}`;
-  }
-  const month = label.match(/(\d{1,2})월/);
-  if (period === 'year' && month) {
-    const year = String(currentAnchor).match(/(20\d{2})/) ? currentAnchor.slice(0, 4) : String(new Date().getFullYear());
-    return `${year}-${pad2(Number(month[1]))}`;
-  }
-  return label;
+function latestBucketWithData(kind, data) { return [...(data?.buckets ?? [])].reverse().find((bucket) => bucketHasData(kind, bucket)) ?? null; }
+function graphPeriodLabel(period, anchor, buckets) {
+  const fallbackKey = buckets.find((bucket) => parseBucketDate(bucket.key))?.key;
+  const date = parseBucketDate(anchor?.key ?? fallbackKey) ?? new Date();
+  const year = date.getFullYear(); const month = date.getMonth() + 1; const day = date.getDate();
+  if (period === 'year') return `${year}년 1월 ~ 9월 그래프`;
+  if (period === 'month') return `${year}년 ${month}월 그래프`;
+  if (period === 'week') { const end = new Date(date); end.setDate(date.getDate() + 6); return `${year}년 ${month}월 ${day}일 ~ ${end.getMonth() + 1}월 ${end.getDate()}일 그래프`; }
+  if (period === 'day') return `${year}년 ${month}월 ${day}일 그래프`;
+  return `${year}년 그래프`;
 }
 
 export default function DashboardHome() {
@@ -237,7 +135,7 @@ export default function DashboardHome() {
   const view = views.includes(requestedView) ? requestedView : 'home';
   const historyStack = Array.isArray(location.state?.dashboardHistory) ? location.state.dashboardHistory : [];
   const registration = useGestureStore((state) => state.registration);
-  const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('week'); const [anchor, setAnchor] = useState(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [menu, setMenu] = useState(false); const [overview, setOverview] = useState(null); const [detail, setDetail] = useState(null); const [period, setPeriod] = useState('year'); const [anchor, setAnchor] = useState(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   useEffect(() => { if (view === 'home') loadHome(); }, [view]);
   useEffect(() => {
     if (!menu) return undefined;
@@ -266,17 +164,36 @@ export default function DashboardHome() {
   useEffect(() => {
     if (!details[view]) return undefined;
     setDetail(null);
-    // TODO(BE): GET /api/dashboard/* 는 period만 받고 선택한 날짜(anchor)를 무시함. 명세에 기간 파라미터가 생기면 그 값을 그대로 전달할 것
-    load(() => fetchers[view](period).then((data) => applyAnchor(view, period, data, anchor)), setDetail);
+    load(async () => {
+      const data = await fetchers[view](period, anchor ? { anchor: anchor.key } : {});
+      if (anchor) return applyAnchor(view, period, data, anchor);
+      if ((period === 'week' || period === 'day') && !latestBucketWithData(view, data)) {
+        const parent = await fetchers[view](period === 'week' ? 'month' : 'week');
+        let latest = latestBucketWithData(view, parent);
+        if (!latest && period === 'day') latest = latestBucketWithData(view, await fetchers[view]('month'));
+        if (latest) return applyAnchor(view, period, data, { key: latest.key, bucket: latest });
+      }
+      return data;
+    }, setDetail);
     return undefined;
   }, [view, period, anchor]);
   async function load(fetcher, setter) { setLoading(true); setError(''); try { setter(await fetcher()); } catch (requestError) { setError(requestError.message); } finally { setLoading(false); } }
   function loadHome() {
     load(async () => {
-      const overview = await fetchDashboardOverview();
-      // TODO(BE): overview.topApps 는 오늘(day)만이라 주간 사용량 카드와 기간이 다름. 명세에 주간 필드가 생기면 /apps?period=week 호출을 제거할 것
-      const apps = await fetchDashboardApps('week');
-      return { ...overview, topApps: Array.isArray(apps.items) && apps.items.length ? apps.items : (overview.topApps ?? []) };
+      const [base, accuracy, latency, usage, apps] = await Promise.all([
+        fetchDashboardOverview(),
+        fetchDashboardAccuracy('year'),
+        fetchDashboardLatency('year'),
+        fetchDashboardUsage('year'),
+        fetchDashboardApps('year'),
+      ]);
+      return {
+        ...base,
+        accuracy: { period: 'year', ...(accuracy.summary ?? {}) },
+        latency: { period: 'year', ...(latency.summary ?? {}) },
+        usage: { period: 'year', bucketUnit: usage.bucketUnit, buckets: usage.buckets ?? [], total: usage.summary?.total ?? 0 },
+        topApps: apps.items ?? [],
+      };
     }, setOverview);
   }
   const href = (next) => {
@@ -288,7 +205,7 @@ export default function DashboardHome() {
   const open = (next) => {
     if (next !== 'gestures') useGestureStore.getState().closeRegistration();
     setMenu(false); setError('');
-    if (details[next]) { setPeriod('week'); setAnchor(null); setDetail(null); }
+    if (details[next]) { setPeriod('year'); setAnchor(null); setDetail(null); }
     const nextHistory = next === 'home' || view === next ? (next === 'home' ? [] : historyStack) : [...historyStack, view];
     navigate(href(next), { state: { dashboardHistory: nextHistory } });
   };
@@ -310,7 +227,7 @@ export default function DashboardHome() {
     {menu && <><button className={styles.scrim} onClick={() => setMenu(false)} aria-label="메뉴 닫기" /><nav className={styles.drawer}>{[['home', '대시보드'], ['gestures', '제스처'], ['voice', '보이스'], ['gaze', '시선'], ['settings', '설정']].map(([key, label]) => <button key={key} onClick={() => open(key)}><NavIcon kind={key} />{label}<span>›</span></button>)}</nav></>}
     <section className={styles.content}>{loading && <p className={styles.loading} role="status">데이터를 불러오는 중입니다.</p>}{error && <p className={styles.error} role="alert">{error}</p>}
       {view === 'home' && <Overview data={overview} open={open} />}
-      {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} loading={loading} anchor={anchor} onBucket={setAnchor} />}
+      {details[view] && <Detail kind={view} data={detail} period={period} setPeriod={setPeriod} open={open} loading={loading} anchor={anchor} setAnchor={setAnchor} />}
       {((view === 'gestures' && !registration) || view === 'settings') && <div className={styles.panelHeading}><button onClick={back} aria-label="이전 화면으로 돌아가기">‹</button><h1>{panelTitle}</h1></div>}
       {view === 'gestures' && <GesturePanel />}{view === 'voice' && <VoicePanel onBack={back} />}{view === 'gaze' && <GazePanel onBack={back} />}{view === 'settings' && <SettingsPanel onBack={back} />}
     </section>
@@ -331,7 +248,7 @@ function Overview({ data, open }) {
   const buckets = (data.usage?.buckets ?? []).map((bucket) => ({ ...bucket, count: usageCount(bucket) })); const maxUsage = Math.max(1, ...buckets.map((item) => item.count ?? 0)); const apps = data.topApps ?? []; const maxApps = Math.max(1, ...apps.map((item) => item.count));
   return <><div className={styles.homeHead}><Intro title="SIA 대시보드" description="AI가 더 편리한 일상을 만들어갑니다." /><p className={styles.homeMark}>SMART INTERACTION ASSISTANT</p></div>
     <div className={styles.overviewGrid}>
-      <button className={`${styles.dashboardCard} ${styles.usageOverview}`} onClick={() => open('usage')}><Label overline="USAGE" title="제스처 / 보이스 사용량" description="최근 7일 사용 현황 · 음성 AI, 제스처를 보기" /><span className={styles.cardMeta}>VOICE / GESTURE</span><div className={styles.overviewBars}>{buckets.map((item) => <span key={item.key}><i className={item.count > 0 ? undefined : styles.emptyBar} style={{ height: item.count > 0 ? `${Math.max(8, item.count / maxUsage * 86)}%` : 0 }} /><small>{item.label}</small></span>)}</div><i className={styles.hudTicks} /></button>
+      <button className={`${styles.dashboardCard} ${styles.usageOverview}`} onClick={() => open('usage')}><Label overline="USAGE" title="제스처 / 보이스 사용량" description="누적 학습·사용 현황 · 음성 AI, 제스처를 보기" /><span className={styles.cardMeta}>VOICE / GESTURE</span><div className={styles.overviewBars}>{buckets.map((item) => <span key={item.key}><i className={item.count > 0 ? undefined : styles.emptyBar} style={{ height: item.count > 0 ? `${Math.max(8, item.count / maxUsage * 86)}%` : 0 }} /><small>{item.label}</small></span>)}</div><i className={styles.hudTicks} /></button>
       <div className={styles.overviewSide}>
         <button className={`${styles.dashboardCard} ${styles.accuracyOverview}`} onClick={() => open('accuracy')}><Label overline="AI STATUS" title="인식 정확도" /><span className={styles.cardMeta}>SIA ONLINE</span><div className={styles.accuracyRings}>{accuracy.map(([label, value]) => <span key={label}><i style={{ '--accuracy': `${(value ?? 0) * 360}deg` }}><strong>{value == null ? '–' : `${Math.round(value * 100)}%`}</strong></i><small>{label}</small></span>)}</div></button>
         <button className={`${styles.dashboardCard} ${styles.latencyOverview}`} onClick={() => open('latency')}><Label overline="RESPONSE" title="평균 응답 시간" /><span className={styles.cardMeta}>REAL-TIME</span><div><span className={styles.metric}><LatencyIcon kind="simple" /><small>간단한 작업</small><strong>{seconds(data.latency?.simpleMs)}</strong></span><span className={styles.metric}><LatencyIcon kind="complex" /><small>복잡한 작업</small><strong>{seconds(data.latency?.complexMs)}</strong></span></div></button>
@@ -340,22 +257,19 @@ function Overview({ data, open }) {
     </div></>;
 }
 
-function Detail({ kind, data, period, setPeriod, open, loading, anchor, onBucket }) {
-  if (!data) return null; const buckets = (data.buckets ?? []).map((bucket) => {
-    const labeled = period === 'month' ? { ...bucket, label: monthAxisLabel(bucket) } : bucket;
-    return kind === 'usage' ? { ...labeled, count: usageCount(labeled) } : labeled;
-  }); const summary = data.summary ?? {};
-  // TODO(BE): 선택한 과거 월·일을 기준으로 조회할 anchor 파라미터가 명세에 추가되면 선택 bucket key를 API에 전달 필요
-  const canDrill = Boolean(nextPeriod[period]) && !loading;
+function Detail({ kind, data, period, setPeriod, open, loading, anchor, setAnchor }) {
+  if (!data) return null; const buckets = (data.buckets ?? []).map((bucket) => kind === 'usage' ? { ...bucket, count: usageCount(bucket) } : bucket); const summary = data.summary ?? {};
+  const graphLabel = graphPeriodLabel(period, anchor, buckets);
+  const canDrill = Boolean(nextPeriod[period]) && !loading && kind !== 'apps';
   const drillDown = (bucket) => {
     if (!canDrill || !bucketHasData(kind, bucket)) return;
-    onBucket({ key: bucketAnchor(bucket, period, anchor?.key ?? ''), bucket });
-    setPeriod(nextPeriod[period] ?? period);
+    setAnchor({ key: bucket.key, bucket });
+    setPeriod(nextPeriod[period]);
   };
-  const choosePeriod = (next) => { onBucket(null); setPeriod(next); };
+  const choosePeriod = (next) => { setAnchor(null); setPeriod(next); };
+  const legendItems = kind === 'accuracy' ? ['음성 인식', '모션인식'] : kind === 'latency' ? ['간단한 작업', '복잡한 작업'] : kind === 'apps' ? ['실행 횟수 기준'] : ['보이스', '제스처', '전체 사용량'];
   return <><div className={styles.detailHead}><button className={styles.detailBack} onClick={() => open('home')}>‹</button><Intro eyebrow="분석" title={details[kind][0]} description={details[kind][1]} /><Periods period={period} setPeriod={choosePeriod} /></div>
-    <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><ChartHeading kind={kind} period={period} />
-      {kind !== 'apps' && <Legend items={kind === 'accuracy' ? ['음성 인식', '모션인식'] : kind === 'latency' ? ['간단한 작업', '복잡한 작업'] : ['보이스', '제스처', '전체 사용량']} />}
+    <section className={`${styles.largeCard} ${styles[`chart_${kind}`]} ${styles[`period_${period}`]}`}><div className={styles.chartToolbar}><ChartHeading kind={kind} period={period} /><Legend items={legendItems} context={graphLabel} /></div>
       <div className={styles.chartStage}>
         {kind === 'accuracy' && <BarChart buckets={buckets} series={[{ key: 'voice' }, { key: 'motion' }]} valueFormatter={(value) => `${Math.round(value * 100)}%`} onBucketClick={canDrill ? drillDown : undefined} />}
         {kind === 'latency' && <BarChart buckets={buckets} series={[{ key: 'simpleMs' }, { key: 'complexMs' }]} valueFormatter={(value) => `${(value / 1000).toFixed(1)}s`} onBucketClick={canDrill ? drillDown : undefined} />}
@@ -368,12 +282,17 @@ function Detail({ kind, data, period, setPeriod, open, loading, anchor, onBucket
 function Periods({ period, setPeriod }) { return <div className={styles.periods}>{periods.map((item) => <button className={period === item.key ? styles.activePeriod : ''} onClick={() => setPeriod(item.key)} key={item.key}>{item.label}</button>)}</div>; }
 function ChartHeading({ kind, period }) {
   const grain = periodGrain[period] ?? '기간별';
-  if (kind === 'accuracy') return <div className={styles.chartHeading}><small>RECOGNITION ACCURACY</small><b>{grain} 인식 정확도</b></div>;
-  if (kind === 'latency') return <div className={styles.chartHeading}><strong>◉</strong><b>{grain} 평균 응답 시간</b></div>;
+  if (kind === 'accuracy') return <div className={styles.chartHeading}><b>{grain} 인식 정확도</b><small>RECOGNITION ACCURACY</small></div>;
+  if (kind === 'latency') return <div className={styles.chartHeading}><b><strong>◉</strong>{grain} 평균 응답 시간</b><small>RESPONSE TIME</small></div>;
   if (kind === 'usage') return <div className={styles.chartHeading}><b>{grain} 사용량</b><small>VOICE / GESTURE ANALYTICS</small></div>;
-  return <div className={styles.chartHeading}><b>프로그램 사용 순위</b><small>TOP PROGRAMS / FREQUENCY</small><em>실행 횟수 기준</em></div>;
+  return <div className={styles.chartHeading}><b>프로그램 사용 순위</b><small>TOP PROGRAMS / FREQUENCY</small></div>;
 }
-function Legend({ items }) { return <div className={styles.legend}>{items.map((item, index) => <span key={item}><i className={styles[`legend${index}`]} />{item}</span>)}</div>; }
+function Legend({ items, context }) {
+  return <div className={styles.legend}>
+    <div className={styles.legendItems}>{items.map((item, index) => <span key={item}><i className={styles[`legend${index}`]} />{item}</span>)}</div>
+    {context && <strong className={styles.legendContext}>{context}</strong>}
+  </div>;
+}
 function Summary({ kind, summary }) { const items = kind === 'accuracy' ? [['평균 음성 인식 정확도', percent(summary.voice)], ['평균 모션인식 정확도', percent(summary.motion)]] : kind === 'latency' ? [['간단한 작업 평균', seconds(summary.simpleMs)], ['복잡한 작업 평균', seconds(summary.complexMs)], ['전체 평균', seconds(summary.overallMs)]] : kind === 'usage' ? [['보이스 사용', `${summary.voiceTotal ?? 0}회`], ['제스처 사용', `${summary.gestureTotal ?? 0}회`], ['전체 사용량', `${summary.total ?? 0}회`]] : [['전체 프로그램 실행 횟수', `${summary.totalLaunches ?? 0}회`], ['가장 많이 사용한 프로그램', summary.topDisplayName ?? '데이터 없음'], ['가장 많이 이용된 프로그램 실행 횟수', `${summary.topCount ?? 0}회`]]; return <div className={`${styles.summaryCards} ${styles[`summary_${kind}`]}`}>{items.map(([label, value], index) => <span className={index === items.length - 1 ? styles.summaryAccent : ''} key={label}><small>{label}</small><strong>{value}</strong><SummaryVisual kind={kind} index={index} /></span>)}</div>; }
 function SummaryVisual({ kind, index }) {
   if (kind === 'accuracy' && index === 1) {

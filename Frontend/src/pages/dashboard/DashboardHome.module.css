@@ -14,7 +14,7 @@
 .view_wake .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
 .view_gaze .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
 .view_gestures .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
-.view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { display: flex; box-sizing: border-box; flex-direction: column; height: calc(100vh - 54px); min-height: calc(100vh - 54px); padding-bottom: 28px; }
+.view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { display: flex; box-sizing: border-box; flex-direction: column; min-height: calc(100vh - 54px); padding-bottom: 28px; }
 .loading, .error { position: fixed; z-index: 40; top: 68px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--sia-line); border-radius: 3px; background: white; transform: translateX(-50%); }
 .error { color: var(--color-danger); }
 .intro { position: relative; min-width: 0; }
@@ -84,17 +84,17 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .periods { display: grid; width: min(420px, 100%); max-width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid var(--sia-line); border-radius: 8px; background: white; }
 .periods button { min-height: 40px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--sia-navy); font-size: clamp(13px, 1.2vw, 16px); font-weight: 800; cursor: pointer; }
 .periods .activePeriod { background: var(--sia-navy); color: white; }
-.largeCard { display: flex; overflow: hidden; flex: 1 1 auto; flex-direction: column; height: auto; min-height: 0; padding: 18px 24px 12px; }
-.chartHeading { position: relative; z-index: 2; display: flex; flex: 0 0 auto; min-height: 36px; align-items: flex-start; gap: 10px; color: white; }
-.chartHeading b { font-size: 18px; }
+.largeCard { display: flex; overflow: hidden; flex: 1 1 auto; flex-direction: column; height: auto; min-height: min(520px, 62vh); padding: 18px 24px 12px; }
+.chartToolbar { position: relative; z-index: 2; display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: 24px; margin-bottom: 8px; }
+.chartHeading { display: grid; min-width: 0; align-content: start; gap: 6px; color: white; }
+.chartHeading b { display: flex; align-items: center; gap: 8px; font-size: 18px; }
 .chartHeading small { color: #99b4d5; font-size: 9px; letter-spacing: .27em; }
-.chartHeading b + small { position: absolute; top: 29px; left: 0; }
-.chartHeading em { margin-left: auto; color: var(--sia-pale); font-size: 12px; font-style: normal; }
+.chartHeading strong { color: #7ee8f5; font-size: 12px; }
 .chart_latency { background: linear-gradient(135deg, #071731, #102d57); }
-.chart_apps .chartHeading { display: grid; grid-template-columns: auto 1fr auto; }
-.chart_apps .chartHeading small { grid-column: 1 / 3; }
-.legend { position: relative; z-index: 2; display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 28px; margin-top: -28px; color: var(--sia-pale); font-size: 13px; }
-.legend span { display: flex; align-items: center; gap: 8px; }
+.legend { display: grid; min-width: max-content; justify-items: end; gap: 6px; color: var(--sia-pale); font-size: 13px; }
+.legendItems { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 24px; white-space: nowrap; }
+.legendItems span { display: flex; align-items: center; gap: 8px; }
+.legendContext { color: #7ee8f5; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .legend i { width: 15px; height: 15px; border: 1px solid white; background: #f5f8ff; }
 .legend .legend1 { background: #88a6d0; }
 .legend .legend2 { border-radius: 50%; background: #31ddf2; }
@@ -173,6 +173,8 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .settingRow > button { height: 44px; align-self: end; }
 .wakeRow > button:disabled { cursor: default; opacity: .45; }
 .settingRow small { grid-column: 1 / -1; color: var(--sia-muted); }
+.settingRow small.wakeValidation { color: #b4232c; font-weight: 700; }
+.settingRow input[aria-invalid="true"] { border-color: #b4232c; outline-color: #b4232c; }
 .toggleRow { display: flex; min-height: 108px; box-sizing: border-box; align-items: center; justify-content: space-between; padding: 18px 28px 18px 16px; border: 1px solid var(--sia-soft-line); border-radius: 8px; color: var(--sia-navy); }
 .startToggle { grid-area: start; }
 .toggleRow span { display: grid; gap: 4px; }
@@ -181,12 +183,12 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .toggleRow input::after { position: absolute; top: 3px; left: 3px; width: 19px; height: 19px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgb(7 24 49 / 28%); content: ""; transition: transform .2s ease; }
 .toggleRow input:checked { background: var(--sia-navy); }
 .toggleRow input:checked::after { transform: translateX(21px); }
-.modalBackdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(7 24 49 / 58%); }
-.modal { position: relative; width: min(540px, 100%); min-height: 300px; padding: 58px 48px 34px; border: 2px solid var(--sia-navy); background: white; color: var(--sia-navy); text-align: center; clip-path: polygon(18px 0, 38% 0, 40% 10px, 58% 10px, 60% 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.modalBackdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(7 24 49 / 58%); }
+.modal { position: relative; width: min(820px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; padding: clamp(28px, 5vh, 40px) clamp(20px, 4vw, 48px) 30px; border: 2px solid var(--sia-navy); background: white; color: var(--sia-navy); text-align: center; clip-path: polygon(18px 0, 38% 0, 40% 10px, 58% 10px, 60% 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .modal h2 { margin: 10px 0; font-size: 20px; }
 .modal p { color: var(--sia-muted); }
 .deviceChoice { display: grid; gap: 8px; margin-top: 20px; color: var(--sia-muted); text-align: left; }
-.deviceIcon { display: grid; width: 72px; height: 72px; place-items: center; margin: -34px auto 14px; border: 1px solid var(--sia-soft-line); border-radius: 50%; background: #fbfdff; box-shadow: 0 0 0 5px white, 0 0 0 6px var(--sia-soft-line); }
+.deviceIcon { display: grid; width: 72px; height: 72px; place-items: center; margin: 0 auto 14px; border: 1px solid var(--sia-soft-line); border-radius: 50%; background: #fbfdff; box-shadow: 0 0 0 5px white, 0 0 0 6px var(--sia-soft-line); }
 .deviceIcon svg { width: 52px; height: 52px; fill: none; stroke: var(--sia-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
 .deviceIcon .signal { stroke: var(--sia-blue); stroke-width: 1.6; }
 .dialogActions { display: flex; justify-content: center; gap: 14px; margin-top: 32px; }
@@ -205,5 +207,5 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 @keyframes scannerWavePulse { 0% { opacity: .58; transform: scaleY(.62); } 100% { opacity: 1; transform: scaleY(1.2); } }
 @media (prefers-reduced-motion: reduce) { .visualOrbit::before, .visualOrbit::after, .visualOrbit i, .visualWave i, .scannerMiddle, .scannerInner, .scannerSphere, .scannerWave line { animation: none; } }
 
-@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 38px 1fr; } .periods { grid-column: 1 / -1; width: 100%; margin-top: 22px; } .summaryCards { grid-template-columns: 1fr; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
-@media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { height: auto; min-height: 0; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings { grid-template-columns: repeat(2, 1fr); } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview span { grid-template-columns: 24px 90px 1fr; } .appsOverview span > strong { display: none; } .largeCard { min-height: 380px; padding: 22px 16px; } .chartStage { min-height: 280px; grid-template-columns: 1fr; } .siaInsight { display: none; } .legend { margin: 16px 0 0; justify-content: flex-start; flex-wrap: wrap; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 54px 24px 28px; } }
+@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 38px minmax(0, 1fr); } .periods { grid-column: 1 / -1; width: 100%; margin-top: 22px; } .chartToolbar { grid-template-columns: 1fr; row-gap: 12px; } .legend { justify-items: start; min-width: 0; } .legendItems { justify-content: flex-start; flex-wrap: wrap; } .summaryCards { grid-template-columns: 1fr; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
+@media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { height: auto; min-height: 0; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings { grid-template-columns: repeat(2, 1fr); } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview span { grid-template-columns: 24px 90px 1fr; } .appsOverview span > strong { display: none; } .largeCard { min-height: 380px; padding: 22px 16px; } .chartStage { min-height: 280px; grid-template-columns: 1fr; } .siaInsight { display: none; } .legendContext { white-space: normal; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 28px 18px 24px; } .dialogActions { flex-direction: column; } .dialogActions button { width: 100%; } }

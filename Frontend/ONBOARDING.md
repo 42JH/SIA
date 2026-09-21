@@ -12,7 +12,7 @@ REST는 기존 Axios 인스턴스를 사용하고 `/api/status`를 3초 간격�
 
 - `voice_sentence`와 `voice_progress`에서 받은 `tempId`를 등록이 끝날 때까지 보관한다.
 - 문장 판독 실패는 `voice_sentence_rejected {tempId,n,total,reason,code?}`를 구독한다. 진행 중인 `tempId`와 현재 문장 번호가 모두 일치할 때만 실패 결과를 표시하고, 성공 진행률은 올리지 않는다.
-- 알려진 실패 코드 `TOO_SHORT`·`TOO_LONG`·`NOISY`·`INCONSISTENT`는 FE 문구를 표시하고, 코드가 없거나 모르는 값이면 서버의 `reason`을 표시한다.
+- 알려진 실패 코드 `TOO_SHORT`·`TOO_LONG`·`NOISY`·`INCONSISTENT`·`MISMATCH`는 FE 문구를 표시하고, 코드가 없거나 모르는 값이면 서버의 `reason`을 표시한다.
 - 호출어 실패는 `wakeword_rejected`의 `reason`을 표시하고 진행 수를 올리지 않는다. 5번째 샘플 뒤에도 `wakeword_done`을 받아야 완료된다.
 - 호출어·보이스 녹음 화면에서는 `mic_preview_start`로 시작한 `mic_preview_level {seq, level}`을 실시간 파형으로 표시하고 화면 이탈 시 `mic_preview_stop`을 보낸다.
 - 문장 다시 녹음은 `voice_sentence_retry {tempId}`, 1~4번째 판독 결과 확인은 `voice_sentence_next {tempId}`, 최종 등록은 `voice_commit {tempId, deviceLabel?}`를 사용한다.
