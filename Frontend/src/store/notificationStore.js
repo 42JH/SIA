@@ -29,23 +29,34 @@ function scheduleAutoHide(set, get, delay = AUTO_HIDE_MS) {
   }, delay);
 }
 
+let lastToast = { key: '', at: 0 };
+
 function noticeKey(message) {
-  return String(message || '').replace(/\s+/g, '').replace(/했습니다|입니다|습니다|었습니다|해요|예요/g, '');
+  return String(message || '')
+    .replace(/\s+/g, '')
+    .replace(/[."'`’“”!?~…·]/g, '')
+    .replace(/했습니다|입니다|습니다|었습니다|됐습니다|되었습니다|됩니다|됐어요|해요|예요/g, '');
+}
+
+function similarNotice(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length >= 8 && b.length >= 8 && (a.includes(b) || b.includes(a));
 }
 
 function isSameNotice(current, next) {
-  if (!current || !next) return false;
-  const a = noticeKey(current.message);
-  const b = noticeKey(next.message);
-  return Boolean(a && b && a === b);
+  const b = noticeKey(next?.message);
+  if (!b) return false;
+  if (similarNotice(noticeKey(current?.message), b)) return true;
+  return similarNotice(lastToast.key, b) && Date.now() - lastToast.at < 4000;
 }
 
 function showTimed(set, get, notification, delay) {
-  const current = get().topNotification;
-  if (isSameNotice(current, notification)) {
+  if (isSameNotice(get().topNotification, notification)) {
     scheduleAutoHide(set, get, delay);
     return;
   }
+  lastToast = { key: noticeKey(notification.message), at: Date.now() };
   clearHideTimer();
   set({ topNotification: notification });
   scheduleAutoHide(set, get, delay);
