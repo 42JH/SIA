@@ -21,6 +21,7 @@ node_modules/
 out/
 .turbo/
 *.tsbuildinfo
+Frontend/dist/
 
 # Backend (Java/Spring)
 build/
