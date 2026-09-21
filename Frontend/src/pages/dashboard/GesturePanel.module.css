@@ -170,7 +170,7 @@
 .similarityGrid.singlePreview .compareMedia { max-height: 46vh; width: 100%; }
 .similarityGrid article { position: relative; display: flex; min-height: 0; align-items: stretch; flex-direction: column; gap: 6px; padding: 36px 14px 10px; border: 1.5px solid var(--gesture-line); border-radius: 8px; text-align: left; }
 .similarityGrid article > strong { position: absolute; top: 12px; left: 18px; font-size: 16px; }
-.similarityGrid .preview { width: 100%; height: auto; max-height: 100%; aspect-ratio: 16 / 9; }
+.similarityGrid .preview { width: 100%; height: min(34vh, 280px); max-height: min(34vh, 280px); aspect-ratio: auto; }
 .similarityGrid .defaultPreview img { width: 62%; height: 78%; object-position: center; }
 .similarityGrid .similarGesturePreview { display: grid; place-items: center; }
 .similarityGrid .similarGesturePreview.defaultPreview img { width: 52%; height: 68%; object-fit: contain; object-position: center; }
