@@ -1055,7 +1055,7 @@ class WakeEnroll:
         self.active = False
         self.started_at = 0.0               # VoiceSession 과 같은 뜻 — 겹치면 나중에 시작한 쪽이 발화를 받는다
         self.last_at = 0.0                  # 마지막 진행(시작·샘플) 시각 — 방치 판정용
-        self.wake_text = WAKE_DEFAULT_WORD  # 이번 등록이 대상으로 삼은 호출어 (시작할 때 설정에서 읽는다)
+        self.wake_text = WAKE_DEFAULT_WORD  # 이번 등록이 대상으로 삼은 호출어 (시작 이벤트의 후보)
         self.epoch = 0                      # 등록 회차 — 늦게 끝난 이전 회차가 확정하지 못하게 한다
         self._samples = []
         self._embs = []
@@ -1075,16 +1075,15 @@ class WakeEnroll:
         self.link._send({"type": type_, "data": data})
 
     # ── BE 이벤트 진입점 (AgentLink._on_event 가 호출 — WS 수신 스레드) ──
-    def on_start(self):
-        log_rx("wakeword_enroll_start", {})
+    def on_start(self, wake_text):
+        log_rx("wakeword_enroll_start", {"wakeWord": wake_text})
         self.active, self._samples, self._embs, self._scores = True, [], [], []
         self.started_at = self.last_at = time.monotonic()
         self._fails = self._word_fails = 0
         self._saving, self._saved = False, None
         self._head, self._training, self._bank = None, False, None   # 돌고 있는 앞 회차 학습은 끝나고 회차를 보고 스스로 접는다
         self.epoch += 1                     # 앞 회차가 뒤늦게 끝나도 확정하지 못한다
-        # 이번 등록이 대상으로 삼는 호출어는 지금 설정값이다 — 설정만 바꾸고 옛 템플릿을 재사용하는 길을 막는다.
-        self.wake_text = self.store.wake_word() if self.store else WAKE_DEFAULT_WORD
+        self.wake_text = wake_text
         print(f"[호출어 수집] 시작({self.epoch}회차) — \"{self.wake_text}\" {WAKE_TOTAL}번")
         self._start_prepare()
 
@@ -1140,24 +1139,6 @@ class WakeEnroll:
             return
         if epoch == self.epoch:
             self._bank = bank
-
-    def on_word_changed(self, word):
-        """수집 중에 설정 호출어가 바뀌었다 → 모은 샘플을 버리고 새 이름으로 다시 받는다 (버렸으면 True).
-
-        그냥 두면 옛 이름으로 5개를 다 모아 확정한 뒤에야 설정과 다른 것이 드러나, 부른 5번이 통째로 버려진다."""
-        if not self.active or not isinstance(word, str) or word == self.wake_text:
-            return False
-        old = self.wake_text
-        self.wake_text = word
-        self.epoch += 1                     # 돌고 있는 학습·저장은 회차를 보고 스스로 접는다
-        self._samples, self._embs, self._scores = [], [], []
-        self._fails = self._word_fails = 0
-        self._saving, self._saved = False, None
-        self._head, self._training, self._bank = None, False, None
-        print(f'[호출어 수집] 설정이 "{old}" → "{word}" 로 바뀌었다 — 모은 샘플을 버리고 다시 받는다')
-        self._reject(f'호출어가 "{word}" 로 바뀌었어요. 새 이름으로 다시 {WAKE_TOTAL}번 불러주세요.', "호출어 변경")
-        self._start_prepare()
-        return True
 
     @property
     def _custom(self):

@@ -588,6 +588,52 @@ def test_wake_download_retries_after_settings_change():
                 store._worker.join(3)
 
 
+def test_wake_enroll_candidate_survives_settings_sync():
+    """등록 후보는 활성 설정과 분리한다. PUT 직후 옛 설정과 새 blob이 와도 수집을 유지한다."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = WakeTemplateStore(Path(directory) / "wake.npz")
+        try:
+            assert store.on_settings({"wakeWord": "시아야"})
+            old = template()
+            assert store.commit(old, "이전 등록")
+            with patch("be_link.read_runtime", return_value=None):
+                link = AgentLink(wake_store=store)
+            enroll = WakeEnroll(link, store=store)
+            link.wake = enroll
+
+            with patch.object(enroll, "_start_prepare"):
+                link._on_event(json.dumps({"type": "wakeword_enroll_start", "data": {"wakeWord": "하늘아"}}))
+            assert enroll.wake_text == "하늘아" and store.wake_word() == "시아야"
+            assert store.current is old
+
+            enroll._samples = [object()]
+            samples, epoch = enroll._samples, enroll.epoch
+            for event in ("hello_ack", "recognition_start", "settings_changed"):
+                link._on_event(json.dumps({"type": event, "data": {"settings": {"wakeWord": "시아야"}}}))
+            assert enroll.wake_text == "하늘아" and enroll._samples is samples and enroll.epoch == epoch
+
+            new = template(1, "하늘아")
+            body = new.npz_bytes()
+            sha = hashlib.sha256(body).hexdigest()
+            _, generation = store.reserve_write()
+            with store._lock:
+                store._sent_sha, store._writers = sha, 1
+            link._on_event(json.dumps({"type": "settings_changed", "data": {
+                "settings": {"wakeWord": "시아야"}, "blobs": {"wakeword": sha}}}))
+            assert enroll.wake_text == "하늘아" and enroll._samples is samples and enroll.epoch == epoch
+            assert store.current is old and store.generation == generation
+
+            with store._lock:
+                store._writers = 0
+            assert store.commit(new, "등록 확정", generation=generation)
+            enroll.active = False
+            link._on_event(json.dumps({"type": "settings_changed", "data": {
+                "settings": {"wakeWord": "하늘아"}, "blobs": {"wakeword": sha}}}))
+            assert store.wake_word() == "하늘아" and store.current.matches_setting("하늘아")
+        finally:
+            store.close()
+
+
 def test_wake_enroll_idle_expires():
     """방치된 호출어 수집은 스스로 접는다 — 안 접으면 음성 명령이 통째로 죽는다.
 

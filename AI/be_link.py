@@ -23,6 +23,7 @@ import urllib.request
 import uuid
 from collections import deque
 from pathlib import Path
+from gesture_session_renewal import GestureRenewalPolicy, foreground_context_chain
 
 PROTOCOL_VERSION = "2025-11-25"
 AGENT_VERSION = "0.4.2"
@@ -148,6 +149,8 @@ class AgentLink:
         self.wake = None                # WakeEnroll 또는 None (assistant가 주입) — 온보딩 이름 불러보기(206)
         self._send_lock = threading.Lock()
         self._stop = False
+        self._gesture_session_synced = False
+        self.gesture_renewal_policy = GestureRenewalPolicy(self._read_gesture_policy)
         if self.rt:
             threading.Thread(target=self._ws_loop, daemon=True).start()
 
@@ -158,6 +161,7 @@ class AgentLink:
         except Exception as e:
             print(f"[BE] websockets 미설치 — WS 비활성(MCP 만 사용): {e}")
             return
+        threading.Thread(target=self._gesture_policy_loop, daemon=True).start()
         backoff = 1.0
         while not self._stop:
             try:
@@ -166,6 +170,8 @@ class AgentLink:
                     self.ws = ws
                     self.connected = True
                     self.gesture_ready = False
+                    self._gesture_session_synced = False
+                    self.gesture_renewal_policy.invalidate()
                     backoff = 1.0
                     self._send({"type": "hello", "data": {"agentVersion": AGENT_VERSION}})
                     print(f"[BE] /ws/agent 연결됨 (port {self.rt['port']})")
@@ -174,6 +180,8 @@ class AgentLink:
             except Exception as e:
                 self.connected = False
                 self.gesture_ready = False
+                self._gesture_session_synced = False
+                self.gesture_renewal_policy.invalidate()
                 self.ws = None
                 if self._stop:
                     break
@@ -191,6 +199,9 @@ class AgentLink:
         t, d = msg.get("type"), msg.get("data") or {}
         if not isinstance(d, dict):
             return
+        if t in {"hello_ack", "recognition_start", "settings_changed", "gesture_toggled",
+                 "gesture_registered", "gesture_renamed", "gesture_removed"}:
+            self.gesture_renewal_policy.invalidate()
         if self.voice_sync is not None:
             if t == "voice_changed" and isinstance(msg.get("data"), dict):
                 self.voice_sync.on_changed(msg["data"])
@@ -201,9 +212,6 @@ class AgentLink:
         if self.wake_store is not None and t in ("hello_ack", "recognition_start", "settings_changed"):
             # 호출어 설정을 먼저 적용한다. 다운로드 시작 뒤 설정이 바뀌면 받은 파일이 폐기된다.
             self.wake_store.on_settings(d.get("settings"))   # settings.wakeWord — 호출어 문자열 자체
-            if self.wake is not None:
-                # 수집 중이면 새 이름으로 다시 받게 한다 — 옛 이름으로 5개를 채운 뒤 버리지 않도록
-                self.wake.on_word_changed(self.wake_store.wake_word())
             blobs = d.get("blobs")
             if isinstance(blobs, dict) and "wakeword" in blobs:
                 self.wake_store.on_blob(blobs["wakeword"])   # 전역 호출어 템플릿 참조 (sha256 또는 null)
@@ -212,6 +220,7 @@ class AgentLink:
             self.calib.on_blob_ref(blobs.get("calib") if isinstance(blobs, dict) else None)
         if t == "session_state":
             with self._session_condition:
+                self._gesture_session_synced = True
                 if d.get("state") == "ACTIVE" and d.get("deadlineMs"):
                     # 명시 종료 뒤 늦게 온 이전 개시 응답은 로컬 세션을 되살리지 않는다.
                     if self._accept_session_active:
@@ -240,7 +249,7 @@ class AgentLink:
             elif t == "calib_changed":     c.on_changed(d)
             elif t == "calib_cancel":      c.on_cancel(d.get("tempId"))
         elif t == "wakeword_enroll_start" and self.wake:
-            self.wake.on_start()
+            self.wake.on_start(d.get("wakeWord"))
         # 온보딩 "명령 문장 말하기"(command_*) 단계는 폐기됐다(229) — 그 낭독 5문장이 곧 위 voice_* 등록이다
         # 마이크·제스처 설정은 메인 루프, 활성 보이스 참조는 위 동기화 워커로 넘긴다.
         # NOTE(한계): wipe 수신은 아직 처리하지 않는다. 모르는 type은 무시한다(프로토콜 §1.5).
@@ -267,9 +276,42 @@ class AgentLink:
         return items
 
     def send_event(self, event_type, data=None):
+        if event_type == "gesture_exec":
+            data = data or {}
+            with self._session_condition:
+                active = (self.connected and self.gesture_ready
+                          and self._gesture_session_synced and self.be_session_id is not None
+                          and time.monotonic() < self.session_until_mono)
+                session_id = self.be_session_id
+            if active and self.gesture_renewal_policy.can_renew(
+                    data.get('name'), data.get('context'),
+                    foreground_context_chain(data.get('hwnd')) if data.get('context') is None else None):
+                # WS session_state must be able to update while MCP is in flight.
+                ok, _ = self.call('session.extend')
+                if ok is not True:
+                    print('[GESTURE BLOCKED] reason=session_extend_failed')
+                    return False
+                with self._session_condition:
+                    if (not self.connected or not self.gesture_ready
+                            or not self._gesture_session_synced
+                            or self.be_session_id != session_id):
+                        return False
         return self._send({"type": event_type, "data": data or {}})
 
-    def _agent_request(self, path, method="GET", payload=None, headers=None):
+    def _read_gesture_policy(self, path):
+        with self._agent_request(path, timeout=2) as response:
+            return json.load(response)
+
+    def _gesture_policy_loop(self):
+        while not self._stop:
+            if self.connected:
+                try:
+                    self.gesture_renewal_policy.refresh()
+                except Exception:
+                    self.gesture_renewal_policy.invalidate()
+            time.sleep(1.0)
+
+    def _agent_request(self, path, method="GET", payload=None, headers=None, timeout=15):
         if not self.rt:
             raise RuntimeError("BE runtime.json이 없습니다")
         data = payload if isinstance(payload, (bytes, bytearray)) else (
@@ -280,7 +322,7 @@ class AgentLink:
         req.add_header("X-Caller", "AI")
         for key, value in (headers or {}).items():
             req.add_header(key, value)
-        return urllib.request.urlopen(req, timeout=15)
+        return urllib.request.urlopen(req, timeout=timeout)
 
     def get_gesture_npz(self, gesture_id, etag=None):
         headers = {"Accept": "application/octet-stream"}
