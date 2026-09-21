@@ -320,7 +320,7 @@ def main():
                           cut_ok=lambda t: not brain.session_open_at(t))
     voice.start()
 
-    pyautogui.FAILSAFE = False  # 커서를 안 쓰는 모드 — 킬스위치는 ESC
+    pyautogui.FAILSAFE = False  # 커서를 안 쓰는 모드 — 종료는 Ctrl+C
     pyautogui.PAUSE = 0
 
     gest = GestureEngine(asset_path("models", "gesture_recognizer.task"))
@@ -431,7 +431,7 @@ def main():
     seq = -1
     gesture_trace = open(args.gesture_trace, 'w', encoding='utf-8') if args.gesture_trace else None
     gesture_trace_last = None
-    print("시아 모드 시작. 화면을 보며 말하면 됩니다. 미리보기 창에서 ESC = 종료.")
+    print("시아 모드 시작. 화면을 보며 말하면 됩니다. 종료는 Ctrl+C.")
     try:
         while True:
             s, f = camera.latest(seq)
