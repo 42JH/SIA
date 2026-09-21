@@ -16,6 +16,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from static_hand_shape import hand_shape, shape_distances, FEATURE_SIZE, STATIC_KEYS
 from gesture_diagnostics import save_registration_diagnostic
 from gesture_consistency import evaluate_dynamic_takes
 
@@ -271,10 +272,14 @@ class GestureTemplateCache:
             self.manifest = {}
 
     @staticmethod
-    def template_bytes(name, feats):
+    def template_bytes(name, feats, shapes=None):
         out = io.BytesIO()
         feats = np.asarray(feats, dtype=np.float32)
-        np.savez_compressed(out, X=feats, names=np.array([name] * len(feats)))
+        extra = {}
+        if shapes is not None:
+            extra = dict(static_shapes=np.asarray([x if x is not None else np.zeros(FEATURE_SIZE) for x in shapes]),
+                         static_shape_valid=np.asarray([x is not None for x in shapes]))
+        np.savez_compressed(out, X=feats, names=np.array([name] * len(feats)), **extra)
         return out.getvalue()
 
     @staticmethod
@@ -690,11 +695,13 @@ class GestureRegistration:
             legacy_keep = np.asarray(original.legacy.names) != self.replace_gesture_name
             filtered.data = {
                 key: value[(original.data['names'] != self.replace_gesture_name)
-                           if key in ('X', 'names') else keep]
+                           if key in ('X', 'names') + STATIC_KEYS else keep]
                 for key, value in original.data.items()
             }
             filtered.legacy = copy.copy(original.legacy)
             filtered.legacy.X = original.legacy.X[legacy_keep]
+            filtered.legacy.static_shapes = original.legacy.static_shapes[legacy_keep]
+            filtered.legacy.static_shape_valid = original.legacy.static_shape_valid[legacy_keep]
             filtered.legacy.names = [name for name in original.legacy.names
                                      if name != self.replace_gesture_name]
             self.custom_store = filtered
@@ -848,9 +855,12 @@ class GestureRegistration:
             raise ValueError("손을 충분한 시간 동안 확인하지 못했습니다. 촬영이 끝날 때까지 손을 화면에 유지해주세요")
         poses = []
         aligned_features = []
+        aligned_shapes = []
+        take_shapes = []
         reference = np.asarray(self.samples[0])
         for take in range(1, self.takes + 1):
             features = []
+            shapes = []
             extra_hand_seen = False
             for _, hands in self.take_frames.get(take, []):
                 # 손이 안 보인 프레임처럼, 잠깐 다른 손(배경·본인 반대손)이 같이
@@ -867,6 +877,7 @@ class GestureRegistration:
                     if weighted_distance(mirrored - reference) < weighted_distance(feature - reference):
                         feature = mirrored
                     features.append(feature)
+                    shapes.append(hand_shape(hands[0].get("world_landmarks")))
                 elif len(hands) > 1:
                     extra_hand_seen = True
             if not features:
@@ -874,10 +885,15 @@ class GestureRegistration:
                     raise ValueError(f"{take}회차에서 손 개수가 한 손이 아니라 두 손으로 계속 감지되었습니다. 한 손 동작은 다른 손을 화면 밖에 두고 촬영해주세요")
                 raise ValueError(f"{take}회차에서 손을 확인한 시간이 너무 짧습니다. 촬영이 끝날 때까지 손을 보여주세요")
             pose = np.mean(features, axis=0)
-            self._validate_static_stability(
-                take, [float(weighted_distance(feature - pose)) for feature in features]
-            )
+            if all(x is not None for x in shapes):
+                centre = np.mean(shapes, axis=0)
+                errors = shape_distances(np.asarray(shapes), centre).tolist()
+            else:
+                errors = [float(weighted_distance(feature - pose)) for feature in features]
+            self._validate_static_stability(take, errors)
             poses.append(pose)
+            take_shapes.append(np.mean(shapes, axis=0) if all(x is not None for x in shapes) else None)
+            aligned_shapes.extend(shapes)
             aligned_features.extend(features)
         feats = np.asarray(aligned_features, dtype=np.float32)
         # 촬영 자체가 일관되지 않으면 한 회차의 우연한 근접값을 중복으로
@@ -922,7 +938,9 @@ class GestureRegistration:
             raise ValueError("손가락 모양을 정확히 확인하기 어렵습니다. 손가락이 겹치지 않도록 보여주세요")
         matches = []
         for take, pose in enumerate(poses, 1):
-            near, dist = self.custom_store.nearest_class(np.asarray([pose], dtype=np.float32))
+            query = np.asarray([pose], dtype=np.float32)
+            near, dist = (self.custom_store.nearest_class(query, shapes=[take_shapes[take-1]])
+                          if take_shapes[take-1] is not None else self.custom_store.nearest_class(query))
             matches.append((dist, near))
             print(f"[제스처 중복 검사] tempId={self.temp_id} take={take} motion=STATIC "
                   f"nearest={near!r} distance={dist:.4f} threshold={self.COLLISION_DIST}")
@@ -943,10 +961,15 @@ class GestureRegistration:
                 matches[index] = cross_candidates[0]
         self._validate_custom_collision_votes(matches)
         # 충돌·중복이 아니라는 게 확인된 뒤에야 회차 간 일관성을 본다.
-        self._validate_take_consistency(
-            poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE
-        )
-        payload = self.cache.template_bytes("__pending__", feats)
+        if all(x is not None for x in take_shapes):
+            self._validate_take_consistency(
+                take_shapes, lambda a, b: float(shape_distances(a, b)), self.TAKE_STATIC_DISTANCE)
+        else:
+            self._validate_take_consistency(
+                poses, lambda a, b: float(weighted_distance(a - b)), self.TAKE_STATIC_DISTANCE)
+        payload = (self.cache.template_bytes("__pending__", feats, shapes=aligned_shapes)
+                   if any(x is not None for x in aligned_shapes)
+                   else self.cache.template_bytes("__pending__", feats))
         self._validate_hand_size(1)
         self.link.put_gesture_npz(self.temp_id, payload)
 
@@ -1343,8 +1366,8 @@ class GestureRegistration:
                   or (len(valid) < len(inner) and max(gaps, default=0) >= TRACKING_GRACE_S))
         return ok, valid
 
-    def _two_hand_world_sequence(self, take, static=False):
-        """Build optional 3D data for a two-hand take.
+    def _world_sequence(self, take, count, static=False):
+        """Build optional 3D data for a one/two-hand take.
 
         Missing world landmarks never affect one-hand or dynamic registration.
         For a new two-hand static template, however, most accepted frames must
@@ -1352,7 +1375,19 @@ class GestureRegistration:
         ambiguous 2D representation that confuses prayer with a roof.
         """
         raw = self.take_frames.get(take, [])
-        frames = [(t, ordered_world_landmarks(hands)) for t, hands in raw]
+        def world_points(hands):
+            if len(hands) != count:
+                return None
+            if count == 2:
+                return ordered_world_landmarks(hands)
+            candidates = [h.get('world_landmarks') for h in hands]
+            points = np.asarray(candidates, dtype=np.float32)
+            if points.shape != (1, 21, 3) or not np.isfinite(points).all():
+                return None
+            if np.linalg.norm(points[0, 9] - points[0, 0]) < 1e-5:
+                return None
+            return points
+        frames = [(t, world_points(hands)) for t, hands in raw]
         valid = [(t, points) for t, points in frames if points is not None]
         if not valid or len(valid) < max(2, int(np.ceil(len(raw) * 0.7))):
             return None
@@ -1360,6 +1395,9 @@ class GestureRegistration:
             average = np.mean([points for _, points in valid], axis=0)
             return encode_world_sequence([0, 1], [average, average])
         return encode_world_sequence([t for t, _ in valid], [p for _, p in valid])
+
+    def _two_hand_world_sequence(self, take, static=False):
+        return self._world_sequence(take, 2, static=static)
 
     def _one_hand_take_observations(self, take):
         """1손 촬영에서 순간적인 두 번째 손 오검출을 제거해 주 손만 반환한다.
@@ -1531,8 +1569,9 @@ class GestureRegistration:
                 if movement < PREFIX_MIN_MOTION:
                     raise ValueError(f"{take}회차의 움직임이 너무 작아 동적 제스처로 구분하기 어렵습니다. 동작을 조금 더 크게 해주세요")
             sequences.append(seq)
-            if self.motion == self.STATIC and hand_count == 2:
-                world_seq = self._two_hand_world_sequence(take, static=True)
+            if hand_count in (1, 2):
+                world_seq = self._world_sequence(take, hand_count,
+                                                 static=self.motion == self.STATIC)
                 world_valid.append(world_seq is not None)
                 world_sequences.append(
                     world_seq if world_seq is not None

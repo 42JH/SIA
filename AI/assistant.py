@@ -713,7 +713,8 @@ def main():
                 # A close kNN match therefore takes precedence over a weak
                 # built-in guess; otherwise Promise is never evaluated when
                 # MediaPipe assigns a borderline built-in label first.
-                custom_label, dist = active_custom.classify_with_distance(hand["landmarks"], disabled=disabled_gestures)
+                custom_label, dist = active_custom.classify_with_distance(hand["landmarks"], disabled=disabled_gestures,
+                                                                        world_landmarks=hand.get("world_landmarks"))
                 if custom_label:
                     raw_gesture = custom_label
                     raw_score = round(float(math.exp(-dist)), 3)
