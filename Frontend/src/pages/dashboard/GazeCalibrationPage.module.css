@@ -31,10 +31,7 @@ button:disabled { cursor: default; opacity: .45; }
 .cornerMarks { display: none; }
 .positionFrame > strong { position: absolute; bottom: 8%; left: 50%; color: #d8e6ff; font-size: 21px; text-shadow: 0 1px 4px #061a37; transform: translateX(-50%); white-space: nowrap; }
 .cameraError { position: absolute; right: 24px; bottom: 20px; left: 24px; margin: 0; color: #fff; text-align: center; text-shadow: 0 1px 4px #061a37; }
-.positionProgress { width: calc(100% - 120px); height: 11px; margin: 30px 60px 0; border: 1px solid #a5bee1; border-radius: 8px; overflow: hidden; appearance: none; }
-.positionProgress::-webkit-progress-bar { background: #e4edf8; }
-.positionProgress::-webkit-progress-value { border-radius: 8px; background: linear-gradient(90deg, #0b2e60, #224f91); }
-.positionFooter { display: flex; align-items: center; margin: 16px 60px 0; }
+.positionFooter { display: flex; align-items: center; margin: 28px 60px 0; }
 .positionFooter p { margin: 0; color: var(--calib-copy); font-size: 17px; font-weight: 700; }
 .positionFooter > div { display: flex; gap: 12px; margin-left: auto; }
 .positionFooter button { min-width: 150px; }

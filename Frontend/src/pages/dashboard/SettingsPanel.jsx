@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { JarvisOrb } from 'jarvis-ai-web-animation';
 import { useNavigate } from 'react-router-dom';
 import { fetchDevices } from '../../api/devices';
 import { fetchSettings, updateSettings } from '../../api/settings';
@@ -10,6 +11,14 @@ import styles from './DashboardHome.module.css';
 const WAKE_WORD_MIN_LENGTH = 2;
 const WAKE_WORD_MAX_LENGTH = 8;
 const koreanWakeWordPattern = /^[가-힣]+$/;
+const siaSkyPalette = {
+  core: 0xf7fbff,
+  primary: 0x3ec8e0,
+  secondary: 0x5f88bc,
+  tertiary: 0xcbd9ea,
+  deep: 0x89a8cf,
+  fallback: 'radial-gradient(circle at 50% 50%, #f7fbff 0%, #3ec8e0 28%, #5f88bc 58%, #89a8cf 78%, transparent 100%)',
+};
 
 function normalizeWakeWord(value) {
   const next = typeof value === 'string' ? value.trim() : '';
@@ -95,49 +104,13 @@ export default function SettingsPanel() {
     try { sessionStorage.setItem('siaPendingWakeWord', next); } catch { /* 호출명 변경 기준 유지 */ }
     navigate(`/onboarding?step=micStart&mode=wake&wakeWord=${encodeURIComponent(next)}`, { state: { previousWakeWord: previous, wakeWord: next } });
   }
-  return <div className={styles.settings}><div className={styles.settingsVisual} aria-hidden="true"><ScannerVisual /></div>
+  return <div className={styles.settings}><div className={styles.settingsVisual} aria-hidden="true"><div className={styles.settingsOrb}><JarvisOrb size="panel" state="idle" palette={siaSkyPalette} quality="auto" interactive={false} breathing /></div></div>
     <div className={`${styles.settingRow} ${styles.wakeRow}`}><label className={styles.settingLabel}>호출명 (Wake Word)<input value={wakeWord} aria-invalid={Boolean(wakeWordError)} onChange={(event) => changeWakeWord(event.target.value)} /></label><button className={styles.primary} onClick={saveWakeWord} disabled={pending || !wakeWord.trim() || wakeWordInvalid}>저장</button><small className={wakeWordError ? styles.wakeValidation : undefined}>{wakeWordError || '한국어 이름으로 입력해주세요.'}</small></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.micRow}`}><label className={styles.settingLabel}>마이크<div className={styles.deviceValue} title={deviceLabel('mic')}>{deviceLabel('mic')}</div></label><button onClick={() => beginChange('mic')}>변경</button></div>
     <div className={`${styles.settingRow} ${styles.deviceRow} ${styles.cameraRow}`}><label className={styles.settingLabel}>카메라<div className={styles.deviceValue} title={deviceLabel('camera')}>{deviceLabel('camera')}</div></label><button onClick={() => beginChange('camera')}>변경</button></div>
     <Toggle area="startToggle" group="실행" label="컴퓨터 시작 시 자동 실행" description="컴퓨터 전원을 켜면 SIA가 자동으로 함께 실행됩니다." checked={config.settings.autoStart} onChange={async (checked) => { try { const next = await updateSettings({ settings: { ...config.settings, autoStart: checked }, updatedAt: config.updatedAt }); setConfig(next); await syncAutostart(checked); } catch (e) { setError(e.message); } }} />
     {error && <p className={styles.error}>{error}</p>}{confirmKind && !dialog && <Modal><DeviceIcon kind={confirmKind} /><h2>{confirmKind === 'mic' ? '마이크' : '카메라'} 변경</h2><label className={styles.deviceChoice}>{confirmKind === 'mic' ? '마이크' : '카메라'}<select value={selected} onChange={(e) => setSelected(e.target.value)}>{confirmKind === 'mic' && <option value="">시스템 기본 마이크</option>}{list.map((item) => <option value={item.id} key={item.id}>{item.name}{item.isDefault ? ' (기본)' : ''}</option>)}</select></label><p>장치를 변경하면 해당 장치의 기존 학습 데이터를 자동 전환합니다.</p><div className={styles.dialogActions}><button onClick={finishChange}>취소</button><button className={styles.primary} onClick={() => { setConfirmKind(null); saveDevice(); }} disabled={pending || (confirmKind === 'camera' && !selected)}>변경</button></div></Modal>}{dialog && <ProfileDialog dialog={dialog} kind={changeKind} pending={pending} close={finishChange} activate={activate} enroll={startEnrollment} removeAndEnroll={removeAndEnroll} />}
   </div>;
-}
-
-function ScannerVisual() {
-  const particles = Array.from({ length: 360 }, (_, index) => {
-    const distance = 51 * Math.sqrt((index + 0.5) / 360);
-    const angle = index * 2.3999632297;
-    const x = 160 + Math.cos(angle) * distance;
-    const y = 150 + Math.sin(angle) * distance;
-    const edgeFade = Math.max(0.08, 1 - (distance / 51) ** 3.8);
-    const lightBias = Math.max(0.22, Math.min(1, 0.76 - (x - 160) / 150 - (y - 150) / 190));
-    return <circle cx={x} cy={y} r={index % 9 === 0 ? 1.25 : 0.82} opacity={edgeFade * lightBias} key={index} />;
-  });
-  const bars = Array.from({ length: 57 }, (_, index) => {
-    const center = 28;
-    const height = 2 + 55 * Math.exp(-(((index - center) / 3.1) ** 2)) + 27 * Math.exp(-(((index - 17) / 6) ** 2)) + 34 * Math.exp(-(((index - 40) / 6.5) ** 2)) + (index % 4) * 1.8;
-    const x = 48 + index * 4;
-    return <line x1={x} x2={x} y1={338 - height / 2} y2={338 + height / 2} style={{ '--delay': `${index * -31}ms` }} key={index} />;
-  });
-  return <svg className={styles.visualScanner} viewBox="0 0 320 420" aria-hidden="true">
-    <defs>
-      <filter id="scanner-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="2.4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-      <radialGradient id="sphere-base" cx="35%" cy="30%" r="75%"><stop offset="0" stopColor="#29456d" /><stop offset=".48" stopColor="#102544" /><stop offset="1" stopColor="#061225" /></radialGradient>
-      <clipPath id="sphere-clip"><circle cx="160" cy="150" r="53" /></clipPath>
-    </defs>
-    <g className={styles.scannerRings}>
-      <circle className={styles.scannerOuter} cx="160" cy="150" r="116" />
-      <g className={styles.scannerMiddle}><circle cx="160" cy="150" r="94" /></g>
-      <g className={styles.scannerInner}><circle cx="160" cy="150" r="74" /></g>
-      <g className={styles.scannerTicks}><path d="M160 20v18M151 29h18M160 262v18M151 271h18" /></g>
-      <circle className={styles.scannerMarker} cx="61" cy="91" r="4" />
-      <circle className={styles.scannerMarker} cx="245" cy="229" r="4" />
-    </g>
-    <g className={styles.scannerSphere} clipPath="url(#sphere-clip)"><circle cx="160" cy="150" r="53" fill="url(#sphere-base)" />{particles}</g>
-    <circle className={styles.scannerSphereEdge} cx="160" cy="150" r="53" />
-    <g className={styles.scannerWave} filter="url(#scanner-glow)">{bars}</g>
-  </svg>;
 }
 
 function Toggle({ area, group, label, description, checked, onChange }) {

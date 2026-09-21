@@ -1,26 +1,22 @@
-:global(:root) { --gaze-navy: #071f45; --gaze-deep: #071a37; --gaze-blue: #4f7bd0; --gaze-line: #5f8ee8; --gaze-soft: #c8d9f2; --gaze-copy: #527fc9; }
+:global(:root) { --gaze-navy: #142853; --gaze-deep: #0f2047; --gaze-blue: #3f70d8; --gaze-line: #4f7ee1; --gaze-soft: #d5e1f5; --gaze-copy: #3f70d8; }
 
 .gazePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; color: var(--gaze-navy); }
-.gazeHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr 52px; align-items: center; isolation: isolate; }
+.gazeHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr; align-items: center; isolation: isolate; }
 .heroTitle { display: flex; align-items: center; gap: 8px; min-height: 38px; }
-.heroTitle button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 0; cursor: pointer; }
-.heroTitle button::before { width: 12px; height: 12px; margin-top: 3px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: rotate(45deg); content: ""; }
+.heroTitle button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 0; cursor: pointer; }
+.heroTitle button::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
 .gazeHero h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
 .gazeHero p { margin: 12px 0 0 50px; color: var(--gaze-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
-.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: white; stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: var(--gaze-navy); stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
 .circuit path { fill: none; }
 .circuit .circuitLight { stroke: var(--gaze-blue); }
-.circuit circle { stroke-width: 2.4; }
-.heroRadar { display: block; width: 52px; height: 52px; justify-self: end; overflow: visible; fill: none; stroke: var(--gaze-navy); stroke-width: 4; }
-.heroRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
-.heroRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
-.heroRadar .radarCenter { fill: var(--gaze-blue); stroke: none; }
+.circuit > circle { fill: white; stroke-width: 2.4; }
 
-.calibrationGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: 55% 45%; gap: 20px; }
+.calibrationGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: minmax(0, 55fr) minmax(0, 45fr); gap: 20px; }
 .frame { position: relative; border: 2px solid var(--gaze-line); border-radius: 8px; }
 .frameLine { display: none; }
-.activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; background: radial-gradient(circle at 72% 32%, rgb(62 103 180 / 32%), transparent 36%), linear-gradient(135deg, #081a3c, #182d60); color: white; }
-.activePanel > small, .listTitle small { margin-bottom: 12px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
+.activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; border-color: var(--gaze-line); background: linear-gradient(135deg, #101f45 0%, #223d75 100%); color: white; }
+.activePanel > small, .listTitle small { margin: 0 0 15px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
 .activePanel h2, .listTitle h2 { margin: 0; font-size: clamp(28px, 2.55vw, 40px); letter-spacing: -.04em; }
 .activePanel .frameLine { background: #6191f2; }
 .activeRadar { display: grid; min-height: 260px; flex: 1; place-items: center; }
@@ -28,7 +24,7 @@
 .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
 .radarTarget { fill: white; stroke: white; }
 .radarCenter { fill: #8ebdff; stroke: none; }
-.activeFooter { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.activeFooter { display: flex; align-items: end; justify-content: space-between; }
 .activeFooter span { display: grid; gap: 8px; }
 .activeFooter strong { font-size: 27px; }
 .activeFooter small { color: #d8e5fb; font-size: 18px; }
@@ -37,7 +33,7 @@
 .emptyActive { display: grid; flex: 1; place-items: center; color: #dceaff; }
 .emptyActive .radar { max-height: 250px; opacity: .35; }
 
-.storedPanel { min-width: 0; padding: 34px 25px 22px; background: rgb(255 255 255 / 84%); }
+.storedPanel { min-width: 0; padding: 34px 25px 22px; background: rgb(255 255 255 / 82%); }
 .listTitle { display: flex; align-items: center; justify-content: space-between; }
 .listTitle span { display: grid; }
 .listTitle b { min-width: 180px; padding: 17px 20px; border: 1px solid #a6bee4; border-radius: 5px; background: #e4edf9; color: #7a94bb; text-align: center; }
@@ -45,8 +41,8 @@
 .primary { background: linear-gradient(135deg, #101f45, #243f79); color: white; }
 button:disabled { cursor: default; opacity: .45; }
 .listTitle .primary { min-width: 154px; }
-.profileList { display: grid; gap: 12px; max-height: 402px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
-.profileCard { display: grid; min-width: 0; min-height: 88px; box-sizing: border-box; grid-template-columns: 62px minmax(0, 1fr) max-content; align-items: start; gap: 10px; padding: 10px 12px; border: 1px solid var(--gaze-soft); border-radius: 5px; background: white; }
+.profileList { display: grid; gap: 12px; max-height: 408px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
+.profileCard { display: grid; min-width: 0; min-height: 88px; box-sizing: border-box; grid-template-columns: 62px minmax(0, 1fr) max-content; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--gaze-soft); border-radius: 5px; background: white; }
 .profileCard:has(> input) { grid-template-columns: 28px 62px minmax(0, 1fr); }
 .profileCard > input { width: 24px; height: 24px; margin: 0; accent-color: var(--gaze-navy); }
 .compactRadar { width: 62px; height: 62px; align-self: center; fill: none; stroke: var(--gaze-navy); stroke-width: 6; }
@@ -61,14 +57,14 @@ button:disabled { cursor: default; opacity: .45; }
 .editButton, .activeEditButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); cursor: pointer; }
 .activeEditButton { color: white; }
 .editButton svg, .activeEditButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.pillButton { grid-row: 1; grid-column: 3; align-self: start; min-width: 0; min-height: 42px; margin-top: 6px; padding: 0 12px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
+.pillButton { grid-row: 1; grid-column: 3; align-self: center; min-width: 0; min-height: 42px; margin: 0; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
 .profileCard:has(> input) .pillButton { grid-column: 4; }
 .emptyList { margin: 80px 0; color: var(--gaze-copy); text-align: center; }
 .deleteNotice { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--gaze-copy); }
 .deleteNotice span { display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--gaze-navy); border-radius: 50%; color: var(--gaze-navy); font-weight: 800; }
 .deleteNotice p { margin: 0; }
 
-.bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 84%); }
+.bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 80%); }
 .noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--gaze-navy); border-radius: 50%; font-size: 22px; font-weight: 800; line-height: 1; }
 .bottomBar > strong { color: var(--gaze-blue); font-size: 17px; }
 .bottomBar > button, .deleteActions { margin-left: auto; }
@@ -103,5 +99,5 @@ button:disabled { cursor: default; opacity: .45; }
   .radar { width: min(215px, 62%); height: min(215px, 62%); }
   .bottomBar { min-height: 62px; }
 }
-@media (max-width: 1000px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .heroRadar { display: none; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
-@media (max-width: 680px) { .gazeHero { grid-template-columns: minmax(0, auto); } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 17px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { margin-left: 0; } .modal { padding: 30px 20px 26px; } .modal p span { white-space: normal; } .modalActions { flex-direction: column; } .modalActions button { width: 100%; min-width: 0; } }
+@media (max-width: 1050px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
+@media (max-width: 760px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 15px; } .activePanel { min-height: 440px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .listTitle { align-items: flex-start; gap: 12px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .modal { padding: 30px 20px 26px; } .modal p span { white-space: normal; } .modalActions { flex-direction: column; } .modalActions button { width: 100%; min-width: 0; } }

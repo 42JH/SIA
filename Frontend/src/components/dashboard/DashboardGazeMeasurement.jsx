@@ -6,15 +6,19 @@ import styles from './DashboardGazeMeasurement.module.css';
 
 const cells = Array.from({ length: 9 }, (_, index) => index + 1);
 
-export default function DashboardGazeMeasurement({ point, ready, connected, onFailure, onCancel }) {
+export default function DashboardGazeMeasurement({ point, ready, connected, finishing = false, onFailure, onCancel, onVisualComplete }) {
   const target = useRef(null);
   const sentPoints = useRef(new Set());
   const displayedPoint = useRef(null);
   const transitionTimer = useRef(null);
+  const finishHandled = useRef(false);
+  const onVisualCompleteRef = useRef(onVisualComplete);
   const [introDone, setIntroDone] = useState(false);
   const [activePoint, setActivePoint] = useState(null);
   const [hitPoint, setHitPoint] = useState(null);
   const [caught, setCaught] = useState(() => new Set());
+
+  useEffect(() => { onVisualCompleteRef.current = onVisualComplete; }, [onVisualComplete]);
 
   useEffect(() => {
     const escape = (event) => { if (event.key === 'Escape' && document.fullscreenElement) onCancel(); };
@@ -74,6 +78,25 @@ export default function DashboardGazeMeasurement({ point, ready, connected, onFa
     }, 420);
     return () => clearTimeout(transitionTimer.current);
   }, [introDone, onFailure, point]);
+
+  useEffect(() => {
+    if (!finishing || !introDone || finishHandled.current) return undefined;
+    const finalPoint = displayedPoint.current;
+    if (!finalPoint) return undefined;
+    finishHandled.current = true;
+    clearTimeout(transitionTimer.current);
+    setActivePoint(null);
+    setHitPoint(finalPoint);
+    const caughtTimer = setTimeout(() => {
+      setCaught((items) => new Set(items).add(finalPoint));
+      setHitPoint(null);
+    }, 420);
+    const completeTimer = setTimeout(() => onVisualCompleteRef.current?.(), 1120);
+    return () => {
+      clearTimeout(caughtTimer);
+      clearTimeout(completeTimer);
+    };
+  }, [finishing, introDone]);
 
   useEffect(() => {
     if (!activePoint || !ready || !document.fullscreenElement || !target.current || sentPoints.current.has(activePoint)) return undefined;

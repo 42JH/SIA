@@ -23,24 +23,29 @@ export default function OnboardingWakeView({
   const done = wakeDone || step === 'micDone';
   const total = 5;
   const completed = Math.min(total, Math.max(0, Number(wake?.n) || 0));
-  const current = done || completed >= total ? total : completed + 1;
+  const current = done ? total : completed;
   let body;
   if (done) {
     body = <div className={voiceStyles.completeState}><span>✓</span><h2>호출명 학습이 완료되었습니다</h2><p>호출명이 변경되었습니다.</p><button className={voiceStyles.primary} onClick={onFinish}>설정으로 돌아가기</button></div>;
   } else if (step === 'wake') {
-    body = <div className={voiceStyles.recordingContent}>
+    body = completed >= total ? <div className={voiceStyles.centerState}>
+      <div className={voiceStyles.spinner} />
+      <h2>새 호출명을 저장하고 있습니다</h2>
+      <p>설정에 반영되는 즉시 완료 화면으로 이동합니다.</p>
+    </div> : <div className={voiceStyles.recordingContent}>
       <div className={voiceStyles.recordMeta}><strong>{current} / {total} 샘플</strong></div>
       <blockquote>“{enrollWakeWord}”라고 불러주세요</blockquote>
       <div className={voiceStyles.liveAudio}><span><MicIcon compact /></span><Wave levels={micLevels} /><strong>음성 감지 중</strong></div>
       {rejection && <p className={styles.error} role="status">{rejection}</p>}
       {micError && <p className={styles.error} role="status">{micError}</p>}
-      <div className={voiceStyles.progressRow}><progress max={total} value={completed} /><span>{current} / {total}번째 · 총 5번 불러주세요</span></div>
+      <p className={styles.sampleNotice}>완료 {completed} / {total} · 총 5번 불러주세요</p>
       <div className={voiceStyles.actionRow}><button onClick={onCancel} disabled={pending}>취소</button></div>
     </div>;
   } else {
     body = <div className={voiceStyles.guideContent}>
+      <div className={voiceStyles.enrollmentMic}><div className={voiceStyles.enrollmentMicCircle}><MicIcon /></div></div>
       <h2>호출명을 등록합니다</h2>
-      <p>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.<br />약 30초 정도 걸립니다.</p>
+      <p>마이크 등록은 주변 소음이 적은 조용한 환경에서<br />진행하는 것을 권장합니다.<br />약 30초 정도 걸립니다.</p>
       <button className={voiceStyles.primary} onClick={onStart} disabled={!canStart || pending}>시작하기</button>
       <div className={voiceStyles.actionRow}><button onClick={onCancel} disabled={pending}>취소</button></div>
     </div>;
@@ -54,9 +59,8 @@ export default function OnboardingWakeView({
           <div className={voiceStyles.heroTitle}><button onClick={onCancel} aria-label="이전 화면으로 돌아가기" /><h1>호출명 변경</h1></div>
           <svg className={voiceStyles.circuit} viewBox="0 0 760 120" preserveAspectRatio="none" aria-hidden="true"><circle cx="14" cy="66" r="5" /><path d="M19 66h190l44 30h249l54-42h174" /><path className={voiceStyles.circuitLight} d="M350 35h170l42-19h150" /></svg>
         </header>
-        <div className={voiceStyles.registrationGrid}>
-          <section className={`${voiceStyles.frame} ${voiceStyles.registrationVisual}`}><div className={voiceStyles.micRings}><MicIcon /></div></section>
-          <section className={`${voiceStyles.frame} ${voiceStyles.registrationContent}`}>
+        <div className={voiceStyles.registrationStage}>
+          <section className={styles.wakeStage}>
             {body}
             {pending && <p className={styles.status} role="status">서버 응답을 기다리고 있습니다.</p>}
             {delayed && <p className={styles.status} role="status">응답이 30초 이상 지연되고 있습니다. 연결 상태를 확인해주세요.</p>}

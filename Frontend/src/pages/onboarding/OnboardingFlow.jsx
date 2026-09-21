@@ -14,6 +14,9 @@ import VoiceEnrollment from '../../components/onboarding/VoiceEnrollment';
 import MicLevelWaveform from '../../components/onboarding/MicLevelWaveform';
 import { useMicPreview } from '../../hooks/useMicPreview';
 import logo from '../../assets/sia-logo.png';
+import voiceIcon from '../../assets/nav-voice.png';
+import gestureIcon from '../../assets/nav-gestures.png';
+import gazeIcon from '../../assets/nav-gaze.png';
 import styles from './OnboardingHome.module.css';
 
 import { ENROLLMENT_SENTENCES as sentences } from './enrollmentConstants';
@@ -66,56 +69,52 @@ function precheckLabel(value, okWhen) {
   return '확인 필요';
 }
 
-function WelcomeOrb() {
+function WelcomeControlDesk() {
   return (
-    <div className={styles.welcomeOrb} aria-hidden="true">
-      <svg className={styles.welcomeOrbImage} viewBox="0 0 240 240">
-        <g fill="none" stroke="#7aa0cc" strokeWidth="1.35">
-          <ellipse cx="120" cy="120" rx="102" ry="38" transform="rotate(-20 120 120)" />
-          <ellipse cx="120" cy="120" rx="100" ry="37" transform="rotate(50 120 120)" />
-          <ellipse cx="120" cy="120" rx="98" ry="36" transform="rotate(110 120 120)" />
-        </g>
-        <g fill="#163a6e">
-          <circle cx="216.7" cy="90.4" r="5.2" />
-          <circle cx="199.9" cy="118" r="3.1" />
-          <circle cx="45.6" cy="168.5" r="4.4" />
-          <circle cx="24.8" cy="142.1" r="5" />
-          <circle cx="182.5" cy="70.2" r="3.4" />
-          <circle cx="172.4" cy="200.2" r="4.6" />
-          <circle cx="61.9" cy="99.6" r="5.1" />
-          <circle cx="98.1" cy="51.1" r="3.6" />
-          <circle cx="79.9" cy="127.1" r="5" />
-          <circle cx="157.9" cy="30.5" r="4.2" />
-          <circle cx="106.3" cy="207.1" r="3.8" />
-          <circle cx="75.6" cy="199.1" r="3.2" />
-        </g>
-        <g fill="#8aa8cc">
-          <circle cx="136.3" cy="154.5" r="2.2" />
-          <circle cx="78" cy="96.8" r="1.6" />
-          <circle cx="115.4" cy="168.5" r="2.4" />
-          <circle cx="53.5" cy="45.8" r="1.8" />
-          <circle cx="176.7" cy="137.7" r="2" />
-          <circle cx="123.9" cy="41.5" r="2.1" />
-          <circle cx="163.3" cy="100.1" r="1.5" />
-          <circle cx="148" cy="88" r="1.4" />
-          <circle cx="92" cy="78" r="1.3" />
-        </g>
-      </svg>
+    <div className={styles.welcomeDesk} aria-hidden="true">
+      <i className={`${styles.signalBeam} ${styles.voiceBeam}`} />
+      <i className={`${styles.signalBeam} ${styles.gestureBeam}`} />
+      <i className={`${styles.signalBeam} ${styles.gazeBeam}`} />
+      <div className={styles.welcomeMonitor}>
+        <div className={styles.monitorBar}><i /><i /><i /><span>SIA CONTROL CENTER</span></div>
+        <div className={styles.monitorScreen}>
+          <div className={styles.usagePreview}>
+            <b /><b /><b /><b />
+          </div>
+          <div className={styles.gazePreview}><i /></div>
+        </div>
+      </div>
+      <div className={`${styles.inputCard} ${styles.voiceCard}`}>
+        <span className={styles.voicePulse} />
+        <img src={voiceIcon} alt="" />
+        <small>VOICE</small>
+      </div>
+      <div className={`${styles.inputCard} ${styles.gestureCard}`}>
+        <img src={gestureIcon} alt="" />
+        <small>GESTURE</small>
+      </div>
+      <div className={`${styles.inputCard} ${styles.gazeCard}`}>
+        <img src={gazeIcon} alt="" />
+        <small>GAZE</small>
+      </div>
     </div>
   );
 }
 
-function MicGraphic() {
-  return <div className={styles.sideMark} aria-hidden="true">
-    <i className={styles.micRipple} />
-    <i className={styles.micRipple} />
-    <i className={styles.micRipple} />
-    <span className={styles.micCircle}>
-      <svg viewBox="70 64 80 120">
-        <path d="M110 76c-9 0-16 7-16 16v30c0 9 7 16 16 16s16-7 16-16V92c0-9-7-16-16-16zm-28 46c0 16 12 30 28 30s28-14 28-30M110 152v18M96 170h28" />
-      </svg>
+function SetupFeatureGraphic({ icon, label, type }) {
+  return <div className={`${styles.setupFeatureGraphic} ${styles[`setupFeature_${type}`]}`} aria-hidden="true">
+    <i className={styles.featureOrbit} />
+    <i className={styles.featureOrbit} />
+    <span className={styles.featureCard}>
+      <span className={styles.featurePulse} />
+      <img src={icon} alt="" />
+      <small>{label}</small>
     </span>
   </div>;
+}
+
+function MicGraphic() {
+  return <SetupFeatureGraphic icon={voiceIcon} label="VOICE" type="voice" />;
 }
 
 function CheckGraphic() {
@@ -147,7 +146,6 @@ function FrameChrome() {
       <svg className={styles.frameChrome} viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true">
         <path className={styles.frameSurface} d="M28 8H962L992 38V562L962 592H38L8 562V38Z" />
       </svg>
-      <span className={styles.frameAccent} aria-hidden="true" />
     </>
   );
 }
@@ -298,16 +296,34 @@ export default function OnboardingFlow() {
     if (f.step === 'micDone') voiceCommittedRef.current = true;
   }, [f.step]);
   useEffect(() => {
-    if (!isWakeOnly || f.step !== 'wake' || !f.wakeDone) return undefined;
-    voiceCommittedRef.current = true;
-    fetchSettings().then((data) => {
-      setName(normalizeWakeWord(data.settings.wakeWord));
-    }).catch(() => {}).finally(() => {
-      clearPendingWakeWord();
-      change({ step: 'micDone', pending: false, request: null });
-    });
-    return undefined;
-  }, [isWakeOnly, f.step, f.wakeDone, change]);
+    if (!isWakeOnly || f.step !== 'wake' || (f.wake.n < f.wake.total && !f.wakeDone)) return undefined;
+    let cancelled = false;
+    let retryTimer;
+    let attempts = 0;
+    const confirmSavedWakeWord = async () => {
+      try {
+        const data = await fetchSettings();
+        if (cancelled) return;
+        const savedWakeWord = normalizeWakeWord(data.settings.wakeWord);
+        if (savedWakeWord === enrollWakeWord) {
+          voiceCommittedRef.current = true;
+          loadedWakeRef.current = savedWakeWord;
+          setName(savedWakeWord);
+          clearPendingWakeWord();
+          change({ step: 'micDone', wakeDone: true, pending: false, request: null, error: '' });
+          return;
+        }
+      } catch { /* 저장 반영 직후의 일시적인 조회 실패는 재확인 */ }
+      attempts += 1;
+      if (attempts < 40) {
+        retryTimer = setTimeout(confirmSavedWakeWord, 250);
+      } else if (!cancelled) {
+        change({ pending: false, error: '호출명 저장 확인이 지연되고 있습니다. 잠시 후 다시 확인해주세요.' });
+      }
+    };
+    confirmSavedWakeWord();
+    return () => { cancelled = true; clearTimeout(retryTimer); };
+  }, [isWakeOnly, f.step, f.wake.n, f.wake.total, f.wakeDone, enrollWakeWord, change]);
   async function restorePreviousWakeWord() {
     return;
   }
@@ -431,7 +447,7 @@ export default function OnboardingFlow() {
     await run(async () => {
       await document.documentElement.requestFullscreen();
       if (restart) sendOnboarding('calib_restart');
-      change({ step: 'measuring', pending: false, ...(restart ? { point: null, result: null } : {}) });
+      change({ step: 'measuring', pending: false, completionResult: null, ...(restart ? { point: null, result: null } : {}) });
     });
   }
   useEffect(() => {
@@ -462,9 +478,9 @@ export default function OnboardingFlow() {
   }
   let content;
   switch (f.step) {
-    case 'welcome': content = <><div className={styles.welcomeContent}><div className={styles.welcomeCopy}><h1>어서오세요!</h1><span className={styles.titleRule} /><h2>SIA</h2><p>당신의 AI 비서</p></div><WelcomeOrb /></div>{foot(btn('SIA 시작하기', basic))}</>; break;
+    case 'welcome': content = <><div className={styles.welcomeContent}><div className={styles.welcomeCopy}><small className={styles.welcomeEyebrow}>SMART INTERACTION ASSISTANT</small><h1>당신의 움직임을<br /><em>하나의 명령</em>으로</h1><p>목소리를 듣고, 손짓을 이해하고,<br />시선을 따라가는 AI 비서입니다.</p><div className={styles.welcomeSignals}><span>VOICE</span><span>GESTURE</span><span>GAZE</span></div></div><WelcomeControlDesk /></div>{foot(btn('SIA 시작하기', basic))}</>; break;
     case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} /><small>{wakeWordIssue(name) || '한국어 이름으로 입력해주세요.'}</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || Boolean(wakeWordIssue(name))))}</>; break;
-    case 'micStart': content = <><FrameTitle>{isWakeOnly ? '호출명 변경' : '마이크 설정'}</FrameTitle>{center(<><p className={styles.lead}>{isWakeOnly ? '호출명을 등록합니다' : '마이크 설정을 시작합니다'}</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.</p><MicGraphic /></>, styles.startCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', startWakeEnrollment, !ready || Boolean(wakeWordIssue(enrollWakeWord)))}</>)}</>; break;
+    case 'micStart': content = <><FrameTitle>{isWakeOnly ? '호출명 변경' : '마이크 설정'}</FrameTitle>{center(<><div className={styles.startCopy}><p className={styles.lead}>{isWakeOnly ? '호출명을 등록합니다' : '마이크 등록을 시작합니다'}</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서<br />진행하는 것을 권장합니다.</p></div><MicGraphic /></>, styles.startCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', startWakeEnrollment, !ready || Boolean(wakeWordIssue(enrollWakeWord)))}</>)}</>; break;
     case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<>{f.wakeDone ? <><h2>호출명 학습이 완료되었습니다</h2>{!isWakeOnly && <p>화자등록으로 넘어가 주세요.</p>}</> : <><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p></>}{!f.wakeDone && <MicLevelWaveform levels={micPreview.levels} />}{f.wakeRejection && <p className={styles.rejection} role="status">{breakSentences(wakeRejectionMessage)}</p>}{!f.wakeDone && micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isWakeOnly && btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
@@ -484,13 +500,13 @@ export default function OnboardingFlow() {
     case 'micDone': content = isWakeOnly
       ? done('호출명 변경', '등록완료', '호출명이 변경되었습니다.', btn('설정으로 돌아가기', finishWakeChange))
       : done('마이크 설정', '마이크 설정 완료!', '목소리 등록이 완료되었습니다.', isMicOnly ? btn('설정으로 돌아가기', () => finishDeviceChange('mic')) : btn('다음 (카메라 설정)', () => go('gazeStart'))); break;
-    case 'gazeStart': content = <><FrameTitle>시선 설정</FrameTitle>{center(<><p className={styles.lead}>시선 설정을 시작합니다</p><div className={styles.gazeStartGraphic} aria-hidden="true"><span className={styles.scopeOuter} /><span className={styles.scopeMiddle} /><span className={styles.scopeInner} /><i className={styles.scopeCross} /><b className={styles.scopeDot} /></div></>, styles.startCenter)}{foot(btn('시작하기', () => send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, poorCount: 0, gazeWaitingSince: Date.now(), gazeDelayed: false, pending: false }), !ready))}</>; break;
+    case 'gazeStart': content = <><FrameTitle>시선 설정</FrameTitle>{center(<><div className={styles.startCopy}><p className={styles.lead}>시선 설정을 시작합니다</p></div><SetupFeatureGraphic icon={gazeIcon} label="GAZE" type="gaze" /></>, styles.startCenter)}{foot(btn('시작하기', () => send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, completionResult: null, poorCount: 0, gazeWaitingSince: Date.now(), gazeDelayed: false, pending: false }), !ready))}</>; break;
     case 'position': {
       const validPosition = Boolean(f.precheck?.face && f.precheck.distance === 'ok' && f.precheck.lighting === 'ok');
       content = <><FrameTitle>위치 확인</FrameTitle>{center(<CameraPositionPreview precheck={f.precheck} />, styles.positionCenter)}{f.gazeDelayed && <p className={styles.inlineNotice} role="status">위치 확인 응답이 지연되고 있습니다. 카메라 설정과 AI 상태를 확인해주세요.</p>}{foot(<>{btn('카메라 설정', cameraSettings, !connected, 'secondary')}{btn('다음', () => go('gazeGuide'), !ready || !validPosition)}</>)}</>; break;
     }
     case 'gazeGuide': content = <><FrameTitle>시선 측정</FrameTitle>{center(<><div className={styles.guideGraphic}>◎</div><h2>시선 측정을 시작하겠습니다</h2><p>화면 중앙에 바른 자세로 앉아주세요.<br />너무 멀거나 가깝지 않게, 조명이 너무 어둡거나 밝지 않은 곳에서 고개를 크게 움직이지 마세요.</p></>, styles.guideCenter)}{foot(<>{isCameraOnly && btn('취소', () => send('calib_cancel', {}, { step: 'gazeStart', pending: false }), !ready, 'secondary')}{btn('시작하기', () => measure(), !ready)}</>)}</>; break;
-    case 'measuring': content = <GazeMeasurement point={f.point} ready={ready} />; break;
+    case 'measuring': content = <GazeMeasurement point={f.point} ready={ready} finishing={Boolean(f.completionResult)} onVisualComplete={() => { if (f.completionResult) f.receiveResult(f.completionResult); }} />; break;
     case 'result': {
       const r = f.result;
       const displayGrade = r.avgErrorPx == null ? '미제공' : (({ excellent: '우수', good: '양호', poor: '나쁨' }[r.grade]) ?? (r.avgErrorPx < GRADE_EXCELLENT_PX ? '우수' : r.avgErrorPx < GRADE_GOOD_PX ? '양호' : '나쁨'));
