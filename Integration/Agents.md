@@ -63,6 +63,25 @@ npm test
 - 2026-09-16 기준 Windows에서 위 검사와 Frontend 포함 Tauri 디버그 빌드가 성공했다.
 - `npm run dev`와 `npm run build`는 실제 sidecar 파일이 준비된 뒤 사용한다.
 
+## 해결된 항목 (2026-09-21 코드 확인)
+
+아래 두 항목은 한때 "확정 안 된 것"으로 분류돼 있었으나, 코드 확인 결과 이미
+구현이 끝나 있었다. 착오로 오래 남아있던 경고를 지운다.
+
+- **AI 사용자 데이터 경로**: `AI/paths.py`가 `ASSET_DIR`(읽기 전용 모델,
+  frozen이면 `_MEIPASS`)와 `DATA_DIR`(사용자 데이터, frozen이면
+  `%APPDATA%\SIA\ai`)를 분리해뒀다. `wake.npz`/`speaker.npz`/`calib.npz`는
+  전부 `data_path()`로, 모델 자산은 `asset_path()`로 읽는다. 자체
+  `_selftest()`까지 있어 frozen 상태에서 사용자 데이터가 임시 추출 폴더로
+  가지 않는지 검증한다. PyInstaller로 얼려도 온보딩 데이터가 재시작마다
+  날아가는 문제는 없다.
+- **네이티브 알림의 Frontend 연결**: `notify_bridge.rs`가 BE `/ws/fe`를
+  그대로 overlay 창(`overlay/index.html`)으로 중계하고, overlay는
+  Frontend의 `TopNotification.jsx`/`BootToast.jsx` 표시 로직을 포팅해
+  kind별로 그린다. 오버레이 웹뷰가 리스너 등록을 마치기 전에 부팅 토스트가
+  유실되는 문제도 `sia://overlay-ready` 핸드셰이크로 해결했다
+  (`notify_bridge::resend_last_session_state`). 남은 의존성은 포트뿐이다.
+
 ## 아직 확정하지 않는 항목
 
 - Backend의 jpackage/jlink 최종 구성과 동반 런타임 폴더 구조
@@ -70,7 +89,16 @@ npm test
 - 최종 sidecar 이름과 실행 인자
 - 동적 포트 또는 고정 포트 선택
 - Frontend 및 Extension의 포트 주입 방식
-- Tauri `bundle.resources`에 포함할 Backend/AI 보조 파일
-- 네이티브 알림의 Frontend 연결
+- **[위험, 우선 처리 필요] Tauri `bundle.resources`에 포함할 Backend/AI 보조
+  파일** — `tauri.conf.json`의 `bundle`에 `resources` 키가 아직 없다.
+  `scripts/build-sidecars.ps1`은 jpackage 산출물(`<sidecar>.exe` + `app/` +
+  `runtime/`)을 로컬 `src-tauri/binaries/`에 나란히 배치하지만, Tauri의
+  `externalBin`은 이름·타깃트리플이 맞는 sidecar 실행파일 하나만 최종 설치
+  번들에 포함시키고 옆의 `app/`·`runtime/` 폴더는 자동으로 넣어주지 않는다.
+  지금 설정 그대로 `tauri build`를 돌리면 설치된 앱에서 BE가 이 폴더들을 못
+  찾아 실행에 실패할 가능성이 높다. `bundle.resources`에 `binaries/app`,
+  `binaries/runtime`을 명시적으로 추가해야 한다. 다른 항목과 달리 포트
+  정책과 무관하게 지금 바로 고칠 수 있다.
 
-위 항목은 Backend와 AI 파일 정리가 끝나기 전에 임의로 확정하지 않는다.
+위 항목(마지막 리소스 항목 제외)은 Backend와 AI 파일 정리가 끝나기 전에
+임의로 확정하지 않는다.

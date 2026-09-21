@@ -10,14 +10,19 @@
 # 필요 도구: JDK 17+ (jpackage 포함, 이 프로젝트는 toolchain 21), Python + pyinstaller
 # (pip install pyinstaller), 둘 다 PATH에 있어야 한다.
 #
-# !!! 지금 시점에 알려진 문제 — 이 스크립트로 못 고침, AI 코드 쪽에서 먼저 고쳐야 함 !!!
-# AI/assistant.py·brain.py의 `HERE = Path(__file__).parent`는 PyInstaller로 얼렸을 때
-# 임시 추출 폴더를 가리키게 된다(onefile 모드는 매 실행마다 새 임시 폴더에 풀림).
-# 그 경로 아래 models/wake.npz·speaker.npz·calib.npz 는 온보딩 때 새로 쓰는 사용자
-# 데이터인데, frozen 상태에서는 앱을 재시작할 때마다 그 데이터가 사라진다 — 즉 지금
-# 코드 그대로 얼리면 "온보딩을 매번 다시 해야 하는" 상태가 된다. `sys.frozen`일 때는
-# `Path(sys.executable).parent`(또는 %APPDATA%처럼 BE의 runtime.json과 같은 방식의
-# 고정 쓰기 위치)를 쓰도록 AI 쪽에서 먼저 고쳐야 이 스크립트의 산출물이 실제로 쓸 만하다.
+# [해결됨, 2026-09-21 재확인] AI/assistant.py·brain.py의 사용자 데이터 경로 문제는
+# AI/paths.py 도입으로 이미 고쳐졌다 — frozen 상태에서는 `%APPDATA%\SIA\ai`(data_path)
+# 를 쓰고, 읽기 전용 모델만 `_MEIPASS`(asset_path)를 본다. 온보딩 데이터가 재시작마다
+# 사라지는 문제는 더 이상 없다. 이 스크립트로 사이드카를 새로 만들 때 추가로 손볼 것 없음.
+#
+# !!! 이 스크립트가 못 고치는, 여전히 남은 문제 — Integration/Agents.md 참고 !!!
+# jpackage app-image로 만든 BE는 `<beName>.exe` 옆에 `app/`·`runtime/` 폴더가 상대경로로
+# 같이 있어야 실행된다. 이 스크립트는 그 셋을 `src-tauri/binaries/`에 나란히 복사해서
+# [5/5]의 로컬 `tauri build`(디버그)까지는 되게 만들지만, `tauri.conf.json`의
+# `bundle.resources`에 `binaries/app`·`binaries/runtime`을 아직 등록하지 않았다.
+# Tauri의 `externalBin`은 sidecar 실행파일 하나만 최종 설치 번들에 넣고 옆 폴더는 자동으로
+# 안 넣으므로, 이 상태로 만든 설치 파일(인스톨러)에서는 BE가 `app/`·`runtime/`을 못 찾아
+# 실행이 깨질 수 있다. `bundle.resources`를 채우는 작업이 먼저 필요하다.
 
 param(
     # 사이드카(BE·AI)만 빌드해서 binaries/에 배치하고 끝낸다 — 최종 exe 패키징(tauri
