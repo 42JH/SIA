@@ -19,7 +19,8 @@ import org.springframework.stereotype.Component;
  * (API.md §6.3). 카탈로그의 C 플래그는 BE 가 집행하는 관문이 아니라 <b>AI 에게 주는 선언</b>이고,
  * MCP 표준 {@code destructiveHint} 로 나간다. BE 는 승인이 끝난 요청으로 보고 그냥 실행한다.
  * 도구 메서드는 직접 DB 를 쓰지 않는다. 예외는 여기서 전부 ToolResult 로 환원되어 밖으로 나가지 않는다.
- * ★ 성공해도 세션을 자동 연장하지 않는다 — 연장은 session.extend 하나뿐이다.
+ * ★ 도구는 성공해도 세션을 자동 연장하지 않는다 — 도구 하나로 연장하는 길은 session.extend 뿐이다.
+ * 제스처 매크로는 여기가 아니라 GestureExecutor 가 유효 판정 직후 한 번 갱신한다 (스텝마다가 아니다).
  */
 @Component
 public class ToolGate {
