@@ -1134,7 +1134,8 @@ class Brain(threading.Thread):
             return False, "template_broken" if broken else "template_missing", None, None, None, None, None
         if not template.matches_setting(word):
             self._wake_notice("stale_template",
-                              f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
+                              f'호출어 설정은 "{word}" 인데 등록본은 "{template.wake_text}" 입니다 '
+                              f'— 앱에서 "{word}" 로 다시 등록해 주세요.')
             return False, "template_stale", None, None, None, None, None
         clip, clip_t0, clip_t1, certain = wake_clip(audio, i_max, lead)
         if self.speaker is None:
@@ -1169,7 +1170,8 @@ class Brain(threading.Thread):
             return False, "template_broken" if broken else "template_missing", None, None, None, None, None
         if not template.matches_setting(word):
             self._wake_notice("stale_template",
-                              f'호출어가 "{word}" 로 바뀌었습니다 — 새 호출어로 다시 등록해 주세요.')
+                              f'호출어 설정은 "{word}" 인데 등록본은 "{template.wake_text}" 입니다 '
+                              f'— 앱에서 "{word}" 로 다시 등록해 주세요.')
             return False, "template_stale", None, None, None, None, None
         if not template.has_head:
             self._wake_notice("head_missing", "호출어를 다시 등록해 주세요")
