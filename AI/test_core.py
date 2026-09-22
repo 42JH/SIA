@@ -2204,7 +2204,7 @@ def test_media_seek():
     """영상 앞·뒤 이동은 media.seek 으로 나간다 — 인자 이름·대상 창이 회귀 지점이다.
 
     media.* 중 유일하게 배경 재생을 제어하지 못한다(방향키는 포커스 쥔 창이 받는다).
-    그래서 발화 시점 창을 winRef 로 지목하고, 못 찾으면 인자를 빼 BE 기본 동작에 맡긴다.
+    그래서 발화 시점 창을 winRef 로 지목하고, 못 찾으면 다른 창에 키를 보내지 않는다.
     """
     from unittest.mock import Mock
 
@@ -2229,9 +2229,9 @@ def test_media_seek():
     b, done = run("back", "win:3")
     assert done and b.calls[0][1]["dir"] == "backward", b.calls
 
-    # 대상 창을 못 찾으면 인자를 뺀다(BE 기본: 지금 앞에 있는 창). 빈 winRef 를 보내지 않는다.
+    # 대상 창을 못 찾으면 중단한다. 엉뚱한 창에 키를 보내지 않는다.
     b, done = run("forward", None)
-    assert done and b.calls == [("media.seek", {"dir": "forward"})], b.calls
+    assert not done and b.calls == [], b.calls
 
     # BE 가 못 하면 사실대로 말하고 로컬 단축키로 대신하지 않는다.
     b, done = run("forward", "win:3", ok=False)

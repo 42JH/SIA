@@ -393,7 +393,14 @@ class AgentLink:
                                  or (generation is not None and generation <= self._session_end_generation)),
                         timeout=1.0)
             else:
-                self.call("session.extend")
+                ok, payload = self.call("session.extend")
+                if ok is not True:
+                    # 로컬 마감 확인 뒤 BE 세션이 만료될 수 있다 — SESSION_REQUIRED 만 개시로 재시도한다(-353).
+                    if isinstance(payload, dict) and payload.get("code") == "SESSION_REQUIRED":
+                        self.be_session_id = None
+                        self.session_until_mono = 0.0
+                        return self.renew(opening=True, generation=generation)
+                    return None
             return self.be_session_id
 
     def end(self, generation=None):
@@ -401,12 +408,18 @@ class AgentLink:
             if generation is not None:
                 self._session_end_generation = max(self._session_end_generation, generation)
             self._accept_session_active = False
+            ended = True
             if self.be_session_id:
-                self._send({"type": "session_end",
-                            "data": {"sessionId": self.be_session_id, "reason": "STOPPED"}})
+                session_id = self.be_session_id
+                ok, payload = self.call("session.cancel")
+                ended = ok is True or (isinstance(payload, dict) and payload.get("code") == "SESSION_REQUIRED")
+                if not ended:
+                    ended = self._send({"type": "session_end",
+                                        "data": {"sessionId": session_id, "reason": "STOPPED"}})
             self.session_until_mono = 0.0
             self.be_session_id = None
             self._session_condition.notify_all()
+            return ended
 
     def notice(self, message):
         self._send({"type": "notice", "data": {"message": message}})
