@@ -31,7 +31,8 @@ def new_link():
 
 def command(action="open_app", **fields):
     return {"audio_is_speech": True, "is_command": True, "wake_heard": True,
-            "action": action, "app": "calc", "say": "완료", "transcript": "REST에 보내지 않는 원문",
+            "action": action, "app": "calc" if action == "open_app" else None,
+            "say": "완료", "transcript": "REST에 보내지 않는 원문",
             **fields}
 
 
@@ -768,7 +769,7 @@ def test_explicit_end_discards_old_results_and_queue_but_allows_new_wake():
         old.join(2)
         assert not old.is_alive()
         assert not any(m["type"] == "wakeword_detected" for m in sent)
-        link.call.assert_not_called()
+        link.call.assert_called_once_with("session.cancel")
 
         clock.now = 13.0
         assert link.wake_detected(generation=1)  # 종료 후 새 단독 호출어
@@ -900,7 +901,7 @@ def test_no_actions_never_records_completion():
 
 def test_media_and_session_end_router_paths():
     for text, action, tool in (("시아야 음소거 해줘", "media", "media.mute_toggle"),
-                               ("이제 그만", "end_session", None)):
+                               ("이제 그만", "end_session", "session.cancel")):
         with assistant() as (brain, link, _):
             brain.router.transcribe.return_value = (text, 0.5, -0.3)
             utter(brain)
@@ -909,11 +910,8 @@ def test_media_and_session_end_router_paths():
             assert events(link, "command")[0]["action"] == action
             assert events(link, "command")[0]["complexity"] == "SIMPLE"
             assert events(link, "command")[0]["sessionId"] == 128
-            if tool:
-                assert [c.args[0] for c in link.call.call_args_list] == ["session.extend", tool]
-            else:
-                link.call.assert_not_called()
-                assert any(c.args[0]["type"] == "session_end" for c in link._send.call_args_list)
+            expected = [tool] if action == "end_session" else ["session.extend", tool]
+            assert [c.args[0] for c in link.call.call_args_list] == expected
 
 
 def test_media_seek_targets_utterance_window():
@@ -932,11 +930,11 @@ def test_media_seek_targets_utterance_window():
         args = link.call.call_args_list[-1].args[1]
         assert args == {"dir": "backward", "winRef": "win:1"}, args   # back 이 아니라 backward
 
-    # 창을 못 찾으면 인자를 빼고 BE 기본 동작(지금 앞에 있는 창)에 맡긴다 — 거절하지 않는다.
+    # 발화 시점 창을 못 찾으면 다른 창에 방향키를 보내지 않는다.
     with assistant() as (brain, link, _), patch("brain.window_title_of", return_value=""):
         utter(brain, command("media", media_key="forward"), hwnd=1)
-        assert events(link, "command")[0]["action"] == "media"
-        assert link.call.call_args_list[-1].args[1] == {"dir": "forward"}
+        assert not events(link, "command")
+        assert not any(c.args[0] == "media.seek" for c in link.call.call_args_list)
 
 
 def test_unexecuted_actions_and_local_mode():
@@ -948,8 +946,8 @@ def test_unexecuted_actions_and_local_mode():
             assert len(events(link, "voice")) == 1 and not events(link, "command")
             assert events(link, "voice")[0]["accuracy"] == 0.0
     with assistant() as (brain, link, _):  # BE 가 막으면 로컬로 대신 열지 않고 사실대로 말한다
-        link.call.side_effect = None
-        link.call.return_value = (False, {"code": "FAILED", "message": "검색 실패"})
+        link.call.side_effect = lambda tool, args=None: (
+            (True, {}) if tool == "session.extend" else (False, {"code": "FAILED", "message": "검색 실패"}))
         utter(brain, command("web_search", query="실패"))
         # BE 가 이유를 말해 줬으면 그대로 전한다 — '연결 안 됨'으로 뭉뚱그리면 원인을 못 찾는다
         assert brain.said[-1] == "'실패' 검색 — 검색 실패"
