@@ -208,9 +208,14 @@ function applyAnchor(kind, period, data, selection) {
   return { ...data, buckets: expandSelectedBucket(kind, axis, fallback, selection.key), summary: selectedSummary(kind, fallback), generated: true };
 }
 function latestBucketWithData(kind, data) { return [...(data?.buckets ?? [])].reverse().find((bucket) => bucketHasData(kind, bucket)) ?? null; }
-function keepThroughCurrentMonth(buckets) {
-  const cutoff = `${new Date().getFullYear()}-${pad2(new Date().getMonth() + 1)}`;
-  return (buckets ?? []).filter((bucket) => String(bucket.key ?? '').slice(0, 7) <= cutoff);
+// 홈 사용량 그래프는 올해 1~12월 축을 고정하고, 값만 응답 버킷에서 채운다
+function fixedYearMonths(buckets) {
+  const year = new Date().getFullYear();
+  const byMonth = new Map((buckets ?? []).map((bucket) => [String(bucket.key ?? '').slice(0, 7), bucket]));
+  return Array.from({ length: 12 }, (_, index) => {
+    const key = `${year}-${pad2(index + 1)}`;
+    return { count: 0, voice: 0, gesture: 0, ...(byMonth.get(key) ?? {}), key, label: `${index + 1}월` };
+  });
 }
 function graphPeriodLabel(period, anchor, buckets) {
   const fallbackKey = buckets.find((bucket) => parseBucketDate(bucket.key))?.key;
@@ -297,7 +302,7 @@ export default function DashboardHome() {
       return {
         accuracy: { period: 'year', ...(accuracy.summary ?? {}) },
         latency: { period: 'year', ...(latency.summary ?? {}) },
-        usage: { period: 'year', bucketUnit: usage.bucketUnit, buckets: keepThroughCurrentMonth(usage.buckets ?? []), total: usage.summary?.total ?? 0 },
+        usage: { period: 'year', bucketUnit: usage.bucketUnit, buckets: fixedYearMonths(usage.buckets), total: usage.summary?.total ?? 0 },
         topApps: apps.items ?? [],
       };
     }, setOverview);
