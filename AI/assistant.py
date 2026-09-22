@@ -819,14 +819,26 @@ def main():
                     )
                     if link and link.gesture_ready and be_target:
                         be_name, be_context = be_target
+                        sent = False
                         if args.no_actions:
                             print(f"[시늉만] 제스처→BE: {name}")
                         else:
-                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
-                            link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                              "context": be_context})
+                            print(f"[GESTURE?BE] detected={name} | name={be_name} | context={be_context or 'default'}")
+                            sent = link.send_event(
+                                "gesture_exec",
+                                {"name": be_name, "hwnd": foreground_hwnd(), "context": be_context},
+                            )
                         hud_feedback = name
                         hud_feedback_until = now + 0.9
+                        if sent:
+                            link.queue_usage(
+                                "gesture",
+                                sessionId=link.be_session_id,
+                                action=be_name,
+                                context=be_context or context,
+                                accuracy=raw_score,
+                                payload={"source": "static", "occurredAt": int(time.time() * 1000)},
+                            )
                     elif link and link.gesture_ready:
                         print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
                     if link:
@@ -895,23 +907,26 @@ def main():
                 )
                 if link and link.gesture_ready and be_target:
                     be_name, be_context = be_target
+                    sent = False
                     if args.no_actions:
                         print(f"[시늉만] 제스처→BE: {dynamic_event}")
                     else:
                         print(f"[GESTURE→BE] detected={dynamic_event} | name={be_name} | context={be_context or 'default'}")
-                        link.send_event("gesture_exec", {"name": be_name, "hwnd": foreground_hwnd(),
-                                                          "context": be_context})
+                        sent = link.send_event(
+                            "gesture_exec",
+                            {"name": be_name, "hwnd": foreground_hwnd(), "context": be_context},
+                        )
                     hud_feedback = dynamic_event
                     hud_feedback_until = now + 0.9
-                    link.queue_usage("gesture",
-                                     sessionId=link.be_session_id,
-                                     action=dynamic_event,
-                                     context=context,
-                                     # 내장 Swipe/Scroll/Pinch는 FSM 판정이라 신뢰도가
-                                     # 없다(None → 자동 생략). 커스텀 동작 완성이면
-                                     # custom_score(exp(-거리))가 실린다.
-                                     accuracy=custom_score,
-                                     payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)})
+                    if sent:
+                        link.queue_usage(
+                            "gesture",
+                            sessionId=link.be_session_id,
+                            action=be_name,
+                            context=be_context or context,
+                            accuracy=custom_score,
+                            payload={"source": "dynamic", "occurredAt": int(time.time() * 1000)},
+                        )
                 elif link and link.gesture_ready:
                     print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {dynamic_event} ({context})")
 
