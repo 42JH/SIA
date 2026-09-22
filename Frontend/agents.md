@@ -20,7 +20,7 @@
 - WS 이벤트 구독 · 발신은 src/ws 내 파일을 통해서만 하며, 컴포넌트에서 소켓 객체를 직접 다루지 않음
 - 로딩, 에러, 스켈레톤 처리는 필요하다면 추가할 것
 - 공통 및 역할 분리 컴포넌트는 src/components 내에 작성
-- BE 주소(`http://127.0.0.1:8080`, `ws://127.0.0.1:8080`)는 로컬 고정값이다. 개발 중에도 BE가 항상 로컬에서 별도로 실행되고 있다고 가정하며, 배포 환경별 주소 분기 로직을 만들지 말 것
+- BE 주소(`http://127.0.0.1:61015`, `ws://127.0.0.1:61015`)는 로컬 고정값이다. 개발 중에도 BE가 항상 로컬에서 별도로 실행되고 있다고 가정하며, 배포 환경별 주소 분기 로직을 만들지 말 것
 - FE 쪽 REST · WS는 인증 헤더가 필요 없다 (MCP 토큰 · `X-Caller`는 AI 전용이며 FE 코드와 무관하다). Authorization 헤더를 붙이는 로직을 만들지 말 것
 
 # 2. 주석
@@ -33,7 +33,7 @@
 
 - src/routes/router.jsx : 라우팅 관리
 - src/api : REST 요청 관련 함수 모음 폴더
-- src/api/httpClient.js : Axios 공통 인스턴스 (baseURL `http://127.0.0.1:8080`). 인증 헤더 없음
+- src/api/httpClient.js : Axios 공통 인스턴스 (baseURL `http://127.0.0.1:61015`). 인증 헤더 없음
 - src/api/errors.js : 서버 에러 응답(`{code, message, detail?}`)을 다루는 공통 처리 함수. `message`는 사용자 노출용, `detail`은 절대 화면에 노출하지 않음
 - src/ws/feSocket.js : `/ws/fe` 연결 · 재연결 · 봉투(`{type, data}`) 파싱을 담당하는 단일 소켓 모듈
 - src/ws/eventBus.js : WS `type`별 리스너 등록 · 해제. 모르는 `type`은 무시하고 별도 처리하지 않음
@@ -53,7 +53,7 @@
 - `GET /api/status`는 FE가 주기적으로 폴링하는 상태 요약 엔드포인트이며, 세션 · 연결 상태 등 화면 전역 상태의 기준으로 사용할 것
 - REST 요청에는 `Authorization` · `X-MC-Token` · `X-Caller` 같은 헤더를 붙이지 말 것 (MCP · AI 전용, FE 무관)
 
-## 4.2 REST(FE) 연동 대상 — `http://127.0.0.1:8080`
+## 4.2 REST(FE) 연동 대상 — `http://127.0.0.1:61015`
 
 기능별로 API 함수를 나눠서 src/api 아래에 작성한다. 정확한 요청 · 응답 필드는 API명세서.md 해당 절을 그대로 따를 것.
 
@@ -76,7 +76,7 @@
 - REST(AI)(`/api/agent/**`)와 MCP(`/mcp`)는 AI 에이전트 전용이다. FE 코드에서 절대 호출하지 않는다.
 - `PATCH /api/voices/{id}` · `PATCH /api/calibs/{id}` · `POST /api/devices/remap` · `PATCH /api/gestures/{id}` · `PUT /api/gestures/{id}`는 본문 필드를 직접 읽는 엔드포인트라 빈 본문 · 비객체 본문 에러 메시지가 공통이다(4.4 참고). 나머지 엔드포인트는 각자 고유 메시지를 쓰므로 임의로 통일하지 말 것
 
-## 4.3 WS(`/ws/fe`) 연동 대상 — `ws://127.0.0.1:8080/ws/fe`
+## 4.3 WS(`/ws/fe`) 연동 대상 — `ws://127.0.0.1:61015/ws/fe`
 
 소켓 연결 · 재연결 · 파싱은 src/ws/feSocket.js 하나로만 관리하고, 컴포넌트는 src/ws/eventBus.js를 통해 `type`별로 구독한다.
 
