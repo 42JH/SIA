@@ -1588,9 +1588,12 @@ class GestureRegistration:
                     world_coverage = self._two_hand_world_coverage(take)
                     if (world_coverage is not None
                             and world_coverage < self.TWO_HAND_WORLD_MIN_RATIO):
+                        print(f"[제스처 등록 품질] tempId={self.temp_id} take={take} "
+                              f"worldCoverage={world_coverage:.0%} "
+                              f"threshold={self.TWO_HAND_WORLD_MIN_RATIO:.0%}")
                         raise ValueError(
-                            f"{take}???? 3D ? ???? ??? ??????? "
-                            f"({world_coverage:.0%}). ? ?? ???? ? ???? ?????"
+                            f"{take}회차에서 두 손의 모양을 정확히 확인하기 어렵습니다. "
+                            "두 손이 겹치지 않도록 화면 안에 보여주고 다시 촬영해주세요."
                         )
                 world_seq = self._world_sequence(take, hand_count,
                                                  static=self.motion == self.STATIC)

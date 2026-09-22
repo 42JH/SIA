@@ -127,18 +127,24 @@ MEDIA_MCP = {"playpause": ("media.play_pause", None), "mute": ("media.mute_toggl
 VAD_TAIL_S = 0.55  # voice.VadSegmenter end_silence_s 기본값과 맞춤 — 발화 끝 ≈ 세그먼트 도착 시각 - 꼬리
 
 SCHEMA = """{"audio_is_speech": true/false, "wake_heard": true/false, "is_command": true/false, "transcript": "들은 말",
- "action": "answer|save_crop|open_app|web_search|find_file|delete_file|window|media|end_session|confirm_yes|confirm_no|none",
+ "action": "answer|save_crop|capture|open_app|web_search|find_file|open_file|delete_file|window|media|lock|end_session|confirm_yes|confirm_no|none",
  "bbox": [ymin, xmin, ymax, xmax] (save_crop일 때 대상 경계, 전체 화면 기준 0~1000 정규화) 또는 null,
  "save_text": "save_crop 대상이 줄글이면 그 텍스트 전문, 아니면 null",
- "app": "chrome|notepad|calc|explorer|paint 또는 null",
- "query": "검색어 또는 파일명, 없으면 null",
- "window_op": "maximize|minimize|close|scroll_down|scroll_up 또는 null",
+ "app": "chrome|notepad|calc|explorer|paint 또는 null (창 요청에서는 사용자가 지정한 앱, 미지정은 null)",
+ "query": "검색어, 파일명 또는 대상 창 이름, 없으면 null",
+ "window_op": "list|focus|restore|resize|next|prev|maximize|minimize|close|scroll_down|scroll_up 또는 null",
+ "preset": "resize일 때 LEFT_HALF|RIGHT_HALF|CENTER 또는 null",
+ "capture_scope": "capture일 때 screen|window 또는 null",
  "media_key": "playpause|mute|forward|back|next|prev|volup|voldown|volset 또는 null", "level": "volset 일 때 목표 볼륨 0~100, 아니면 null",
+ "seconds": "forward/back에서 사용자가 지정한 이동 초(정수), 지정하지 않으면 null",
  "say": "사용자에게 보여줄 응답"}"""
 
 ACTION_RULES = """액션 규칙:
 - "이거/저거/여기" 지시어는 응시 크롭 속 대상을 가리킨다.
-- 질문·설명·요약·번역 → answer, 크롭과 화면을 근거로 say에 답하라 (요약은 5문장까지 허용).
+- 질문·설명·요약·번역 → answer, 크롭과 화면 및 브라우저 본문을 근거로 say에 답하라.
+  요청한 줄 수를 지켜라. "세 줄로 요약"이면 세 줄로 답하라 (기본 요약은 5문장까지).
+- "화면 캡처/스크린샷" → capture + capture_scope=screen. "이 창 캡처"는 capture_scope=window.
+  "이거 캡처"처럼 특정 사진·영역을 가리키면 save_crop + bbox이며 save_text=null.
 - "저장해줘"류 → save_crop. 대상이 이미지·차트 등 시각 요소면 경계 상자를
   bbox에 넣어라 — 전체 화면 스크린샷 기준 [ymin,xmin,ymax,xmax], 0~1000
   정규화, 대상에 딱 맞게. 응시 크롭은 대상 위치의 힌트다.
@@ -146,18 +152,33 @@ ACTION_RULES = """액션 규칙:
   텍스트 전문을 담아라 — 화면에 보이는 그대로, 브라우저 참고 데이터가 있으면
   화면 밖으로 잘린 부분까지 그걸로 보완하라. 이때 bbox는 null로 둔다.
   대상을 특정할 수 없으면 둘 다 null. 앱 실행 요청 → open_app.
-- 웹 검색 요청("~ 검색해줘/찾아봐") → web_search, query에 검색어.
-- 파일 찾기 요청 → find_file, query에 파일명.
+- 웹 검색 요청("~ 검색해줘/찾아봐") → web_search, query에 검색어. 웹사이트를 새로
+  열라는 요청("유튜브 켜줘")도 web_search이며, 아는 사이트는 query에 전체 https 주소를 넣어라.
+  "크롬에서 오늘 경제 뉴스 검색해줘"는 open_app이 아니라 web_search다.
+  단, "경제 뉴스 창 띄워줘"처럼 기존 창을 보여 달라는 요청은 검색이 아니라 window + focus다.
+- 파일 찾기 요청 → find_file, query에 파일명. 현재 탐색기 폴더만 조회 가능하며 PC 전체 검색은 지원하지 않는다.
+- "이 파일 열어줘/○○파일 열어줘" → open_file, query에 화면에서 읽었거나 사용자가 말한 파일명.
+  경로를 지어내지 마라. 선택된 파일을 열라는 뜻이면 query=null.
 - 파일 삭제 요청("이거/이 파일/○○파일 삭제해줘/지워줘") → delete_file. query에는
   삭제할 파일명을 넣어라: 사용자가 이름을 말했으면 그 이름, "이거/저거"처럼
   가리켰으면 응시 크롭 이미지에서 그 파일의 이름을 읽어 넣어라(확장자 포함, 보이는
   그대로). 파일명을 도저히 알 수 없으면 query=null. 삭제는 휴지통행이며 재확인한다.
-- 창 제어(최대화/최소화/닫기) 및 스크롤(내려/올려) → window + window_op.
+- "유튜브 창 띄워줘", "크롬 창 보여줘", "메모장 앞으로 가져와"처럼 이미 열린
+  특정 창을 보여 달라는 요청 → window + window_op=focus, query에 대상 이름만 넣어라.
+  "유튜브 띄워줘/유튜브를 앞으로 가져와"도 같은 창 전환이며 query="유튜브"다.
+  "크롬에서 경제 뉴스 창 띄워줘"는 query="경제 뉴스", app="chrome"이며 새 검색을 하지 마라.
+- 창 제어(앞으로 가져오기/최대화/최소화/닫기) 및 스크롤(내려/올려) → window + window_op.
+  열린 창 목록은 list, 다음/이전 창 전환은 next/prev, 원래 크기 복원은 restore,
+  왼쪽/오른쪽 반쪽 배치는 resize + preset=LEFT_HALF/RIGHT_HALF, 가운데 배치는 CENTER.
+  "이 창"은 query=null. 이름으로 지목한 창은 query에 이름만 넣어라.
   창 닫기는 위험한 동작이라 비서가 실행 전 재확인한다.
 - 영상·음악 제어(재생/일시정지, 음소거, 앞으로/뒤로 이동, 다음/이전, 볼륨) → media + media_key.
-  "10초 앞으로"처럼 초를 말해도 media_key=forward/back 이다. 이동 폭은 플레이어가 정하므로
-  say 에 몇 초라고 단정하지 마라 — "앞으로 이동했습니다"처럼 답하라. "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
-- "그만", "이제 됐어", "꺼져" 등 비서 종료 → end_session.
+  "10초 뒤로"는 media_key=back + seconds=10. 초 미지정이면 seconds=null.
+  재생/정지는 같은 토글 도구라 say에는 "재생/일시정지를 전환했습니다"라고 답하라.
+  "볼륨 80까지/으로"처럼 값을 말하면 volset + level.
+- "컴퓨터/화면 잠가줘" → lock (Windows 잠금).
+- "그만", "이제 됐어", "세션 취소", "꺼져" 등 비서 종료 → end_session (session.cancel).
+  확인 질문에 "취소/아니"라고 답하면 confirm_no이며 확인 대기만 취소한다.
 - 명령이지만 지원 범위 밖이면 none, say에 이유를 담아라."""
 
 
@@ -301,9 +322,11 @@ def pick_files_by_name(query, paths):
 
 def is_youtube(title):
     """유튜브 탭 판별 — 단순 부분일치는 'youtube_dl.py - VS Code' 같은 창도 잡으므로
-    브라우저 탭 제목 패턴(' - YouTube')만 인정한다."""
-    t = title.lower()
-    return t.endswith(" - youtube") or " - youtube - " in t
+    영상 제목의 ' - YouTube' 및 유튜브 홈의 브라우저 제목을 인정한다."""
+    t = title.strip().lower()
+    return (t == "youtube" or t in ("youtube - chrome", "youtube - google chrome",
+                                    "youtube - microsoft edge", "youtube — mozilla firefox", "youtube - whale")
+            or t.endswith(" - youtube") or " - youtube - " in t)
 
 
 def log_utterance(**fields):
@@ -940,6 +963,8 @@ class Brain(threading.Thread):
         if not be:
             return False, None, None
         ok, payload = be.call(tool, args or {})
+        log_utterance(gate="mcp", tool=tool, ok=ok,
+                      code=payload.get("code") if isinstance(payload, dict) and ok is not True else None)
         if ok is True:
             return True, payload, None
         err = payload if (ok is False and isinstance(payload, dict)) else None
@@ -976,6 +1001,34 @@ class Brain(threading.Thread):
         print(f"[BE 창 참조 실패] 제목 {title!r} 후보 {len(hits)}개 — 대상을 특정하지 못했다")
         return None
 
+    def _named_window(self, target, app=None):
+        """대상 이름 → BE 창 정보·조회 오류. 조회 실패와 '열린 창 없음'을 구분한다 —
+        조회에 실패했는데 창이 없다고 보면 유튜브를 새 탭으로 다시 여는 사고가 난다(-353)."""
+        target = (target or "").strip().casefold().removesuffix(" 창").strip()
+        if not target or not self._be():
+            return None, {"message": "백엔드에 연결되지 않아 창을 조회하지 못했습니다"}
+        ok, ctx, err = self._be_call("context.get")
+        if not ok or not isinstance(ctx, dict):
+            return None, err or {"message": "열린 창 목록을 가져오지 못했습니다"}
+        windows = ctx.get("windows") or []
+        if app:
+            windows = [w for w in windows if (w.get("app") or "").casefold() == APPS.get(app, app)]
+        if target in ("유튜브", "youtube"):
+            hits = [w for w in windows if is_youtube(w.get("title") or "")
+                    and (w.get("app") or "").casefold() in ("chrome", "msedge", "firefox", "whale")]
+        else:
+            from router import APPS_KO
+
+            target_app = APPS.get(APPS_KO.get(target, target))
+            title_key = "".join(target.split())
+            if target_app:
+                hits = [w for w in windows if (w.get("app") or "").casefold() == target_app]
+            else:
+                hits = [w for w in windows
+                        if title_key in "".join((w.get("title") or "").casefold().split())
+                        or target == (w.get("app") or "").casefold()]
+        return (hits[0] if hits else None), None
+
     def _be_down(self, what, err=None):
         """BE 로만 하는 동작인데 못 했을 때. 로컬로 대신하지 않고 사실대로 말한다.
         BE 가 이유를 말해 줬으면 그 이유를, 아예 못 닿았으면 연결 문제를 알린다 —
@@ -1007,10 +1060,13 @@ class Brain(threading.Thread):
         return None
 
 
-    def _explorer_items(self):
-        """포그라운드 탐색기의 폴더 항목 — BE explorer.items(읽기 전용·세션 불요)가 준다.
+    def _explorer_items(self, hwnd=0):
+        """발화 시점 탐색기(hwnd, 생략하면 포그라운드)의 폴더 항목 — BE explorer.items 가 준다.
         BE 가 못 주면 빈 목록이다. 로컬 win32com 으로 셸을 직접 읽지 않는다."""
-        ok, data, _ = self._be_call("explorer.items")
+        ref = self._win_ref(hwnd) if hwnd else None
+        if hwnd and not ref:
+            return []
+        ok, data, _ = self._be_call("explorer.items", {"winRef": ref} if ref else None)
         if not ok:
             return []
         return (data.get("items") or []) if isinstance(data, dict) else []
@@ -1573,6 +1629,8 @@ class Brain(threading.Thread):
                           wake_heard=result.get("wake_heard"),
                           is_command=result.get("is_command"),
                           action=result.get("action"),
+                          window_op=result.get("window_op"), query=result.get("query"),
+                          media_key=result.get("media_key"), seconds=result.get("seconds"),
                           transcript=result.get("transcript", "")[:120],
                           had_dom=dom is not None,
                           # 본문 품질: 왜 없었나(via)·얼마나 왔나·잘렸나. had_dom(bool) 만으로는
@@ -1743,6 +1801,8 @@ class Brain(threading.Thread):
                                "complexity": "SIMPLE" if tier == 1 else "COMPLEX"})
         pending, done = self._pending, None
         try:
+            if be and action != "end_session" and session_id is None:
+                return self._be_down("명령 실행", {"message": "활성 세션을 확인하지 못했습니다. 다시 불러 주세요"})
             done = self._act(result, action, say, be, completed, t_utter, hwnd, crop_img,
                              full_img, generation)
             return done
@@ -1765,8 +1825,9 @@ class Brain(threading.Thread):
         """명령 실행 → 실제로 끝났으면 completed, 미실행·확인 대기는 None."""
         if action == "end_session":
             self.reset_audio()
-            if be:
-                be.end(generation=generation)
+            if be and self.act:
+                if not be.end(generation=generation):
+                    return self._be_down("세션 종료", {"message": "백엔드 세션 종료 요청에 실패했습니다"})
             self._say(say or "대기 모드로 전환합니다")
             return completed if self.act else None
         if not self.act:
@@ -1783,7 +1844,18 @@ class Brain(threading.Thread):
                 self._pending = None
                 if kind == "window_close":
                     # 확인은 AI 가 이미 받았다 — BE 는 재확인 없이 닫는다(API명세 §3.8).
-                    ref = self._win_ref(target)
+                    if isinstance(target, dict):
+                        ok, ctx, err = self._be_call("context.get")
+                        if not ok:
+                            return self._be_down("창 닫기", err)
+                        hits = [w for w in (ctx or {}).get("windows", [])
+                                if w.get("title") == target["title"] and w.get("app") == target["app"]]
+                        ref = hits[0].get("ref") if len(hits) == 1 else None
+                    else:
+                        ref = self._win_ref(target)
+                    if not ref:
+                        self._say("확인했던 창을 특정하지 못해 닫지 않았습니다")
+                        return None
                     closed, _, err = self._try_be("window.close", {"winRef": ref}, "창을 닫았습니다") if ref else (False, None, None)
                     if closed:
                         return completed
@@ -1808,7 +1880,7 @@ class Brain(threading.Thread):
             if not app:
                 self._say(f"지원하지 않는 앱: {result.get('app')}")
                 return
-            # BE 앱 레지스트리 키가 다르면 ok False → 로컬 실행으로 폴백(합류 후 매핑 정렬)
+            # BE 앱 레지스트리에서 실제 ref 를 찾아 실행한다 — app:{key} 로 단정하지 않는다.
             else:
                 ref = self._app_ref(key, app)
                 if not ref:
@@ -1829,34 +1901,132 @@ class Brain(threading.Thread):
         elif action == "find_file":
             q = (result.get("query") or "").strip()
             if q:
-                # BE 카탈로그(30개)에 파일 검색 도구가 없다 — 로컬 os.startfile(search-ms)로 대신하지
-                # 않는다. 동작은 BE 몫이라 도구가 생기기 전까지는 못 한다고 말한다(-295).
-                self._say(f"'{q}' 파일 검색 — 백엔드에 파일 검색 도구가 아직 없습니다")
+                items = self._explorer_items(hwnd)
+                paths = pick_files_by_name(q, [it["path"] for it in items if it.get("path")])
+                if paths:
+                    self._say("현재 탐색기 폴더에서 찾았습니다:\n" + "\n".join(paths))
+                    return completed
+                self._say(f"현재 탐색기 폴더에서 '{q}' 파일을 찾지 못했습니다 (PC 전체 검색은 지원하지 않음)")
                 return None
+        elif action == "open_file":
+            items = self._explorer_items(hwnd)
+            q = (result.get("query") or "").strip()
+            paths = pick_files_by_name(q, [it["path"] for it in items if it.get("path")]) if q else [
+                it["path"] for it in items if it.get("selected") and it.get("path")]
+            if len(paths) != 1:
+                self._say("열 파일 하나를 지정해 주세요 — 이름을 말하거나 탐색기에서 하나만 선택하세요")
+                return None
+            opened, _, err = self._try_be("files.open", {"path": paths[0]}, "파일을 열었습니다")
+            return completed if opened else self._be_down("파일 열기", err)
+        elif action == "lock":
+            locked, _, err = self._try_be("system.lock", {}, "컴퓨터를 잠갔습니다")
+            return completed if locked else self._be_down("컴퓨터 잠금", err)
+        elif action == "capture":
+            scope = result.get("capture_scope")
+            args = {}
+            if scope == "window":
+                ref = self._win_ref(hwnd)
+                if not ref:
+                    self._say("캡처할 창을 찾지 못했습니다")
+                    return None
+                args["winRef"] = ref
+            elif scope != "screen":
+                self._say("전체 화면인지 현재 창인지 캡처 대상을 지정해 주세요")
+                return None
+            ok, payload, err = self._be_call("screen.capture", args)
+            if not ok:
+                return self._be_down("화면 캡처", err)
+            self._say(where("화면을 캡처했습니다", (payload or {}).get("path")))
+            return completed
         elif action == "window":
             # 대상 = 발화 순간의 포커스 창(hwnd). 실행 시점 포커스를 쓰면 API 지연
             # 몇 초 사이에 다른 창(우리 HUD, 방금 연 탐색기)이 당한다.
             op = result.get("window_op")
-            if not hwnd:
+            if op == "list":
+                ok, data, err = self._be_call("window.list")
+                if not ok:
+                    return self._be_down("창 목록 조회", err)
+                titles = [w.get("title") or w.get("app") or "제목 없는 창"
+                          for w in (data or {}).get("windows", [])]
+                self._say("열린 창:\n" + "\n".join(titles) if titles else "열린 창이 없습니다")
+                return completed
+            if op in ("next", "prev"):
+                ok, _, err = self._try_be(f"window.{op}", {}, "창을 전환했습니다")
+                return completed if ok else self._be_down("창 전환", err)
+            name = (result.get("query") or "").strip()
+            key = name.casefold().removesuffix(" 창").strip()
+            target = None
+            if key:
+                target, err = self._named_window(key, result.get("app"))
+                if err:
+                    return self._be_down("창 조회", err)
+                if not target and not (op == "focus" and key in ("유튜브", "youtube")):
+                    self._say(f"열린 {name} 창을 찾지 못했습니다")
+                    return None
+            if op == "focus":
+                if target or not key:
+                    ref = target.get("ref") if target else self._win_ref(hwnd)
+                    if not ref:
+                        self._say(f"열린 {name} 창을 찾지 못했습니다")
+                        return None
+                    # BE window.focus 가 최소화 복원까지 맡는다 — restore 를 먼저 보내면
+                    # 최대화 상태로 복원된 창을 실패로 판정하므로 focus 만 호출한다(-353).
+                    focused, _, err = self._try_be(
+                        "window.focus", {"winRef": ref},
+                        f"{name.removesuffix(' 창')} 창을 띄웠습니다" if name else "창을 띄웠습니다")
+                    if focused:
+                        return completed
+                    return self._be_down(f"{name} 창 전환", err)
+                if key in ("유튜브", "youtube"):
+                    opened, _, err = self._try_be(
+                        "browser.search", {"query": "https://www.youtube.com"},
+                        "열린 유튜브 창이 없어 새로 열었습니다")
+                    if opened:
+                        return completed
+                    return self._be_down("유튜브 열기", err)
+                self._say(f"열린 {name or '대상'} 창을 찾지 못했습니다")
+            elif not hwnd and not target:
                 self._say("대상 창을 찾지 못했습니다")
             elif op == "close":  # 파괴적 동작 — 즉시 실행하지 않고 재확인
-                q = f'창 "{window_title_of(hwnd)[:24]}"을(를) 닫을까요?'
+                title = target.get("title", "") if target else window_title_of(hwnd)
+                q = f'창 "{title[:24]}"을(를) 닫을까요?'
                 self._open_confirm(q, ' — "응, 닫아" / "취소"로 답하세요',
-                                   "window_close", hwnd, completed, generation)
-            elif op in ("maximize", "minimize"):
-                msg = say or ("창 최대화" if op == "maximize" else "창 최소화")
-                ref = self._win_ref(hwnd)
-                done_, _, err = self._try_be(f"window.{op}", {"winRef": ref}, msg) if ref else (False, None, None)
+                                   "window_close", {"title": title, "app": target.get("app")} if target else hwnd,
+                                   completed, generation)
+            elif op in ("maximize", "minimize", "restore", "resize"):
+                msg = {"maximize": "창을 최대화했습니다", "minimize": "창을 최소화했습니다",
+                       "restore": "창을 복원했습니다", "resize": "창을 배치했습니다"}[op]
+                ref = target.get("ref") if target else self._win_ref(hwnd)
+                if not ref:
+                    self._say("조작할 창을 찾지 못했습니다")
+                    return None
+                args = {"winRef": ref}
+                if op == "restore":
+                    # 원래 크기 복원: focus 로 최소화를 풀고 restore 로 최대화를 푼다(-353).
+                    focused, _, err = self._be_call("window.focus", args)
+                    if not focused:
+                        return self._be_down("창 복원", err)
+                if op == "resize":
+                    preset = result.get("preset")
+                    if preset not in ("LEFT_HALF", "RIGHT_HALF", "CENTER"):
+                        self._say("창 배치는 왼쪽 반쪽·오른쪽 반쪽·가운데만 지원합니다")
+                        return None
+                    args["preset"] = preset
+                done_, _, err = self._try_be(f"window.{op}", args, msg)
                 if done_:
                     return completed
                 return self._be_down(msg, err)
             elif op in ("scroll_down", "scroll_up"):
                 direction = "down" if op == "scroll_down" else "up"
-                ref = self._win_ref(hwnd)
+                ref = target.get("ref") if target else self._win_ref(hwnd)
                 # scroll.step 의 대상은 '포커스된 창'이라 말하던 그 창을 BE 로 먼저 잡는다 —
                 # 발화 뒤 사용자가 창을 옮겨도 의도한 창이 스크롤되게(로컬 경로와 같은 보장).
-                if ref:
-                    self._be_call("window.focus", {"winRef": ref})  # 말하던 그 창을 앞으로
+                if not ref:
+                    self._say("스크롤할 창을 찾지 못했습니다")
+                    return None
+                focused, _, err = self._be_call("window.focus", {"winRef": ref})
+                if not focused:
+                    return self._be_down("스크롤 대상 창 전환", err)
                 # NOTE(한계): scroll.step 은 좌표 없는 휠 한 발이라(SendInputService.fillWheel)
                 # 실제 대상은 '커서 아래 창'이다 — window.focus 로도 보장되지 않는다.
                 # scroll.step 에 winRef 가 생겨야 '발화 시점 창' 보장이 돌아온다(-295).
@@ -1866,12 +2036,14 @@ class Brain(threading.Thread):
                         self._say(say)
                     return completed
                 return self._be_down("스크롤", err)
+            else:
+                self._say("지원하지 않는 창 명령입니다")
         elif action == "delete_file":
-            # 대상 결정: ① 말했거나 응시한 파일명(query) → 폴더에서 해석,
-            # 실패 시 ② 탐색기에서 이미 선택된 파일. 둘 다 없으면 안내.
-            items = self._explorer_items()  # BE 한 번으로 이름 해석·선택 둘 다 처리
+            # 이름 지정 시 그 파일만, 미지정 시 탐색기 선택만 — 이름을 못 찾았다고 다른 파일을 지우지 않는다(-353).
+            items = self._explorer_items(hwnd)  # 발화 시점 탐색기로 대상 고정
             paths = [it.get("path") for it in items if it.get("path")]
-            sel = pick_files_by_name(result.get("query"), paths) or [
+            query = (result.get("query") or "").strip()
+            sel = pick_files_by_name(query, paths) if query else [
                 it.get("path") for it in items if it.get("selected") and it.get("path")]
             if not sel:
                 self._say("삭제할 파일을 못 찾았습니다 — 이름을 다시 말하거나 탐색기에서 선택하세요")
@@ -1881,7 +2053,8 @@ class Brain(threading.Thread):
                 self._open_confirm(q, ' — "응, 삭제" / "취소"',
                                    "delete_file", sel, completed, generation)
         elif action == "media":
-            if self._media(result.get("media_key"), say, hwnd, level=result.get("level")):
+            if self._media(result.get("media_key"), say, hwnd, level=result.get("level"),
+                           seconds=result.get("seconds")):
                 return completed
         elif action == "save_crop" and (full_img is not None or crop_img is not None):
             ts = time.strftime("%H%M%S")
@@ -1945,19 +2118,28 @@ class Brain(threading.Thread):
         else:
             self._say("…")   # FE 로도 가야 한다 — 오버레이만 띄우면 화면에 아무것도 안 뜬다
 
-    def _media(self, key, say="", hwnd=0, level=None):
+    def _media(self, key, say="", hwnd=0, level=None, seconds=None):
         if key == "volset":  # 절대값은 BE 전용(volume.set) — 로컬 키 입력으론 현재 값을 모른다
-            if level is not None and self._try_be("volume.set", {"level": int(level)}, say)[0]:
-                return True
-            self._say("볼륨 값 지정은 BE 연결 시에만 됩니다")
-            return False
+            if type(level) is not int or not 0 <= level <= 100:
+                self._say("볼륨은 0~100 사이 정수로 지정해 주세요")
+                return False
+            ok, _, err = self._try_be("volume.set", {"level": level}, say)
+            return ok or bool(self._be_down("볼륨 설정", err))
         if key in ("forward", "back"):
             # media.* 중 유일하게 배경 재생을 제어하지 못한다 — 나머지 넷은 시스템 미디어 키가
             # 재생 세션으로 가지만 방향키는 포커스를 쥔 창이 받는다. 그래서 발화 시점 창을
-            # winRef 로 지목한다. 못 찾으면(동명 창 다수 + 비포그라운드) 인자를 빼고 BE 기본
-            # 동작인 '지금 앞에 있는 창'으로 떨어진다 — 동작은 하되 발화 시점 보장이 깨진다.
+            # winRef 로 지목한다. 발화 시점 창을 못 찾으면 다른 창에 키를 보내지 않는다.
             args = {"dir": "forward" if key == "forward" else "backward"}
+            if seconds is not None:
+                if (type(seconds) is not int or not 5 <= seconds <= 50 or seconds % 5
+                        or not is_youtube(window_title_of(hwnd))):
+                    self._say("초 단위 이동은 유튜브 창에서 5~50초, 5초 단위로 지원합니다")
+                    return False
+                args["amount"] = seconds // 5
             ref = self._win_ref(hwnd) if hwnd else None
+            if hwnd and not ref:
+                self._say("영상을 조작할 창을 찾지 못했습니다")
+                return False
             if ref:
                 args["winRef"] = ref
             seeked, _, err = self._try_be("media.seek", args, say)

@@ -7,8 +7,8 @@ None → 호출측이 LLM(2단)으로 승격하며 STT 초안을 힌트로 첨�
 
 승격이 기본인 것들: 지시어("이거") — 화면·시선이 필요, 질문·요약 — answer
 생성 필요, 확인 대기 중 발화 — 승인/거부 판정 필요(호출측에서 차단).
-1단 v1 범위는 안전한 명령만: 앱 실행, 미디어 제어, 세션 종료. 창 닫기·삭제
-같은 파괴적 동작은 확인 흐름이 필요해서 LLM 경로에 남긴다.
+1단 범위는 안전한 고정 명령만: 앱 실행, 창 포커스, 화면 캡처, 미디어 제어, 세션 종료.
+창 닫기·삭제 같은 파괴적 동작은 확인 흐름이 필요해서 LLM 경로에 남긴다.
 
 모델: 기본 small — GPU(ctranslate2 CUDA) 면 float16·0.15s, 없거나 로드 실패면
 CPU int8·2.4s 로 자동 폴백. beam5 + 사전에서 만든 어휘 프롬프트 + 환각 가드
@@ -288,13 +288,37 @@ class Router:
 
         base = {"audio_is_speech": True, "wake_heard": wake, "is_command": True,
                 "transcript": text, "tier": 1}
+        request = c
+        for w in sorted(self.wakes, key=len, reverse=True):
+            if request.startswith(w):
+                request = request[len(w):]
+                break
+        # NOTE(튜닝): 창 전환은 고정 표현만 처리 — 표현 확장은 실측 미스가 생기면 추가한다(-353).
+        focus = re.fullmatch(
+            r"(?:(크롬)에서)?(유튜브|youtube)(?:를)?(?:좀)?"
+            r"(?:띄워(?:줘|주세요|줄래)?|앞으로(?:가져와|가져다줘))",
+            request, re.IGNORECASE) or re.fullmatch(
+            r"(?:(크롬)에서)?(.+?)(?:창(?:을)?(?:좀)?"
+            r"(?:띄워|보여|열어)(?:줘|주세요|줄래)?|(?:창(?:을)?)?(?:좀)?앞으로(?:가져와|가져다줘))",
+            request, re.IGNORECASE)
+        if focus:
+            name = focus[2]
+            if name.endswith(("을", "를")) and name[:-1] in APPS_KO:
+                name = name[:-1]
+            return {**base, "action": "window", "window_op": "focus", "query": name,
+                    "app": APPS_KO.get(focus[1]), "say": f"{name} 창을 띄웠습니다"}
+        if re.fullmatch(r"(?:전체)?화면(?:을)?(?:좀)?(?:캡처|캡쳐)(?:해줘|해줄래|해주세요)?|스크린샷(?:찍어줘|저장해줘)?", request):
+            return {**base, "action": "capture", "capture_scope": "screen", "say": "화면을 캡처했습니다"}
+        if request in ("세션취소", "세션취소해줘", "명령취소", "명령취소해줘", "취소", "취소해줘"):
+            return {**base, "action": "end_session", "say": "대기 모드로 전환합니다"}
         for name, key in APPS_KO.items():
             if name not in c:
                 continue
-            r = self._residual(c, name)
-            if any(v in c for v in OPEN_VERBS) or open_like(r):
+            r = re.sub(r"^[을를]", "", self._residual(c, name)).replace("좀", "")
+            if open_like(r):
                 return {**base, "action": "open_app", "app": key,
                         "say": f"{name}를 열게요"}
+            return None  # 앱 이름 외에 검색어·창 조작이 남으면 승격 — 앱 실행으로 삼키지 않는다(-353).
         # 종료 인사는 미디어보다 먼저 — "다음 영상에서 만나요"가 '다음 영상'(next)으로 잡히지 않게
         if session_active and (c in END_EXACT or any(e in c for e in END_KO)):
             return {**base, "action": "end_session", "say": "대기 모드로 전환합니다"}
