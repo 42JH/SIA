@@ -123,6 +123,17 @@ try {
         }
     }
 
+    # gemini_api_key.txt는 gitignore 대상이라 클론 직후엔 없을 수 있다 — 있으면 번들
+    # 기본 키로 sia-ai-support 루트(asset_path)에 넣고, 없으면 조용히 건너뛴다.
+    # (런타임 우선순위는 brain.py 참고: 환경변수 > %APPDATA%\SIA\ai 오버라이드 > 번들 기본값)
+    $geminiKeyArgs = @()
+    if (Test-Path "gemini_api_key.txt") {
+        $geminiKeyArgs = @("--add-data", "gemini_api_key.txt;.")
+        Write-Host "gemini_api_key.txt 발견 — 번들 기본 키로 포함"
+    } else {
+        Write-Host "gemini_api_key.txt 없음 — 번들 기본 키 없이 빌드 (실행 시 환경변수/%APPDATA% 키 필요)" -ForegroundColor Yellow
+    }
+
     pyinstaller --noconfirm --onedir --contents-directory "sia-ai-support" --name $aiName `
         --add-data "models\face_landmarker.task;models" `
         --add-data "models\gesture_recognizer.task;models" `
@@ -130,6 +141,7 @@ try {
         --add-data "models\siaya_v2.onnx;models" `
         --add-data "models\eth-xgaze_resnet18.pth;models" `
         --add-data "models\wake_neg_bank.npz;models" `
+        @geminiKeyArgs `
         assistant.py
     if ($LASTEXITCODE -ne 0) { throw "pyinstaller 실패 (exit $LASTEXITCODE)" }
 } finally {
@@ -157,8 +169,15 @@ Write-Host "=== 사이드카 배치 완료 — $binariesDir ===" -ForegroundColo
 Get-ChildItem $binariesDir
 
 # ---------------------------------------------------------------------------
-# [5/5] 최종 패키징 (tauri build) -> src-tauri/target/release/bundle/
+# [5/5] 최종 패키징 (Rust 빌드 + Inno Setup) -> Integration/scripts/Output/
 # ---------------------------------------------------------------------------
+# NSIS(makensis)·WiX(light.exe) 는 둘 다 32비트 컴파일러라 sia-ai-support
+# (CUDA torch 포함, 수 GB)를 통째로 mmap 하려다 주소공간을 넘겨서 실패한다
+# ("Internal compiler error #12345: error mmapping file ... is out of range").
+# GPU torch 는 유지해야 하므로 용량을 줄이는 대신, Tauri 자체 번들링(NSIS/WiX)은
+# --no-bundle 로 건너뛰고 (app.exe 컴파일까지만 수행), 최종 설치본은 대용량
+# payload 를 스트리밍 방식으로 압축하는 Inno Setup(scripts\sia-desktop.iss)
+# 으로 따로 만든다. 사전 준비: Inno Setup 6 설치 (https://jrsoftware.org/isinfo.php)
 if ($SkipTauriBuild) {
     Write-Host ""
     Write-Host "=== [5/5] 건너뜀 (-SkipTauriBuild) — 사이드카만 배치하고 종료 ===" -ForegroundColor Yellow
@@ -166,7 +185,7 @@ if ($SkipTauriBuild) {
 }
 
 Write-Host ""
-Write-Host "=== [5/5] 전체 패키징 (tauri build) ===" -ForegroundColor Cyan
+Write-Host "=== [5/5] 전체 패키징 (Rust 빌드 + Inno Setup) ===" -ForegroundColor Cyan
 $requiredBundleResources = @("app", "runtime", "sia-ai-support")
 foreach ($name in $requiredBundleResources) {
     $resourcePath = Join-Path $binariesDir $name
@@ -177,15 +196,44 @@ foreach ($name in $requiredBundleResources) {
 
 Push-Location $integrationDir
 try {
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw "tauri build 실패 (exit $LASTEXITCODE)" }
+    npx tauri build --no-bundle
+    if ($LASTEXITCODE -ne 0) { throw "tauri build --no-bundle 실패 (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }
 
-$bundleDir = Join-Path $integrationDir "src-tauri\target\release\bundle"
+$appExe = Join-Path $integrationDir "src-tauri\target\release\app.exe"
+if (-not (Test-Path $appExe)) { throw "Rust 빌드 산출물을 못 찾았습니다: $appExe" }
+
+$iscc = $null
+$isccCmd = Get-Command iscc -ErrorAction SilentlyContinue
+if ($isccCmd) {
+    $iscc = $isccCmd.Source
+} else {
+    # Inno Setup 6 설치 마법사 옵션에 따라 세 곳 중 하나에 깔린다:
+    # 최신 버전은 "이 사용자만"이 기본값이라 LOCALAPPDATA 쪽이 제일 흔하다.
+    $isccCandidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
+    )
+    foreach ($candidate in $isccCandidates) {
+        if (Test-Path $candidate) { $iscc = $candidate; break }
+    }
+}
+if (-not $iscc) {
+    throw "Inno Setup 컴파일러(ISCC.exe)를 못 찾았습니다. https://jrsoftware.org/isinfo.php 에서 설치하세요 (설치 위치: $($isccCandidates -join ', '))."
+}
+
+$issScript = Join-Path $integrationDir "scripts\sia-desktop.iss"
+if (-not (Test-Path $issScript)) { throw "Inno Setup 스크립트를 못 찾았습니다: $issScript" }
+
+& $iscc $issScript
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup 빌드 실패 (exit $LASTEXITCODE)" }
+
+$outputDir = Join-Path $integrationDir "scripts\Output"
 Write-Host ""
-Write-Host "=== 전체 빌드 및 패키징 완료 — $bundleDir ===" -ForegroundColor Green
-if (Test-Path $bundleDir) {
-    Get-ChildItem $bundleDir -Recurse -File | Select-Object FullName, Length
+Write-Host "=== 전체 빌드 및 패키징 완료 — $outputDir ===" -ForegroundColor Green
+if (Test-Path $outputDir) {
+    Get-ChildItem $outputDir -Recurse -File | Select-Object FullName, Length
 }

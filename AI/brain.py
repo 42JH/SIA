@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """비서의 두뇌 — 융합 콜 하나로 끝낸다.
 
 발화 오디오 + 전체 화면 + 응시 크롭을 Gemini에 한 번에 보내
@@ -471,11 +471,16 @@ class SpeakerAccum:
 
 
 def load_api_keys():
-    """API 키 목록 — 환경변수 GEMINI_API_KEY(콤마 구분 가능) 또는
-    gemini_api_key.txt(줄당 하나). 무료 티어 쿼터에 걸리면 다음 키로 넘어간다."""
+    """API 키 목록 — 환경변수 GEMINI_API_KEY(콤마 구분 가능), 없으면 사용자 데이터 폴더의
+    gemini_api_key.txt(오버라이드), 그것도 없으면 번들에 포함된 기본 키.
+    무료 티어 쿼터에 걸리면 다음 키로 넘어간다."""
     raw = os.environ.get("GEMINI_API_KEY", "").strip()
     if not raw:
         f = data_path("gemini_api_key.txt")
+        if f.exists():
+            raw = f.read_text(encoding="utf-8")
+    if not raw:
+        f = asset_path("gemini_api_key.txt")
         if f.exists():
             raw = f.read_text(encoding="utf-8")
     return [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
