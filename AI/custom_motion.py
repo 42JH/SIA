@@ -897,12 +897,18 @@ class CustomGestureStore:
                 sequence_cache[key] = encode_sequence([v[0] for v in window], [v[1] for v in window])
             return sequence_cache[key]
 
+        static_current = None
+
         for index, (seq, name, motion, n, duration) in enumerate(
                 zip(*(self.data[k] for k in EXTRA_KEYS))):
             if count != n or name in disabled:
                 continue
             if motion == "STATIC":
-                current = encode_sequence([0, 1], [points, points])
+                # points/count은 이 프레임 안에서 바뀌지 않으므로, 등록된 정적
+                # 템플릿이 여럿이어도 이 인코딩은 한 번만 계산해 재사용한다.
+                if static_current is None:
+                    static_current = encode_sequence([0, 1], [points, points])
+                current = static_current
                 if (count == 2 and current_world is not None
                         and bool(self.data["world_valid"][index])):
                     score = WORLD_DISTANCE_SCALE * world_matching_distance(
