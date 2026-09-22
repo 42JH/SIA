@@ -4,7 +4,7 @@
 //  - browser_open_request {requestId, url} 을 받으면 새 탭으로 그 주소를 열고 browser_open 으로 답한다.
 // 모든 메시지는 BE 공통 봉투 {"type": "...", "data": {...}} 를 쓴다.
 
-const WS_URL = "ws://127.0.0.1:8080/ws/ext";
+const WS_URL = "ws://127.0.0.1:61015/ws/ext";
 const PING_INTERVAL_MS = 20000; // 20초 — 활동이 있으면 크롬이 서비스 워커를 살려 둔다 (Chrome 116+)
 const MAX_TEXT_CHARS = 20000;
 const OPEN_LOAD_WAIT_MS = 2500; // 제목을 얻으려 로딩을 기다리는 상한. BE 타임아웃(4초)보다 짧아야 폴백이 겹치지 않는다
