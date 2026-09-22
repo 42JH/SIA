@@ -681,24 +681,35 @@ def main():
             # --- 제스처 커맨드 (컨텍스트 의존: 유튜브가 활성 창이면 미디어 제어) ---
             from brain import is_youtube
 
-            # 세션 필요 여부는 매크로 안의 도구에 따라 달라지며 Backend가 최종
-            # 판정한다. AI가 PASSIVE 상태에서 감지 자체를 막으면 context.get 같은
-            # 읽기 전용 매크로도 실행할 수 없으므로, recognition_start 이후에는
-            # gesture_exec를 보내고 Backend의 gesture_result를 따른다.
-            gesture_active = args.two_hand_preview or bool(link and link.gesture_ready)
+            # 제스처는 음성 호출로 열린 활성 세션 동안에만 인식한다. 세션이 닫혀 있으면
+            # 호출어 모델만 돌고, 손 인식·Pose 추론·gesture_exec 전송·사용 기록 모두 멈춘다.
+            # 세션 마감은 BE 소유(session_state → link.session_until_mono)이고, 제스처가
+            # 실행되면 BE 가 세션을 갱신하므로 제스처를 쓰는 동안은 세션이 이어진다.
+            gesture_active = args.two_hand_preview or bool(
+                link and link.gesture_ready and brain.session_open_at(now))
             if gesture_active != was_gesture_active:
                 palm_motion_tracker.update([])
                 palm_motion.update(None, now)
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
+                two_hand_motion.reset()
+                # 이전 세션에서 들고 있던 손모양의 홀드·안정화 진행분이 다음 세션으로
+                # 이어져 세션이 열리자마자 발동하지 않도록 새로 만든다.
+                stable = GestureStable(min_frames=3, missing_grace_s=0.45)
+                for toggle_name in list(gesture_toggles):
+                    gesture_toggles[toggle_name] = make_static_toggle(toggle_name)
                 was_gesture_active = gesture_active
-                print("[제스처] 인식 활성" if gesture_active else "[제스처] 인식 대기")
+                print("[제스처] 인식 시작 (세션 열림)" if gesture_active else "[제스처] 인식 중지 (세션 닫힘)")
 
+            # 제스처 등록 촬영은 FE 대시보드에서 세션과 무관하게 시작되므로 예외로 손 인식을 돌린다.
+            # (카메라 미리보기는 프레임만 보내므로 손 인식이 필요 없다.)
+            registration_active = registration_blocks_gesture_execution(registration)
+            need_hands = gesture_active or registration_active
             hand_start = time.perf_counter()
-            hands = gest.hands(frame)
+            hands = gest.hands(frame) if need_hands else []
             hand = hands[0] if hands else None
             hand_infer_ms = (time.perf_counter() - hand_start) * 1000
-            pose_landmarks = pose.update(frame, now) if pose else None
+            pose_landmarks = pose.update(frame, now) if (pose and need_hands) else None
             raw_gesture = hand["gesture"] if hand else None
             # 통계 전송용 신뢰도 — 내장은 MediaPipe score, 커스텀은 kNN 거리를
             # exp(-dist)로 변환(gesture_be.py의 기존 관례와 동일). 발동값은
@@ -720,7 +731,6 @@ def main():
                     raw_score = round(float(math.exp(-dist)), 3)
                 elif raw_gesture in (None, "None"):
                     raw_gesture = "None"
-            registration_active = registration_blocks_gesture_execution(registration)
             gesture_execution_blocked = registration_gesture_rearm.update(
                 registration_active, bool(hands), now)
             # 카메라 프리뷰·제스처 실행이 등록 중 멈추는 것과 같은 이유로, 음성 명령도
@@ -823,7 +833,7 @@ def main():
                         if args.no_actions:
                             print(f"[시늉만] 제스처→BE: {name}")
                         else:
-                            print(f"[GESTURE?BE] detected={name} | name={be_name} | context={be_context or 'default'}")
+                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
                             sent = link.send_event(
                                 "gesture_exec",
                                 {"name": be_name, "hwnd": foreground_hwnd(), "context": be_context},
@@ -841,13 +851,6 @@ def main():
                             )
                     elif link and link.gesture_ready:
                         print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
-                    if link:
-                        link.queue_usage("gesture",
-                                         sessionId=link.be_session_id,
-                                         action=name,
-                                         context=context,
-                                         accuracy=raw_score,
-                                         payload={"source": "static", "occurredAt": int(time.time() * 1000)})
             if gesture_active and not gesture_execution_blocked:
                 # 스와이프/스크롤/핀치볼륨의 이동량 기준은 화면 비율로 정해져
                 # 있어 카메라와의 거리에 따라 민감도가 달라진다 — 넣기 전에
