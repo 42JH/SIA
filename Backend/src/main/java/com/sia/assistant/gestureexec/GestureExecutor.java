@@ -92,6 +92,12 @@ public class GestureExecutor {
                 sendResult(name, false, "세션이 활성화되지 않았습니다", stepResults);
                 return;
             }
+            // 매크로가 유효하다고 판정된 자리에서 세션을 갱신한다 — 제스처를 쓰는 동안은 세션이 살아 있어야 한다.
+            // ★ 첫 스텝 전이어야 한다: 스텝 뒤로 미루면 실행 도중 마감이 지나 뒤 스텝이 세션 게이트에 걸린다.
+            // 활성 세션이 없으면 건너뛴다 — S 도구가 없는 매크로는 세션 없이도 실행되는데 renew 는 던진다.
+            if (sessionService.activeOrNull() != null) {
+                sessionService.renew(null);
+            }
 
             boolean ok = true;
             String message = null;
