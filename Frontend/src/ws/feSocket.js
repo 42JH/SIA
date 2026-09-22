@@ -3,7 +3,7 @@
 
 import { logCommunication } from '../utils/communicationLogger';
 
-const WS_URL = "ws://127.0.0.1:8080/ws/fe";
+const WS_URL = "ws://127.0.0.1:61015/ws/fe";
 const RECONNECT_DELAY_MS = 2000;
 
 let socket = null;

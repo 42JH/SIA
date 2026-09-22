@@ -46,7 +46,7 @@ export default function ConnectionCheck() {
       <h1>통신 확인</h1>
 
       <section>
-        <h2>WS (ws://127.0.0.1:8080/ws/fe)</h2>
+        <h2>WS (ws://127.0.0.1:61015/ws/fe)</h2>
         <p>연결 상태: {wsConnected ? "연결됨" : "연결 안 됨"}</p>
         <ul>
           {wsLog.map((entry, index) => (
