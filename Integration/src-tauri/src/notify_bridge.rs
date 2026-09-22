@@ -1,5 +1,5 @@
 //! `/ws/fe` 브릿지 — Frontend/src/ws/feSocket.js 와 동일한 프로토콜로 BE에 붙어
-//! 알림류 이벤트를 받는다. 인증 없음, 고정 URL(포트 8080), 2초 고정 재연결 —
+//! 알림류 이벤트를 받는다. 인증 없음, 고정 URL(포트 61015), 2초 고정 재연결 —
 //! feSocket.js 와 정책을 그대로 맞췄다 (FE와 동시에 붙어도 되는지는 실행해서 확인 중).
 //!
 //! kind별 판단은 전혀 하지 않고, 받은 {type, data} 봉투를 그대로 overlay 창에
@@ -16,8 +16,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Frontend/src/ws/feSocket.js 의 WS_URL 과 동일. 포트 정책은 아직 TBD (Integration/Agents.md 참고) —
-/// BE가 고정 8080이 아니게 되면 여기도 같이 바꿔야 한다.
-const WS_URL: &str = "ws://127.0.0.1:8080/ws/fe";
+/// BE가 고정 61015가 아니게 되면 여기도 같이 바꿔야 한다.
+const WS_URL: &str = "ws://127.0.0.1:61015/ws/fe";
 /// feSocket.js 의 RECONNECT_DELAY_MS 와 동일.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
