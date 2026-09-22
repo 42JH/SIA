@@ -22,9 +22,9 @@ WS 메시지의 필드 단위 양식은 §4 에 있다. 이벤트가 오가는 �
 
 | 표면 | 주소 | 인증 |
 |---|---|---|
-| REST | `http://127.0.0.1:8080/api/**` | 없음 |
-| WS | `ws://127.0.0.1:8080/ws/**` | 없음 |
-| MCP | `http://127.0.0.1:8080/mcp` | `Authorization: Bearer <token>` (또는 `X-MC-Token`) + `X-Caller: LLM\|GESTURE` |
+| REST | `http://127.0.0.1:61015/api/**` | 없음 |
+| WS | `ws://127.0.0.1:61015/ws/**` | 없음 |
+| MCP | `http://127.0.0.1:61015/mcp` | `Authorization: Bearer <token>` (또는 `X-MC-Token`) + `X-Caller: LLM\|GESTURE` |
 
 - BE 는 `127.0.0.1` 에만 바인딩한다.
 - CORS 는 `/api/**` 에만 적용된다. 허용 Origin 은 `http://localhost:*`, `http://127.0.0.1:*`, 허용 메서드는 `GET POST PUT PATCH DELETE OPTIONS` 다.
@@ -2170,9 +2170,9 @@ FE 에는 같은 내용의 `capture_saved` 가 push 된다. 제스처 매크로�
 
 | 채널 | 주소 | 방향 | 허용 Origin |
 |---|---|---|---|
-| `/ws/fe` | `ws://127.0.0.1:8080/ws/fe` | FE ↔ BE | `http://localhost:*`, `http://127.0.0.1:*` |
-| `/ws/agent` | `ws://127.0.0.1:8080/ws/agent` | AI ↔ BE | 같음. Origin 헤더가 없는 네이티브 클라이언트 허용 |
-| `/ws/ext` | `ws://127.0.0.1:8080/ws/ext` | 브라우저 확장 ↔ BE | 위 두 패턴 + `chrome-extension://*` |
+| `/ws/fe` | `ws://127.0.0.1:61015/ws/fe` | FE ↔ BE | `http://localhost:*`, `http://127.0.0.1:*` |
+| `/ws/agent` | `ws://127.0.0.1:61015/ws/agent` | AI ↔ BE | 같음. Origin 헤더가 없는 네이티브 클라이언트 허용 |
+| `/ws/ext` | `ws://127.0.0.1:61015/ws/ext` | 브라우저 확장 ↔ BE | 위 두 패턴 + `chrome-extension://*` |
 
 인증은 없다. 모든 메시지는 텍스트 프레임 하나에 JSON 객체 하나다.
 
@@ -2778,4 +2778,4 @@ AI ↔ FE 계약이므로 표에 없는 필드가 더 붙어 올 수 있다. BE 
 | `/ws/ext` | 확장 → BE | `hello` · `dom_text` · `browser_open` · `ping` | §4.6 |
 | `/ws/ext` | BE → 확장 | `dom_text_request` · `browser_open_request` · `pong` · `error` | §4.6 |
 
-Swagger UI: BE 기동 중 `http://127.0.0.1:8080/swagger-ui.html` 에서 REST 표면을 확인할 수 있다. WebSocket 은 Swagger 에 나타나지 않는다.
+Swagger UI: BE 기동 중 `http://127.0.0.1:61015/swagger-ui.html` 에서 REST 표면을 확인할 수 있다. WebSocket 은 Swagger 에 나타나지 않는다.

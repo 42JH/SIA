@@ -28,7 +28,7 @@ public class RuntimeTokenManager {
     private final int port;
     private final String token;
 
-    public RuntimeTokenManager(DataDirs dirs, ObjectMapper om, @Value("${server.port:8080}") int port) {
+    public RuntimeTokenManager(DataDirs dirs, ObjectMapper om, @Value("${server.port:61015}") int port) {
         this.dirs = dirs;
         this.om = om;
         this.port = port;
