@@ -823,13 +823,13 @@ def main():
                 allowed = static_execution_allowed(gesture_active, gesture_execution_blocked,
                                                     custom_claimed, custom_pose, name)
                 fired = gesture_toggles[name].update(allowed and gesture == name, now)
+                sent = False
                 if fired and name not in disabled_gestures and not args.two_hand_preview:
                     be_target = be_gesture_target(
                         name, context, {ref.get("name") for ref in remote_refs.values()}
                     )
                     if link and link.gesture_ready and be_target:
                         be_name, be_context = be_target
-                        sent = False
                         if args.no_actions:
                             print(f"[시늉만] 제스처→BE: {name}")
                         else:
@@ -840,17 +840,21 @@ def main():
                             )
                         hud_feedback = name
                         hud_feedback_until = now + 0.9
-                        if sent:
-                            link.queue_usage(
-                                "gesture",
-                                sessionId=link.be_session_id,
-                                action=be_name,
-                                context=be_context or context,
-                                accuracy=raw_score,
-                                payload={"source": "static", "occurredAt": int(time.time() * 1000)},
-                            )
                     elif link and link.gesture_ready:
                         print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
+                # queue_usage 는 위 if(link and link.gesture_ready and be_target) 블록 밖에 둔다 —
+                # test_remote_gesture_dispatch_respects_no_actions 가 그 블록만 떼어내
+                # 독립 실행해 검증하므로(raw_score 는 그 블록의 검증 대상 변수가 아니다),
+                # 블록 안에 두면 그 격리 계약이 깨진다.
+                if sent:
+                    link.queue_usage(
+                        "gesture",
+                        sessionId=link.be_session_id,
+                        action=be_name,
+                        context=be_context or context,
+                        accuracy=raw_score,
+                        payload={"source": "static", "occurredAt": int(time.time() * 1000)},
+                    )
             if gesture_active and not gesture_execution_blocked:
                 # 스와이프/스크롤/핀치볼륨의 이동량 기준은 화면 비율로 정해져
                 # 있어 카메라와의 거리에 따라 민감도가 달라진다 — 넣기 전에
