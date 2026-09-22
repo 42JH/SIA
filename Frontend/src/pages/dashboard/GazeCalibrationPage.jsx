@@ -34,6 +34,7 @@ export default function GazeCalibrationPage() {
   const previewImg = useRef(null);
   const stopOpenRef = useRef(false);
   const heldResultRef = useRef(null);
+  const completionResultRef = useRef(null);
   const [settingsConfig, setSettingsConfig] = useState(null);
   const [cameras, setCameras] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
@@ -42,6 +43,7 @@ export default function GazeCalibrationPage() {
   const [cameraPreviewReady, setCameraPreviewReady] = useState(false);
   const [cameraPreviewError, setCameraPreviewError] = useState('');
   const [stopOpen, setStopOpen] = useState(false);
+  const [finishingMeasurement, setFinishingMeasurement] = useState(false);
   const ready = connected && flow.status?.agentConnected && !flow.failed;
 
   useEffect(() => {
@@ -79,7 +81,11 @@ export default function GazeCalibrationPage() {
       calib_point: (point) => change({ point, pending: false }),
       calib_result: (result) => {
         if (stopOpenRef.current) heldResultRef.current = result;
-        else useGazeCalibrationStore.getState().receiveResult(result);
+        else if (useGazeCalibrationStore.getState().step === 'measuring') {
+          completionResultRef.current = result;
+          setFinishingMeasurement(true);
+          change({ pending: false });
+        } else useGazeCalibrationStore.getState().receiveResult(result);
       },
       calib_saved: (savedCalib) => change({ savedCalib, step: 'done', pending: false }),
       calib_denied: ({ message }) => { autoStarted.current = false; change({ step: 'start', pending: false, error: message }); },
@@ -189,6 +195,8 @@ export default function GazeCalibrationPage() {
         setSettingsConfig(latest);
       }
       // TODO(BE): 보정 시작 시 저장된 cameraDeviceId를 Python Runtime 카메라 입력에 적용하는 경로 확인 필요
+      completionResultRef.current = null;
+      setFinishingMeasurement(false);
       send('calib_start', {}, { step: 'position', precheck: null, point: null, result: null, poorCount: 0, restartPending: false, savedCalib: null, delayed: false, failed: false });
     } catch (error) {
       autoStarted.current = false;
@@ -201,6 +209,8 @@ export default function GazeCalibrationPage() {
     try {
       await document.documentElement.requestFullscreen();
       if (flow.restartPending) sendGazeCalibration('calib_restart');
+      completionResultRef.current = null;
+      setFinishingMeasurement(false);
       change({ step: 'measuring', pending: false, restartPending: false, failed: false, ...(flow.restartPending ? { point: null, result: null } : {}) });
     } catch (error) { change({ pending: false, error: error.message }); }
   }
@@ -226,9 +236,18 @@ export default function GazeCalibrationPage() {
     if (heldResultRef.current) {
       const result = heldResultRef.current;
       heldResultRef.current = null;
-      useGazeCalibrationStore.getState().receiveResult(result);
+      completionResultRef.current = result;
+      setFinishingMeasurement(true);
     }
   }
+
+  const finishMeasurementVisual = useCallback(() => {
+    const result = completionResultRef.current;
+    if (!result) return;
+    completionResultRef.current = null;
+    setFinishingMeasurement(false);
+    useGazeCalibrationStore.getState().receiveResult(result);
+  }, []);
 
   function openCameraSettings() {
     if (connected) { try { sendGazeCalibration('calib_cancel'); } catch { /* 설정 화면 이동 우선 */ } }
@@ -243,11 +262,11 @@ export default function GazeCalibrationPage() {
   if (flow.step === 'start') {
     content = <CalibrationShell title="시선 보정" subtitle="시선 보정을 준비하고 있습니다."><div className={styles.preparing}><span className={styles.spinner} /><h2>카메라와 AI 연결을 확인하고 있습니다</h2><p>{selectedCameraId ? '잠시만 기다려주세요.' : '사용 가능한 카메라를 확인해주세요.'}</p><button onClick={openStopConfirm}>취소</button></div></CalibrationShell>;
   } else if (flow.step === 'position') {
-    content = <CalibrationShell title="위치 확인"><section className={`${styles.techFrame} ${styles.positionFrame}`}>{<><img ref={previewImg} className={styles.cameraPreview} alt="AI 카메라 미리보기" hidden={!cameraPreviewFrame} />{!cameraPreviewFrame && <span className={styles.cameraWaiting}>{cameraPreviewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}</>}<div className={styles.cameraShade} /><FrameMarks /><div className={styles.cornerMarks}><i /><i /><i /><i /></div><strong>화면 중앙에 바른 자세로 앉아주세요.</strong>{cameraPreviewError && <p className={styles.cameraError}>{cameraPreviewError}</p>}</section><progress className={styles.positionProgress} max="3" value={validPosition ? 3 : flow.precheck?.face ? 2 : 1} /><div className={styles.positionFooter}><p>얼굴 {precheckLabel(flow.precheck?.face, (value) => value === true)} · 거리 {precheckLabel(flow.precheck?.distance, (value) => value === 'ok')} · 조명 {precheckLabel(flow.precheck?.lighting, (value) => value === 'ok')}</p><div><button onClick={openStopConfirm}>취소</button><button onClick={nextGuide} disabled={!ready || !validPosition}>다음</button></div></div>{flow.delayed && <p className={styles.inlineError}>위치 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.</p>}</CalibrationShell>;
+    content = <CalibrationShell title="위치 확인"><section className={`${styles.techFrame} ${styles.positionFrame}`}>{<><img ref={previewImg} className={styles.cameraPreview} alt="AI 카메라 미리보기" hidden={!cameraPreviewFrame} />{!cameraPreviewFrame && <span className={styles.cameraWaiting}>{cameraPreviewReady ? '카메라 화면을 기다리고 있습니다.' : 'AI 카메라를 준비하고 있습니다.'}</span>}</>}<div className={styles.cameraShade} /><FrameMarks /><div className={styles.cornerMarks}><i /><i /><i /><i /></div><strong>화면 중앙에 바른 자세로 앉아주세요.</strong>{cameraPreviewError && <p className={styles.cameraError}>{cameraPreviewError}</p>}</section><div className={styles.positionFooter}><p>얼굴 {precheckLabel(flow.precheck?.face, (value) => value === true)} · 거리 {precheckLabel(flow.precheck?.distance, (value) => value === 'ok')} · 조명 {precheckLabel(flow.precheck?.lighting, (value) => value === 'ok')}</p><div><button onClick={openStopConfirm}>취소</button><button onClick={nextGuide} disabled={!ready || !validPosition}>다음</button></div></div>{flow.delayed && <p className={styles.inlineError}>위치 확인 응답이 지연되고 있습니다. AI 연결 상태를 확인해주세요.</p>}</CalibrationShell>;
   } else if (flow.step === 'guide') {
     content = <CalibrationShell title="시선 보정"><section className={styles.guideFrame}><EyeIcon /><h2>시선 측정을 다시 할게요</h2><p>화면이 밝아 보이도록 디스플레이를 조정하면 됩니다.<br />약 1분 정도 걸립니다.</p><div className={styles.tipBox}><strong>• 화면 중앙에 바른 자세로 앉아주세요.</strong><strong>• 너무 멀거나 가깝지 않게, 얼굴이 선명히 보이도록 앉아주세요.</strong><strong>• 조명이 너무 어둡거나 밝지 않은 곳에서 진행해주세요.</strong><strong>• 안경을 벗으면 평소 사용하는 상태로 진행해주세요.</strong></div><div className={styles.guideActions}><button onClick={openStopConfirm}>취소</button><button className={styles.primary} onClick={beginMeasurement} disabled={!ready}>시작하기</button></div></section></CalibrationShell>;
   } else if (flow.step === 'measuring') {
-    content = <DashboardGazeMeasurement point={flow.point} ready={ready} connected={connected} onFailure={failMeasurement} onCancel={openStopConfirm} />;
+    content = <DashboardGazeMeasurement point={flow.point} ready={ready} connected={connected} finishing={finishingMeasurement} onFailure={failMeasurement} onCancel={openStopConfirm} onVisualComplete={finishMeasurementVisual} />;
   } else if (flow.step === 'result') {
     const result = flow.result;
     const errors = (result.points ?? []).map((point) => Math.hypot(Number(point.dx), Number(point.dy))).filter(Number.isFinite);

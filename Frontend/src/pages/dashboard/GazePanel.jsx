@@ -142,7 +142,7 @@ export default function GazePanel({ onBack }) {
 }
 
 function GazeHero({ onBack }) {
-  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="이전 화면으로 돌아가기">‹</button><h1>시선</h1></div><Circuit /><GazeRadar hero /></header>;
+  return <header className={styles.gazeHero}><div className={styles.heroTitle}><button onClick={onBack} aria-label="이전 화면으로 돌아가기">‹</button><h1>시선</h1></div><Circuit /></header>;
 }
 
 function Circuit() {
@@ -151,8 +151,8 @@ function Circuit() {
 
 function FrameMarks() { return <i className={styles.frameLine} />; }
 
-function GazeRadar({ compact = false, hero = false }) {
-  const className = hero ? styles.heroRadar : compact ? styles.compactRadar : styles.radar;
+function GazeRadar({ compact = false }) {
+  const className = compact ? styles.compactRadar : styles.radar;
   return <svg className={className} viewBox="0 0 280 280" aria-hidden="true"><circle cx="140" cy="140" r="111" className={styles.radarOuter} /><circle cx="140" cy="140" r="84" /><circle cx="140" cy="140" r="54" /><path d="M140 15v250M15 140h250" /><path d="M140 33v24M140 223v24M33 140h24M223 140h24" /><circle cx="170" cy="111" r="12" className={styles.radarTarget} /><circle cx="140" cy="140" r="4" className={styles.radarCenter} /></svg>;
 }
 

@@ -20,7 +20,7 @@
 .view_usage .intro h1, .view_accuracy .intro h1, .view_latency .intro h1, .view_apps .intro h1 { font-size: clamp(24px, 2.2vw, 36px); }
 .view_usage .intro p, .view_accuracy .intro p, .view_latency .intro p, .view_apps .intro p { margin-top: 4px; font-size: clamp(12px, 1vw, 15px); }
 .view_usage .intro > i, .view_accuracy .intro > i, .view_latency .intro > i, .view_apps .intro > i { margin-top: 8px; }
-.view_usage .detailBack, .view_accuracy .detailBack, .view_latency .detailBack, .view_apps .detailBack { margin-top: 8px; }
+.view_usage .detailBack, .view_accuracy .detailBack, .view_latency .detailBack, .view_apps .detailBack { margin-top: 17px; }
 .view_usage .largeCard, .view_accuracy .largeCard, .view_latency .largeCard, .view_apps .largeCard { flex: 1 1 0; min-height: 0; }
 .view_usage .summaryCards, .view_accuracy .summaryCards, .view_latency .summaryCards, .view_apps .summaryCards { flex: 0 0 auto; margin-top: 10px; gap: 10px; }
 .view_usage .summaryCards > span, .view_accuracy .summaryCards > span, .view_latency .summaryCards > span, .view_apps .summaryCards > span { min-height: 72px; padding: 12px 64px 12px 20px; }
@@ -90,8 +90,8 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .drawer button span { display: grid; width: 20px; height: 20px; place-items: center; font-size: 0; }
 .drawer button span::before { width: 8px; height: 8px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; transform: rotate(45deg); content: ""; }
 .detailHead { position: relative; display: grid; flex: 0 0 auto; grid-template-columns: 38px minmax(0, 1fr) minmax(0, auto); align-items: start; column-gap: 8px; margin-bottom: 8px; }
-.detailBack { display: grid; width: 38px; height: 38px; place-items: center; align-self: start; margin-top: 17px; padding: 0; border: 0; background: transparent; color: var(--sia-navy); font-size: 0; cursor: pointer; }
-.detailBack::before { width: 12px; height: 12px; margin-top: 3px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: rotate(45deg); content: ""; }
+.detailBack { position: relative; display: grid; width: 38px; height: 38px; place-items: center; align-self: start; margin-top: 17px; padding: 0; border: 0; background: transparent; color: var(--sia-navy); font-size: 0; cursor: pointer; }
+.detailBack::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
 .periods { display: grid; width: min(420px, 100%); max-width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid var(--sia-line); border-radius: 8px; background: white; }
 .periods button { min-height: 40px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--sia-navy); font-size: clamp(13px, 1.2vw, 16px); font-weight: 800; cursor: pointer; }
 .periods .activePeriod { background: var(--sia-navy); color: white; }
@@ -148,8 +148,8 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .summaryCards .summaryAccent .summaryBars .barMid { fill: #c5d8ee; }
 .empty { width: 100%; margin: auto; padding: 42px; color: var(--sia-muted); text-align: center; }
 .panelHeading { display: flex; align-items: center; gap: 8px; min-height: 38px; margin-bottom: 20px; }
-.panelHeading button { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--sia-navy); font-size: 0; cursor: pointer; }
-.panelHeading button::before { width: 12px; height: 12px; margin-top: 3px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: rotate(45deg); content: ""; }
+.panelHeading button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--sia-navy); font-size: 0; cursor: pointer; }
+.panelHeading button::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
 .panelHeading h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
 .view_gestures .panelHeading { flex: 0 0 auto; min-height: 52px; margin-bottom: 28px; padding-right: min(560px, 52%); }
 
@@ -157,21 +157,8 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .view_settings .content { position: relative; display: flex; box-sizing: border-box; width: min(1680px, calc(100% - 64px)); height: calc(100vh - 54px); min-height: calc(100vh - 54px); flex-direction: column; padding: 34px 0 24px; }
 .view_settings .panelHeading { flex: 0 0 auto; }
 .settings { position: relative; display: grid; flex: 1 1 auto; height: auto; min-height: 0; box-sizing: border-box; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "wake wake" "mic camera" "start start"; align-content: start; column-gap: 28px; row-gap: 18px; padding: 36px 42px 30px 29%; border: 1px solid var(--sia-soft-line); border-radius: 8px; background: rgb(255 255 255 / 88%); }
-.settingsVisual { position: absolute; inset: 0 auto 0 0; width: 25.5%; box-sizing: border-box; overflow: hidden; border-right: 1px solid #a9bdd8; background: linear-gradient(155deg, #101936, #172b51); }
-.visualScanner { position: absolute; top: 24%; left: 50%; width: min(90%, 320px); overflow: visible; transform: translateX(-50%); }
-.scannerRings circle, .scannerRings path, .scannerSphereEdge { fill: none; stroke: #a8d8ff; vector-effect: non-scaling-stroke; }
-.scannerOuter { opacity: .28; stroke-width: 1; }
-.scannerMiddle, .scannerInner { transform-origin: 160px 150px; }
-.scannerMiddle { animation: scannerSpin 12s linear infinite; }
-.scannerMiddle circle { opacity: .88; stroke-dasharray: 68 16 31 39 53 21 77 19 42 28; stroke-linecap: round; stroke-width: 3.2; filter: drop-shadow(0 0 4px rgb(168 216 255 / 54%)); }
-.scannerInner { animation: scannerSpinReverse 8.5s linear infinite; }
-.scannerInner circle { opacity: .58; stroke-dasharray: 49 12 21 34 61 17 28 41; stroke-linecap: round; stroke-width: 1.8; }
-.scannerTicks path { opacity: .4; stroke-width: 1; }
-.scannerMarker { fill: white !important; stroke: white !important; stroke-width: 1; filter: drop-shadow(0 0 5px #a8d8ff); }
-.scannerSphere { fill: #f5fbff; animation: scannerSpherePulse 3.2s ease-in-out infinite; transform-origin: 160px 150px; }
-.scannerSphereEdge { opacity: .3; stroke-width: 1; }
-.scannerWave { fill: none; stroke: #dff2ff; stroke-linecap: round; stroke-width: 1.8; }
-.scannerWave line { animation: scannerWavePulse 1.2s ease-in-out var(--delay) infinite alternate; transform-box: fill-box; transform-origin: center; }
+.settingsVisual { position: absolute; inset: 0 auto 0 0; display: grid; width: 25.5%; box-sizing: border-box; overflow: hidden; place-items: center; border-right: 1px solid #a9bdd8; background: linear-gradient(155deg, #101936, #172b51); }
+.settingsOrb { width: min(90%, 380px); aspect-ratio: 1; filter: drop-shadow(0 0 24px color-mix(in srgb, var(--onboarding-cyan) 28%, transparent)); }
 .settingLabel, .settingKicker { position: relative; padding-left: 14px; font-style: normal; }
 .settingLabel::before, .settingKicker::before { position: absolute; top: .18em; left: 0; width: 4px; height: .9em; background: var(--sia-navy); content: ""; }
 .settingKicker { display: block; margin-bottom: 4px; color: var(--sia-navy); font-size: 15px; font-weight: 800; }
@@ -215,11 +202,7 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 @keyframes orbitSpin { to { transform: rotate(360deg); } }
 @keyframes corePulse { 0%, 100% { filter: brightness(.82); transform: scale(.94); } 50% { filter: brightness(1.25); transform: scale(1.05); } }
 @keyframes waveSignal { 0% { filter: brightness(.7); transform: scaleY(.45); } 100% { filter: brightness(1.4); transform: scaleY(1.35); } }
-@keyframes scannerSpin { to { transform: rotate(360deg); } }
-@keyframes scannerSpinReverse { to { transform: rotate(-360deg); } }
-@keyframes scannerSpherePulse { 0%, 100% { filter: brightness(.82); transform: scale(.985); } 50% { filter: brightness(1.12); transform: scale(1.025); } }
-@keyframes scannerWavePulse { 0% { opacity: .58; transform: scaleY(.62); } 100% { opacity: 1; transform: scaleY(1.2); } }
-@media (prefers-reduced-motion: reduce) { .visualOrbit::before, .visualOrbit::after, .visualOrbit i, .visualWave i, .scannerMiddle, .scannerInner, .scannerSphere, .scannerWave line { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .visualOrbit::before, .visualOrbit::after, .visualOrbit i, .visualWave i { animation: none; } }
 
-@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 38px minmax(0, 1fr); } .periods { grid-column: 1 / -1; width: 100%; margin-top: 12px; } .chartToolbar { grid-template-columns: 1fr; row-gap: 8px; } .legend { justify-items: start; min-width: 0; } .legendItems { justify-content: flex-start; flex-wrap: wrap; } .summaryCards { grid-template-columns: 1fr; } .view_usage .summaryCards, .view_latency .summaryCards, .view_apps .summaryCards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .view_accuracy .summaryCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .view_usage .summaryCards > span, .view_accuracy .summaryCards > span, .view_latency .summaryCards > span, .view_apps .summaryCards > span { min-height: 64px; padding: 10px 12px 10px 14px; } .view_usage .summaryCards svg, .view_accuracy .summaryCards svg, .view_latency .summaryCards svg, .view_apps .summaryCards svg { display: none; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
+@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 38px minmax(0, 1fr); } .periods { grid-column: 1 / -1; width: 100%; margin-top: 12px; } .chartToolbar { grid-template-columns: 1fr; row-gap: 8px; } .legend { justify-items: start; min-width: 0; } .legendItems { justify-content: flex-start; flex-wrap: wrap; } .summaryCards { grid-template-columns: 1fr; } .view_usage .summaryCards, .view_latency .summaryCards, .view_apps .summaryCards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .view_accuracy .summaryCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .view_usage .summaryCards > span, .view_accuracy .summaryCards > span, .view_latency .summaryCards > span, .view_apps .summaryCards > span { min-height: 64px; padding: 10px 12px 10px 14px; } .view_usage .summaryCards svg, .view_accuracy .summaryCards svg, .view_latency .summaryCards svg, .view_apps .summaryCards svg { display: none; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .settingsOrb { width: min(82%, 240px); } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
 @media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { height: calc(100vh - 54px); max-height: calc(100vh - 54px); min-height: 0; padding-top: 10px; padding-bottom: 10px; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings { grid-template-columns: repeat(2, 1fr); } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview span { grid-template-columns: 24px 90px 1fr; } .appsOverview span > strong { display: none; } .largeCard { min-height: 0; padding: 12px 14px 8px; } .view_usage .largeCard, .view_accuracy .largeCard, .view_latency .largeCard, .view_apps .largeCard { min-height: 0; } .chartStage { min-height: 0; grid-template-columns: 1fr; } .siaInsight { display: none; } .legendContext { white-space: normal; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 28px 18px 24px; } .dialogActions { flex-direction: column; } .dialogActions button { width: 100%; } }

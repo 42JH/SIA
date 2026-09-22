@@ -12,7 +12,7 @@ export const useOnboardingStore = create((set) => ({
   wake: { n: 0, total: 5 }, wakeDone: false, wakeRejection: null,
   voiceTempId: null, voiceSentence: null, voiceCompleted: 0,
   voiceResult: null, finalVoiceReview: null, voiceWaveform: [],
-  precheck: null, point: null, result: null, poorCount: 0,
+  precheck: null, point: null, result: null, completionResult: null, poorCount: 0,
   gazeWaitingSince: null, gazeDelayed: false,
   interrupted: false,
   change: (patch) => set(patch),
@@ -27,7 +27,7 @@ export const useOnboardingStore = create((set) => ({
   })),
   interrupt: (message) => set({ interrupted: true, pending: false, request: null, error: message }),
   receiveResult: (result) => set((state) => ({
-    result, step: 'result', pending: false,
+    result, completionResult: null, step: 'result', pending: false,
     poorCount: result.grade === 'poor' ? state.poorCount + 1 : 0,
   })),
 }));

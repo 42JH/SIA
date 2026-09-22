@@ -6,15 +6,19 @@ import moleImage from '../../assets/gaze-mole.png';
 import moleHitImage from '../../assets/gaze-mole-hit.png';
 import styles from './GazeMeasurement.module.css';
 
-export default function GazeMeasurement({ point, ready }) {
+export default function GazeMeasurement({ point, ready, finishing = false, onVisualComplete }) {
   const target = useRef(null);
   const sentPoints = useRef(new Set());
   const displayedPoint = useRef(null);
+  const finishHandled = useRef(false);
+  const onVisualCompleteRef = useRef(onVisualComplete);
   const [introDone, setIntroDone] = useState(false);
   const [activePoint, setActivePoint] = useState(null);
   const [caught, setCaught] = useState(() => new Set());
   const [recentlyHit, setRecentlyHit] = useState(null);
   const fail = (error) => useOnboardingStore.getState().interrupt(error);
+
+  useEffect(() => { onVisualCompleteRef.current = onVisualComplete; }, [onVisualComplete]);
 
   useEffect(() => {
     if (!introDone || !point?.n) return undefined;
@@ -39,6 +43,24 @@ export default function GazeMeasurement({ point, ready }) {
     }, 420);
     return () => clearTimeout(timer);
   }, [introDone, point]);
+
+  useEffect(() => {
+    if (!finishing || !introDone || finishHandled.current) return undefined;
+    const finalPoint = displayedPoint.current;
+    if (!finalPoint) return undefined;
+    finishHandled.current = true;
+    setActivePoint(null);
+    setRecentlyHit(finalPoint);
+    const caughtTimer = setTimeout(() => {
+      setCaught((items) => new Set(items).add(finalPoint));
+      setRecentlyHit(null);
+    }, 420);
+    const completeTimer = setTimeout(() => onVisualCompleteRef.current?.(), 1120);
+    return () => {
+      clearTimeout(caughtTimer);
+      clearTimeout(completeTimer);
+    };
+  }, [finishing, introDone]);
 
   useEffect(() => {
     if (!introDone) return undefined;

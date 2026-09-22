@@ -56,8 +56,14 @@ export function useOnboarding() {
       settings_sync: (data) => change({ status: { ...state().status, ...data, settingsPending: data.agentSyncedVersion == null || data.agentSyncedVersion < data.settingsVersion } }),
       wakeword_progress: (wake) => {
         if (state().step !== 'wake') return;
-        const n = Math.min(Math.max(Number(wake.n) || 0, 0), 5);
-        change({ wake: { n, total: 5 }, wakeRejection: null, pending: false });
+        const total = 5;
+        const received = Math.min(Math.max(Number(wake.n) || 0, 0), total);
+        const n = Math.max(state().wake.n, received);
+        change({
+          wake: { n, total },
+          wakeRejection: null,
+          pending: false,
+        });
       },
       wakeword_rejected: (rejection) => {
         if (state().step !== 'wake') return;
@@ -140,7 +146,11 @@ export function useOnboarding() {
       // TODO(BE): AI가 새 보정마다 precheck를 재전송해야 함. 거리·조명의 실측 여부도 서버에서 제공 필요
       calib_precheck: (precheck) => { if (gazeSteps.includes(state().step)) change({ precheck, gazeWaitingSince: null, gazeDelayed: false }); },
       calib_point: (point) => { if (gazeSteps.includes(state().step)) change({ point, pending: false }); },
-      calib_result: (result) => { if (gazeSteps.includes(state().step)) state().receiveResult(result); },
+      calib_result: (result) => {
+        if (!gazeSteps.includes(state().step)) return;
+        if (state().step === 'measuring') change({ completionResult: result, pending: false });
+        else state().receiveResult(result);
+      },
       calib_saved: () => { if (state().step === 'result') change({ step: 'gazeDone', pending: false }); },
       calib_denied: ({ message }) => { if (gazeSteps.includes(state().step)) change({ step: 'gazeStart', error: message, pending: false }); },
       calib_limit: ({ message }) => change({ error: message, pending: false, result: state().result ? { ...state().result, remeasuresLeft: 0 } : null }),
