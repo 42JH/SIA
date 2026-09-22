@@ -27,7 +27,7 @@
 
 - **작업 디렉터리는 반드시 `Backend/`** — DB URL 이 상대 경로(`jdbc:sqlite:sia.db`)라 실행 위치에 DB 가 생긴다.
   `bootRun` 은 자동으로 맞고, IDE 는 커밋된 공유 실행 설정(`.run/Backend bootRun.run.xml`, `.run/Backend.run.xml`)을 쓴다.
-- `127.0.0.1:8080` 에만 바인딩된다 — 이 프로세스는 창을 닫고 파일을 지운다. LAN 에 열면 그 권한이 네트워크로 나간다.
+- `127.0.0.1:61015` 에만 바인딩된다 — 이 프로세스는 창을 닫고 파일을 지운다. LAN 에 열면 그 권한이 네트워크로 나간다.
 - 첫 기동에 Flyway 가 스키마와 설정 싱글턴 시드를 만들고, `ToolCatalogSync` 가 코드의 도구 목록
   (`ToolCatalog` 31개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
   `DefaultGestureBootstrap` 이 기본 제공 제스처 9종 중 없는 이름을 gesture 테이블에 넣는다 (기능은 빈칸).
@@ -47,12 +47,12 @@
 
 | 표면 | 주소 | 인증 |
 |---|---|---|
-| WS (AI) | `ws://127.0.0.1:8080/ws/agent` | 없음 — hello·세션·등록·캘리브레이션·모델·제스처 실행 |
-| WS (FE) | `ws://127.0.0.1:8080/ws/fe` | 없음 — 미리보기 프레임·세션 상태·진행률·알림 |
-| WS (확장) | `ws://127.0.0.1:8080/ws/ext` | 없음 — 브라우저 본문 텍스트 공급 (저장소 루트 `Extension/`) |
-| MCP | `http://127.0.0.1:8080/mcp` | `Authorization: Bearer` + `X-Caller: LLM\|GESTURE` (Streamable HTTP) |
-| REST (AI) | `http://127.0.0.1:8080/api/agent/**` | 없음 — npz·샘플 오디오 업/다운로드(ETag=sha256), 프로필 임시본, 통계 배치 |
-| REST (FE) | `http://127.0.0.1:8080/api/**` | 없음 — 상태·설정·앱·제스처(페이지네이션·영상)·보이스/시선 프로필·장비 맵핑·기록·대시보드·백업·삭제 |
+| WS (AI) | `ws://127.0.0.1:61015/ws/agent` | 없음 — hello·세션·등록·캘리브레이션·모델·제스처 실행 |
+| WS (FE) | `ws://127.0.0.1:61015/ws/fe` | 없음 — 미리보기 프레임·세션 상태·진행률·알림 |
+| WS (확장) | `ws://127.0.0.1:61015/ws/ext` | 없음 — 브라우저 본문 텍스트 공급 (저장소 루트 `Extension/`) |
+| MCP | `http://127.0.0.1:61015/mcp` | `Authorization: Bearer` + `X-Caller: LLM\|GESTURE` (Streamable HTTP) |
+| REST (AI) | `http://127.0.0.1:61015/api/agent/**` | 없음 — npz·샘플 오디오 업/다운로드(ETag=sha256), 프로필 임시본, 통계 배치 |
+| REST (FE) | `http://127.0.0.1:61015/api/**` | 없음 — 상태·설정·앱·제스처(페이지네이션·영상)·보이스/시선 프로필·장비 맵핑·기록·대시보드·백업·삭제 |
 
 - WS 메시지는 전부 `{"type","data"}` 봉투다. 모르는 type 은 로그만 남기고 무시한다.
 - CORS 는 `/api/**` 에만, 오리진은 `http://localhost:*`·`http://127.0.0.1:*` 뿐이다.
