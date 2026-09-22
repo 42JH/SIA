@@ -16,8 +16,7 @@ Frontend/
 │  │  ├─ dashboard/        대시보드, 그래프 상세, 설정
 │  │  └─ connection-check/ 통신 확인 화면
 │  ├─ components/          여러 화면에서 사용하는 공통 UI
-│  │  ├─ onboarding/       시선 측정과 통신 기록
-│  │  └─ popup/            상단 팝업과 우측 하단 실행 알림
+│  │  └─ onboarding/       시선 측정과 통신 기록
 │  ├─ styles/              전역 디자인 기준
 │  ├─ main.jsx             React 실행 진입점
 │  └─ App.jsx              앱 전체 구성
@@ -36,7 +35,6 @@ index.html
   → main.jsx
     → App.jsx
       ├─ WebSocket 연결 시작
-      ├─ 전역 팝업 표시
       └─ router.jsx
           ├─ 온보딩
           ├─ 통신 확인
@@ -49,7 +47,7 @@ index.html
 | --- | --- |
 | `index.html` | React가 들어갈 `root` 요소와 최초 스크립트를 선언한다. |
 | `src/main.jsx` | React 앱을 브라우저에 렌더링하고 전역 CSS를 불러온다. |
-| `src/App.jsx` | 프런트 전체를 총괄한다. WebSocket을 한 번만 연결하고 전역 팝업과 라우터를 배치한다. |
+| `src/App.jsx` | WebSocket을 한 번만 연결하고 라우터를 배치한다. |
 | `src/routes/router.jsx` | URL별로 어떤 페이지를 보여줄지 결정한다. |
 
 현재 URL 연결은 다음과 같다.
@@ -137,7 +135,6 @@ REST 흐름은 다음과 같다.
 | `feSocket.js` | WebSocket 연결, 재연결, 송신, 수신 JSON 검사와 통신 기록을 총괄한다. |
 | `eventBus.js` | 수신한 이벤트를 `type`별 구독자에게 전달한다. |
 | `onboarding.js` | 온보딩 이벤트 발신, 예상 응답 관리와 보이스 `tempId` 검사를 담당한다. |
-| `notifications.js` | 선택 팝업에서 사용자의 선택을 `user_choice` 이벤트로 보낸다. |
 
 수신 흐름은 다음과 같다.
 
@@ -146,7 +143,6 @@ Backend WebSocket 메시지
   → feSocket.js
     → eventBus.js
       ├─ sessionStore.js
-      ├─ notificationStore.js
       └─ useOnboarding.js
 ```
 
@@ -154,7 +150,7 @@ Backend WebSocket 메시지
 
 ```text
 페이지 또는 컴포넌트
-  → ws/onboarding.js 또는 ws/notifications.js
+  → ws/onboarding.js
     → feSocket.js
       → Backend
         → AI
@@ -170,7 +166,6 @@ Zustand를 사용해 여러 화면에서 공유해야 하는 상태를 보관한
 | --- | --- |
 | `sessionStore.js` | WebSocket 연결 여부와 현재 음성 명령 세션 상태를 보관한다. |
 | `onboardingStore.js` | 온보딩 단계, 호출어 진행률, 문장 진행률, `tempId`, 시선 결과와 오류를 보관한다. |
-| `notificationStore.js` | 상단 팝업 종류와 노출 시간을 관리한다. 삭제 확인은 10초, 요약은 10초다. |
 | `communicationStore.js` | 최근 REST·WebSocket 통신 기록 150개를 메모리에 보관한다. |
 
 스토어에는 서버가 보낸 상태를 저장하며 등록 성공이나 진행률을 프런트에서 임의로 만들지 않는다. 호출어 화면은 사용자 확정 기준에 따라 5회까지만 표시하고 진행한다.
@@ -185,22 +180,11 @@ Zustand를 사용해 여러 화면에서 공유해야 하는 상태를 보관한
 | `CommunicationLog.jsx` | REST·WebSocket 발신·수신·실패 기록을 펼쳐서 확인하는 공통 진단 UI다. |
 | 각 `.module.css` | 해당 컴포넌트 전용 스타일이다. |
 
-### 7.2 `components/popup`
-
-| 파일 | 역할 |
-| --- | --- |
-| `TopNotification.jsx` | 듣는 중, 실행 중, 성공, 오류, 삭제 확인, 요약, 선택지, 캡처 결과와 세션 카운트다운 팝업을 렌더링한다. |
-| `BootToast.jsx` | 앱이 백그라운드에서 정상 실행됐을 때 우측 하단에 3초간 표시한다. |
-| `hooks.js` | 삭제 확인과 세션 남은 시간을 초 단위로 계산한다. |
-| 각 `.module.css` | 상단 팝업과 우측 하단 팝업 스타일이다. |
-
-`App.jsx`가 전역 팝업을 라우터 바깥에 배치하기 때문에 대시보드 내부 화면이 바뀌어도 팝업이 유지된다. 첫 설정 중에는 팝업을 숨긴다.
-
 ## 8. `src/styles`: 디자인 공통 기준
 
 | 파일 | 역할 |
 | --- | --- |
-| `tokens.css` | 색상, 크기, 간격, 팝업·온보딩·대시보드 치수를 CSS 변수로 관리한다. 후일 디자인 변경 시 중심이 되는 파일이다. |
+| `tokens.css` | 색상, 크기, 간격, 온보딩·대시보드 치수를 CSS 변수로 관리한다. 후일 디자인 변경 시 중심이 되는 파일이다. |
 | `global.css` | 기본 글꼴과 박스 크기 계산 등 앱 전체 공통 스타일을 담당한다. |
 
 화면별 상세 스타일은 해당 JSX 파일 옆의 `.module.css`에 두고, 여러 화면에서 공유하는 디자인 수치는 `tokens.css`에 둔다.
@@ -222,7 +206,7 @@ Zustand를 사용해 여러 화면에서 공유해야 하는 상태를 보관한
 
 유지보수 시 우선 확인할 중심 파일은 다음과 같다.
 
-1. `src/App.jsx`: 앱 전체 WebSocket과 전역 팝업
+1. `src/App.jsx`: 앱 전체 WebSocket과 라우터
 2. `src/pages/onboarding/OnboardingFlow.jsx`: 온보딩 전체 단계와 화면 분기
 3. `src/pages/onboarding/useOnboarding.js`: 온보딩 실시간 수신 처리
 4. `src/pages/dashboard/DashboardHome.jsx`: 대시보드 화면 전환과 데이터 조회
