@@ -12,7 +12,9 @@
 - 확인 대기: 파괴적 동작(창 닫기)은 즉시 실행하지 않고 되물은 뒤,
   다음 발화의 승인(confirm_yes)/거부(confirm_no)로 처리
 
-키: 환경변수 GEMINI_API_KEY 또는 프로젝트 루트의 gemini_api_key.txt (gitignore됨)
+키: 환경변수 GEMINI_API_KEY 또는 프로젝트 루트의 gemini_api_key.txt (gitignore됨).
+    SSAFY GMS 키('S15P21D106-<uuid>' 꼴)를 넣으면 자동으로 GMS 프록시로 나간다 —
+    구글 직결 키(AIza…)와 한 파일에 섞어 둬도 되고, 쿼터가 마르면 다음 키로 넘어간다.
 모델: 환경변수 GEMINI_MODEL (기본 gemini-3.5-flash)
 """
 import collections
@@ -20,6 +22,7 @@ import ctypes
 import io
 import json
 import os
+import re
 
 import numpy as np
 import threading
@@ -674,9 +677,19 @@ def wake_only(audio, i_max, lead=0, sr=16000):
     return wake_clip_is_clean(audio, clip, end, certain, sr, min_s=0.0, skip_noise=True)[0]
 
 
+# 이 키로는 더 못 쓴다는 신호들 — 전부 "다음 키로 넘어가라"로 취급한다.
+# 쿼터 소진뿐 아니라 키 만료·크레딧 소진도 같은 처방이다. GMS 는 크레딧이 마르거나 키가
+# 만료되면 429 가 아니라 401 에 자체 메시지를 실어 보낸다({"message":"[GMS 에러] Invalid or
+# expired GMS key","statusCode":401}) — 이걸 못 잡으면 시연 도중 무료 키 폴백이 통째로 불발된다.
+# NOTE(튜닝): 오탐이면 멀쩡한 키를 한 번 건너뛸 뿐이지만(키가 23개라 무해), 놓치면 시연이
+# 거기서 끊긴다. 그래서 넓게 잡는다.
+KEY_DEAD_MARKS = ("429", "resource_exhausted", "quota", "unauthenticated", "permission_denied",
+                  "invalid or expired", "gms 에러", "credit")
+
+
 def is_quota_error(e):
-    s = str(e)
-    return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
+    low = str(e).lower()
+    return any(m in low for m in KEY_DEAD_MARKS)
 
 
 def is_transient_error(e):
@@ -706,14 +719,35 @@ TRANSIENT_BUDGET_S = float(os.environ.get("LLM_TRANSIENT_BUDGET_S") or 20)
 LLM_TIMEOUT_MS = int(os.environ.get("LLM_TIMEOUT_MS") or 15000)
 
 
+# SSAFY GMS 프록시. 공식 엔드포인트 앞에 경로만 덧붙인 투명 프록시라 인증 헤더
+# (x-goog-api-key)도 요청·응답 형식도 구글 직결과 같다 — base_url 만 갈면 SDK 가 그대로 돈다.
+GMS_BASE_URL = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com"
+# GMS 키는 'S15P21D106-<uuid>' 꼴, 구글 직결 키는 'AIza…' 로 시작한다.
+# NOTE(튜닝): 경로를 환경변수가 아니라 키 모양에서 읽는 이유 — 시연 중에 환경변수를 빠뜨리면
+# 조용히 무료 키로 되돌아가 쿼터가 먼저 마른다. 키를 바꾸면 경로도 따라오게 한다.
+GMS_KEY_RE = re.compile(r"^S\d+P\d+D\d+-[0-9a-f-]{32,}$", re.I)
+# 프록시 주소가 바뀌거나 직결로 강제 테스트할 때만 쓰는 탈출구 — 있으면 키 판정을 이긴다.
+LLM_BASE_URL = os.environ.get("GEMINI_BASE_URL", "").strip()
+
+
+def llm_base_url(api_key):
+    """이 키를 어디로 보낼지. 빈 문자열이면 구글 직결(SDK 기본 주소)."""
+    if LLM_BASE_URL:
+        return LLM_BASE_URL
+    return GMS_BASE_URL if GMS_KEY_RE.match((api_key or "").strip()) else ""
+
+
 def llm_client(api_key):
     """LLM 클라이언트 한 개. 타임아웃을 반드시 건다 — SDK 기본은 무한 대기라
     응답 없는 요청 하나가 단일 Brain 워커를 영구 정지시킨다."""
     from google import genai
     from google.genai import types
 
-    return genai.Client(api_key=api_key,
-                        http_options=types.HttpOptions(timeout=LLM_TIMEOUT_MS))
+    opts = dict(timeout=LLM_TIMEOUT_MS)
+    base = llm_base_url(api_key)
+    if base:
+        opts["base_url"] = base
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(**opts))
 
 
 def llm_config():
@@ -728,6 +762,45 @@ def llm_config():
         # 생성용이 아니라 튜닝 설정(ReinforcementTuning)에 붙은 것이라 바꿀 이유가 없다.
         cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
     return cfg
+
+
+# GMS 대시보드를 못 보는 동안의 유일한 잔량 근거 — GMS 키로 나간 호출만 누적한다.
+# 무료 키 호출(리허설·회귀 측정)은 예산과 무관하므로 세지 않는다. 재시작해도 이어져야
+# 의미가 있어서 파일에 남긴다.
+TOKEN_LOG = data_path("gms_tokens.json")
+GMS_TOKEN_BUDGET = int(os.environ.get("GMS_TOKEN_BUDGET") or 0)  # 0이면 남은 양 표시 생략
+_token_lock = threading.Lock()
+
+
+def record_gms_usage(resp, api_key):
+    """GMS 키로 나간 호출의 토큰을 누적한다. 계측이 본 흐름을 막으면 안 되므로 전부 삼킨다."""
+    if llm_base_url(api_key) != GMS_BASE_URL:
+        return
+    u = getattr(resp, "usage_metadata", None)
+    if u is None:
+        return
+    tin = getattr(u, "prompt_token_count", 0) or 0
+    tout = getattr(u, "candidates_token_count", 0) or 0
+    with _token_lock:
+        try:
+            cur = json.loads(TOKEN_LOG.read_text(encoding="utf-8")) if TOKEN_LOG.exists() else {}
+        except Exception:
+            cur = {}
+        cur["calls"] = cur.get("calls", 0) + 1
+        cur["input"] = cur.get("input", 0) + tin
+        cur["output"] = cur.get("output", 0) + tout
+        total = cur["input"] + cur["output"]
+        calls = cur["calls"]
+        try:
+            TOKEN_LOG.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            print(f"[GMS 토큰] 기록 실패(무시): {e}")
+    left = ""
+    if GMS_TOKEN_BUDGET:
+        rest = GMS_TOKEN_BUDGET - total
+        per = total / max(1, calls)
+        left = f" | 남은 {rest:,} (약 {int(rest / per) if per else 0}회분)"
+    print(f"[GMS 토큰] 이번 {tin + tout:,} | 누적 {total:,} ({calls}회){left}")
 
 
 def llm_generate(client, parts, keys, key_i):
@@ -745,9 +818,11 @@ def llm_generate(client, parts, keys, key_i):
     for _ in range(max(1, len(keys)) + len(TRANSIENT_BACKOFF_S) + 1):
         tries += 1
         try:
-            return client.models.generate_content(
+            resp = client.models.generate_content(
                 model=MODEL, contents=parts, config=types.GenerateContentConfig(**cfg),
-            ), client, key_i, tries
+            )
+            record_gms_usage(resp, keys[key_i] if keys else "")
+            return resp, client, key_i, tries
         except Exception as e:
             if is_quota_error(e) and len(keys) > 1:
                 key_i = (key_i + 1) % len(keys)
