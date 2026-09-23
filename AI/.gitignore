@@ -11,4 +11,5 @@ dombridge_token.txt
 models/speaker.npz
 logs/
 eval/
-gemini_api_key.txt
+gemini_api_key.txt*
+gms_tokens.json

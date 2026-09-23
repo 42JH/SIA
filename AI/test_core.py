@@ -2298,6 +2298,96 @@ def test_mic_preview():
     assert ln.take_events() == [("mic_preview_start", {}), ("mic_preview_stop", {})]
 
 
+def test_gms_key_dies_midway():
+    """GMS 키가 죽으면 무료 키로 넘어가야 한다 — 시연이 끊기느냐 마느냐가 여기 달렸다.
+
+    GMS 는 크레딧 소진·키 만료를 429 가 아니라 401 + 자체 메시지로 알린다
+    ("[GMS 에러] Invalid or expired GMS key"). 예전 판정은 429/quota 문자열만 봐서
+    이 401 을 그냥 올렸고, 무료 키 22개를 놔둔 채 시연이 거기서 멈췄다.
+    """
+    from unittest.mock import patch
+
+    import brain
+
+    # 키 만료·크레딧 소진·권한 거부는 전부 "다음 키로" — 놓치면 시연이 끊긴다.
+    for msg in ('401 {"message":"[GMS 에러] Invalid or expired GMS key","statusCode":401}',
+                "403 PERMISSION_DENIED", "429 RESOURCE_EXHAUSTED", "credit exhausted"):
+        assert brain.is_quota_error(Exception(msg)), msg
+    # 일시 장애·요청 오류는 키를 바꿔봐야 소용없다 — 키만 태운다.
+    for msg in ("503 UNAVAILABLE", "400 INVALID_ARGUMENT"):
+        assert not brain.is_quota_error(Exception(msg)), msg
+
+    class FakeClient:
+        def __init__(self, errors):
+            self.errors, self.calls = list(errors), 0
+            self.models = self
+
+        def generate_content(self, **kw):
+            self.calls += 1
+            if self.errors:
+                raise self.errors.pop(0)
+            return type("R", (), {"usage_metadata": None})()
+
+    plan = [[]]                                    # 두 번째 키(무료)는 성공
+    with patch("brain.llm_client", side_effect=lambda k: FakeClient(plan.pop(0) if plan else [])):
+        gms = "S15P21D106-b4945b6b-e3d9-4dce-bc3e-f28edb4c55ac"
+        keys = [gms, "AIzaSyFreeKey1234567890abcdefghij"]
+        dead = FakeClient([Exception('401 {"message":"[GMS 에러] Invalid or expired GMS key"}')])
+        resp, client, ki, tries = brain.llm_generate(dead, ["p"], keys, 0)
+        assert ki == 1 and tries == 2, (ki, tries)   # 무료 키로 넘어가 성공
+
+    # 계측은 GMS 호출만 센다 — 무료 키 리허설이 예산을 갉아먹는 것으로 보이면 판단이 틀어진다.
+    with patch.object(brain, "TOKEN_LOG", brain.TOKEN_LOG):
+        assert brain.record_gms_usage(type("R", (), {"usage_metadata": None})(), "AIzaFree") is None
+
+
+def test_llm_key_routing():
+    """키 모양으로 GMS 프록시/구글 직결을 고른다 — 시연 중 쿼터 사고의 방지선이다.
+
+    환경변수로 갈랐더니 실행 스크립트마다 빠뜨릴 여지가 생겨서, 경로를 키에서 읽게 했다.
+    회귀 지점은 셋 — GMS 키가 프록시로 가는가, 직결 키가 프록시로 새지 않는가,
+    탈출구(GEMINI_BASE_URL)가 키 판정을 이기는가.
+    """
+    from unittest.mock import patch
+
+    import brain
+
+    gms = "S15P21D106-b4945b6b-e3d9-4dce-bc3e-f28edb4c55ac"
+    assert brain.llm_base_url(gms) == brain.GMS_BASE_URL
+    assert brain.llm_base_url("  " + gms + "  ") == brain.GMS_BASE_URL   # 파일에서 읽으면 공백이 붙는다
+
+    # 구글 직결 키가 프록시로 새면 인증이 통째로 실패한다 — 가장 아픈 오작동이라 먼저 막는다.
+    for direct in ("AIzaSyDummyKeyForTest1234567890abcd", "", None, "S15P21D106", "not-a-key"):
+        assert brain.llm_base_url(direct) == "", direct
+
+    # 프록시 주소가 바뀌거나 직결로 강제 테스트할 때 쓰는 탈출구.
+    with patch.object(brain, "LLM_BASE_URL", "https://example.test/proxy"):
+        assert brain.llm_base_url(gms) == "https://example.test/proxy"
+        assert brain.llm_base_url("AIzaXXXX") == "https://example.test/proxy"
+
+    # 실제 클라이언트에 base_url 이 실려 나가는지 — 판정만 맞고 전달이 빠지면 조용히 직결된다.
+    seen = {}
+
+    class FakeTypes:
+        @staticmethod
+        def HttpOptions(**kw):
+            seen.update(kw)
+            return kw
+
+    def fake_client(**kw):
+        return kw
+
+    import types as _pytypes
+    fake_genai = _pytypes.SimpleNamespace(Client=lambda **kw: fake_client(**kw))
+    with patch.dict("sys.modules", {"google.genai": _pytypes.SimpleNamespace(types=FakeTypes),
+                                    "google": _pytypes.SimpleNamespace(genai=fake_genai)}):
+        brain.llm_client(gms)
+        assert seen.get("base_url") == brain.GMS_BASE_URL, seen
+        seen.clear()
+        brain.llm_client("AIzaSyDummyKeyForTest1234567890abcd")
+        assert "base_url" not in seen, seen
+
+
 def test_llm_retry():
     """LLM 재시도 — 쿼터(429)는 다음 키로, 일시 장애(503·타임아웃)는 같은 키로 백오프 후.
     503 을 그냥 올리면 사용자에겐 '오류' 토스트만 뜨고 명령이 조용히 사라진다.
@@ -2837,6 +2927,8 @@ if __name__ == "__main__":
     test_be_dom_text()
     test_mcp_delegation()
     test_llm_retry()
+    test_llm_key_routing()
+    test_gms_key_dies_midway()
     test_session_is_be_owned()
     test_user_data_survives_a_frozen_restart()
     test_be_results_do_not_leak_between_threads()
@@ -2854,4 +2946,4 @@ if __name__ == "__main__":
     test_save_crop_paths()
     test_app_ref_resolution()
     test_confirm_window_is_not_longer_than_what_the_user_sees()
-    print("OK - 56/56 통과")
+    print("OK - 58/58 통과")
