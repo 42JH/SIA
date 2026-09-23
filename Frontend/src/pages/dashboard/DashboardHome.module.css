@@ -1,4 +1,4 @@
-.page { position: relative; min-height: 100vh; overflow-x: hidden; background: linear-gradient(135deg, #fbfdff, var(--sia-page)); color: var(--sia-ink); font-family: Pretendard, "Noto Sans KR", sans-serif; }
+.page { position: relative; min-height: 100vh; overflow-x: clip; background: linear-gradient(135deg, #fbfdff, var(--sia-page)); color: var(--sia-ink); font-family: Pretendard, "Noto Sans KR", sans-serif; }
 .header { position: sticky; z-index: 20; top: 0; display: grid; height: 54px; grid-template-columns: 190px 1fr 52px; align-items: center; padding: 0 42px; border-bottom: 1px solid var(--sia-line); background: rgb(255 255 255 / 92%); backdrop-filter: blur(8px); }
 .brand { position: relative; z-index: 1; width: 96px; height: 38px; padding: 5px 0; border: 0; background: transparent; cursor: pointer; }
 .brand img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
@@ -6,8 +6,9 @@
 .menuButton { display: grid; width: 40px; height: 40px; place-content: center; justify-items: center; gap: 4px; justify-self: end; border: 0; background: transparent; cursor: pointer; }
 .menuButton i { display: block; width: 25px; height: 3px; border-radius: 1px; background: var(--sia-navy); }
 .content { position: relative; z-index: 1; width: min(1540px, calc(100% - 72px)); margin: 0 auto; padding: 42px 0 54px; }
-.view_home .content { display: flex; flex-direction: column; padding-top: 18px; padding-bottom: 18px; }
-.homeHead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 24px; margin-bottom: 6px; }
+.view_home { height: 100dvh; min-height: 0; overflow: hidden; }
+.view_home .content { display: flex; box-sizing: border-box; height: calc(100dvh - 54px); min-height: 0; flex-direction: column; padding-top: 18px; padding-bottom: 18px; }
+.homeHead { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 24px; margin-bottom: 6px; }
 .homeMark { position: relative; width: min(340px, 32vw); margin: 22px 6px 0 0; padding-bottom: 10px; border-bottom: 1px solid #c8d6e8; color: #8ea3be; font-size: 10px; font-weight: 800; letter-spacing: .32em; text-align: right; }
 .homeMark::after { position: absolute; right: 0; bottom: -5px; width: 0; height: 0; border-top: 6px solid #8ea3be; border-right: 6px solid transparent; content: ""; }
 .view_voice .content { width: min(1680px, calc(100% - 64px)); padding: 34px 0 24px; }
@@ -36,23 +37,25 @@
 .view_home .intro { height: auto; min-height: 96px; padding-left: 10px; }
 .view_home .intro small { display: none; }
 .view_home .intro h1 { font-size: clamp(34px, 3.1vw, 50px); }
-.overviewGrid { display: grid; grid-template-columns: minmax(0, 1.58fr) minmax(360px, 1fr); grid-template-rows: minmax(340px, 48vh) minmax(210px, auto); gap: 15px 17px; }
+.overviewGrid { display: grid; min-height: 0; flex: 1 1 auto; grid-template-columns: minmax(0, 1.58fr) minmax(360px, 1fr); grid-template-rows: minmax(0, 1fr) 190px; gap: 15px 17px; }
 .dashboardCard, .largeCard, .summaryCards > span { position: relative; overflow: hidden; border: 1px solid var(--sia-line); border-radius: 8px; background: rgb(255 255 255 / 88%); color: var(--sia-ink); text-align: left; }
 button.dashboardCard { display: block; width: 100%; font: inherit; cursor: pointer; }
 button.accuracyOverview, button.latencyOverview { display: grid; }
+button.appsOverview { display: grid; }
 .usageOverview, .largeCard { background: radial-gradient(circle at 72% 20%, rgb(45 100 161 / 35%), transparent 34%), linear-gradient(135deg, #071731, #102d57); color: white; box-shadow: inset 0 0 38px rgb(64 121 181 / 9%); }
 .usageOverview { min-height: 0; padding: clamp(20px, 2vw, 34px) clamp(24px, 2.2vw, 38px) 36px; }
 .usageOverview .cardLabel { position: absolute; top: clamp(22px, 2.1vw, 34px); left: clamp(24px, 2.2vw, 38px); }
 .overviewSide { display: grid; min-height: 0; grid-template-rows: 1fr 1fr; gap: 15px; }
 .accuracyOverview, .latencyOverview { position: relative; display: grid; min-height: 0; overflow: hidden; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); padding: clamp(16px, 1.6vw, 24px); }
 .accuracyOverview > .cardMeta, .latencyOverview > .cardMeta { top: 16px; right: 18px; }
-.appsOverview { display: grid; grid-column: 1 / -1; grid-template-rows: auto 1fr; min-height: 210px; padding: 18px 28px 22px; }
+.appsOverview { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr); min-height: 0; column-gap: 24px; padding: 18px 28px 16px; }
+.appsOverview .cardLabel { grid-row: 1; grid-column: 1; padding-right: 0; }
+.appsOverview > .cardMeta { position: absolute; top: 18px; right: 22px; display: flex; width: max-content; line-height: 1; }
 .cardLabel { position: relative; z-index: 1; padding-right: 120px; }
 .cardMeta { position: absolute; z-index: 2; top: 18px; right: 22px; display: flex; align-items: center; gap: 8px; color: var(--sia-steel); font-size: 9px; font-weight: 800; letter-spacing: .28em; }
 .cardMeta::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
 .usageOverview .cardMeta, .appsOverview .cardMeta { color: #9bb4d2; }
 .hudTicks { position: absolute; bottom: 12px; left: 14px; z-index: 2; width: 22px; height: 10px; background: repeating-linear-gradient(90deg, #8eacce 0 4px, transparent 4px 7px); pointer-events: none; }
-.hudTicksEnd { right: 16px; left: auto; bottom: 14px; background: repeating-linear-gradient(90deg, #7f99b8 0 4px, transparent 4px 7px); }
 .cardLabel small { display: flex; align-items: center; gap: 10px; color: var(--sia-steel); font-size: 9px; font-weight: 800; letter-spacing: .3em; }
 .cardLabel strong { display: block; margin-top: 7px; font-size: clamp(17px, 1.45vw, 23px); }
 .cardLabel p { margin: 6px 0 0; color: var(--sia-pale); font-size: 12px; }
@@ -73,14 +76,14 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 .latencyIcon { width: 18px; height: 18px; margin-bottom: 4px; fill: none; stroke: var(--sia-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .latencyOverview .metric small { color: var(--sia-muted); font-size: 11px; }
 .latencyOverview .metric strong { margin-top: 4px; color: var(--sia-navy); font-size: clamp(16px, 1.6vw, 26px); line-height: 1.25; word-break: keep-all; overflow-wrap: break-word; }
-.appsOverview > div:last-child { display: grid; min-height: 148px; grid-template-columns: 1fr; grid-auto-rows: minmax(36px, 1fr); align-content: stretch; row-gap: 8px; margin-top: 12px; }
-.appsOverview span { display: grid; grid-template-columns: 25px minmax(72px, 140px) 1fr minmax(48px, auto); align-items: center; gap: 10px; }
+.appsList { display: grid; min-height: 0; grid-row: 2; grid-column: 1 / -1; grid-template-columns: 1fr; grid-auto-rows: minmax(24px, 1fr); align-content: stretch; row-gap: 4px; margin-top: 8px; }
+.appsList > span { display: grid; grid-template-columns: 25px minmax(72px, 140px) 1fr minmax(48px, auto); align-items: center; gap: 10px; }
 .appsOverview b { display: grid; width: 23px; height: 23px; place-items: center; border: 1px solid var(--sia-line); border-radius: 50%; font-size: 11px; }
 .appIcon { width: 23px; height: 23px; fill: none; stroke: var(--sia-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
 .appsOverview em { overflow: hidden; font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-.appsOverview span > i { height: 14px; overflow: hidden; border-radius: 8px; background: var(--sia-soft); }
+.appsList > span > i { height: 14px; overflow: hidden; border-radius: 8px; background: var(--sia-soft); }
 .appsOverview u { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--sia-navy), var(--sia-blue)); }
-.appsOverview span > strong { color: var(--sia-muted); font-size: 11px; text-align: right; }
+.appsList > span > strong { color: var(--sia-muted); font-size: 11px; text-align: right; }
 .appsOverview .empty { grid-column: 1 / -1; align-self: center; padding: 16px 0; }
 .scrim { position: fixed; z-index: 25; inset: 54px 0 0; border: 0; background: rgb(7 24 49 / 52%); }
 .drawer { position: fixed; z-index: 30; top: 54px; right: 0; width: clamp(280px, 24vw, 330px); height: calc(100vh - 54px); border-left: 1px solid var(--sia-line); background: white; }
@@ -204,5 +207,35 @@ button.accuracyOverview, button.latencyOverview { display: grid; }
 @keyframes waveSignal { 0% { filter: brightness(.7); transform: scaleY(.45); } 100% { filter: brightness(1.4); transform: scaleY(1.35); } }
 @media (prefers-reduced-motion: reduce) { .visualOrbit::before, .visualOrbit::after, .visualOrbit i, .visualWave i { animation: none; } }
 
-@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .detailHead { grid-template-columns: 38px minmax(0, 1fr); } .periods { grid-column: 1 / -1; width: 100%; margin-top: 12px; } .chartToolbar { grid-template-columns: 1fr; row-gap: 8px; } .legend { justify-items: start; min-width: 0; } .legendItems { justify-content: flex-start; flex-wrap: wrap; } .summaryCards { grid-template-columns: 1fr; } .view_usage .summaryCards, .view_latency .summaryCards, .view_apps .summaryCards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .view_accuracy .summaryCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .view_usage .summaryCards > span, .view_accuracy .summaryCards > span, .view_latency .summaryCards > span, .view_apps .summaryCards > span { min-height: 64px; padding: 10px 12px 10px 14px; } .view_usage .summaryCards svg, .view_accuracy .summaryCards svg, .view_latency .summaryCards svg, .view_apps .summaryCards svg { display: none; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .settingsOrb { width: min(82%, 240px); } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
-@media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { height: calc(100vh - 54px); max-height: calc(100vh - 54px); min-height: 0; padding-top: 10px; padding-bottom: 10px; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings { grid-template-columns: repeat(2, 1fr); } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview span { grid-template-columns: 24px 90px 1fr; } .appsOverview span > strong { display: none; } .largeCard { min-height: 0; padding: 12px 14px 8px; } .view_usage .largeCard, .view_accuracy .largeCard, .view_latency .largeCard, .view_apps .largeCard { min-height: 0; } .chartStage { min-height: 0; grid-template-columns: 1fr; } .siaInsight { display: none; } .legendContext { white-space: normal; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 28px 18px 24px; } .dialogActions { flex-direction: column; } .dialogActions button { width: 100%; } }
+@media (max-width: 1000px) { .content { width: min(100% - 32px, 850px); } .homeHead { grid-template-columns: 1fr; } .homeMark { width: min(340px, 100%); text-align: left; } .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; } .overviewGrid { height: auto; grid-template-columns: 1fr; grid-template-rows: 360px auto minmax(210px, auto); } .overviewSide { min-height: 360px; } .appsOverview { grid-column: auto; } .view_home .content { width: calc(100% - 32px); } .view_home .homeHead { grid-template-columns: minmax(0, 1fr) auto; } .view_home .homeMark { width: min(260px, 30vw); text-align: right; } .view_home .homeMark::after { right: 0; left: auto; border-right: 6px solid transparent; border-left: 0; } .view_home .overviewGrid { grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr); grid-template-rows: minmax(0, 1fr) 190px; } .view_home .overviewSide { min-height: 0; } .view_home .appsOverview { grid-column: 1 / -1; } .detailHead { grid-template-columns: 38px minmax(0, 1fr); } .periods { grid-column: 1 / -1; width: 100%; margin-top: 12px; } .chartToolbar { grid-template-columns: 1fr; row-gap: 8px; } .legend { justify-items: start; min-width: 0; } .legendItems { justify-content: flex-start; flex-wrap: wrap; } .summaryCards { grid-template-columns: 1fr; } .view_usage .summaryCards, .view_latency .summaryCards, .view_apps .summaryCards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .view_accuracy .summaryCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .view_usage .summaryCards > span, .view_accuracy .summaryCards > span, .view_latency .summaryCards > span, .view_apps .summaryCards > span { min-height: 64px; padding: 10px 12px 10px 14px; } .view_usage .summaryCards svg, .view_accuracy .summaryCards svg, .view_latency .summaryCards svg, .view_apps .summaryCards svg { display: none; } .settings { grid-template-columns: 1fr; grid-template-areas: "wake" "mic" "camera" "start"; padding-top: 286px; padding-left: 34px; } .settingsVisual { width: 100%; height: 270px; } .settingsOrb { width: min(82%, 240px); } .wakeRow, .deviceRow, .startToggle { grid-column: auto; } }
+
+@media (max-height: 800px) {
+  .view_home .content { padding-top: 10px; padding-bottom: 10px; }
+  .view_home .intro { min-height: 78px; }
+  .view_home .intro h1 { font-size: clamp(30px, 3vw, 42px); }
+  .view_home .intro p { margin-top: 6px; }
+  .view_home .intro > i { margin-top: 11px; }
+  .view_home .homeMark { margin-top: 15px; }
+  .view_home .overviewGrid { grid-template-rows: minmax(0, 1fr) 190px; gap: 10px 14px; }
+  .view_home .overviewSide { gap: 10px; }
+  .view_home .appsOverview { padding-top: 12px; padding-bottom: 10px; }
+  .view_home .appsList { margin-top: 5px; }
+}
+
+@media (max-height: 680px) and (min-width: 901px) and (min-aspect-ratio: 4 / 3) {
+  .view_home { height: auto; min-height: 100dvh; overflow-x: hidden; overflow-y: auto; }
+  .view_home .content { height: auto; min-height: calc(100dvh - 54px); }
+  .view_home .overviewGrid { flex: none; grid-template-rows: 400px 190px; }
+}
+
+@media (max-width: 900px), (max-aspect-ratio: 4 / 3) {
+  .view_home { height: auto; min-height: 100dvh; overflow-x: hidden; overflow-y: auto; }
+  .view_home .content { width: min(100% - 32px, 850px); height: auto; min-height: calc(100dvh - 54px); padding-top: 22px; padding-bottom: 28px; }
+  .view_home .homeHead { grid-template-columns: 1fr; margin-bottom: 14px; }
+  .view_home .homeMark { width: min(340px, 100%); margin-top: 4px; text-align: left; }
+  .view_home .homeMark::after { right: auto; left: 0; border-right: 0; border-left: 6px solid transparent; }
+  .view_home .overviewGrid { display: grid; flex: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(340px, 46vh) 360px 190px; gap: 16px; }
+  .view_home .overviewSide { min-height: 360px; gap: 16px; }
+  .view_home .appsOverview { grid-column: 1; }
+}
+@media (max-width: 620px) { .header { grid-template-columns: 100px 1fr 48px; padding: 0 18px; } .content { width: calc(100% - 24px); padding-top: 30px; } .view_usage .content, .view_accuracy .content, .view_latency .content, .view_apps .content { height: calc(100vh - 54px); max-height: calc(100vh - 54px); min-height: 0; padding-top: 10px; padding-bottom: 10px; } .intro h1 { font-size: 34px; } .overviewBars { gap: 8px; } .accuracyRings { grid-template-columns: repeat(2, 1fr); } .accuracyRings i { width: 54px; height: 54px; } .latencyOverview > div:last-child { grid-template-columns: 1fr; } .appsOverview > div:last-child { grid-template-columns: 1fr; } .appsList > span { grid-template-columns: 24px 90px 1fr; } .appsList > span > strong { display: none; } .largeCard { min-height: 0; padding: 12px 14px 8px; } .view_usage .largeCard, .view_accuracy .largeCard, .view_latency .largeCard, .view_apps .largeCard { min-height: 0; } .chartStage { min-height: 0; grid-template-columns: 1fr; } .siaInsight { display: none; } .legendContext { white-space: normal; } .horizontalRow { grid-template-columns: 34px 90px 1fr; } .horizontalRow > strong { display: none; } .settingRow { grid-template-columns: 1fr; } .modal { padding: 28px 18px 24px; } .dialogActions { flex-direction: column; } .dialogActions button { width: 100%; } }
