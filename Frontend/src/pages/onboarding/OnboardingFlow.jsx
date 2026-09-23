@@ -296,6 +296,18 @@ export default function OnboardingFlow() {
     if (f.step === 'micDone') voiceCommittedRef.current = true;
   }, [f.step]);
   useEffect(() => {
+    if (isWakeOnly || f.step !== 'wake' || !f.wakeDone || !ready) return undefined;
+    const timer = setTimeout(() => {
+      try {
+        sendOnboarding('voice_reg_start', {});
+        change({ step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null, pending: true, error: '' });
+      } catch (error) {
+        change({ pending: false, error: error.message });
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [isWakeOnly, f.step, f.wakeDone, ready, change]);
+  useEffect(() => {
     if (!isWakeOnly || f.step !== 'wake' || (f.wake.n < f.wake.total && !f.wakeDone)) return undefined;
     let cancelled = false;
     let retryTimer;
@@ -423,6 +435,10 @@ export default function OnboardingFlow() {
     });
   }
   async function save() {
+    if (!camera || (!cameraSettingsOnly && !mic)) {
+      change({ error: '마이크와 카메라를 모두 선택해주세요.', pending: false });
+      return;
+    }
     await run(async () => {
       try {
         const nextName = name.trim();
@@ -479,9 +495,9 @@ export default function OnboardingFlow() {
   let content;
   switch (f.step) {
     case 'welcome': content = <><div className={styles.welcomeContent}><div className={styles.welcomeCopy}><small className={styles.welcomeEyebrow}>SMART INTERACTION ASSISTANT</small><h1>당신의 움직임을<br /><em>하나의 명령</em>으로</h1><p>목소리를 듣고, 손짓을 이해하고,<br />시선을 따라가는 AI 비서입니다.</p><div className={styles.welcomeSignals}><span>VOICE</span><span>GESTURE</span><span>GAZE</span></div></div><WelcomeControlDesk /></div>{foot(btn('SIA 시작하기', basic))}</>; break;
-    case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} /><small>{wakeWordIssue(name) || '한국어 이름으로 입력해주세요.'}</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || Boolean(wakeWordIssue(name))))}</>; break;
+    case 'basic': content = <><FrameTitle>기본 설정</FrameTitle><div className={styles.fields}><label>호출명 (Wake Word)<input value={name} onChange={(e) => setName(e.target.value)} /><small>{wakeWordIssue(name) || '한국어 이름으로 입력해주세요.'}</small></label><label>마이크 선택(내장 / 외장)<select value={mic} onChange={(e) => setMic(e.target.value)}><option value="">마이크를 선택해주세요</option>{devices.mics.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label><label>카메라 선택(내장 / 외장)<select value={camera} onChange={(e) => setCamera(e.target.value)}><option value="">카메라를 선택해주세요</option>{devices.cameras.map((d) => <option key={d.id} value={d.id}>{d.name}{d.isDefault ? ' (기본)' : ''}</option>)}</select></label>{!config && btn('설정 다시 불러오기', basic, false, 'secondary')}</div>{foot(btn('다음', save, !config || !camera || (!cameraSettingsOnly && !mic) || Boolean(wakeWordIssue(name))))}</>; break;
     case 'micStart': content = <><FrameTitle>{isWakeOnly ? '호출명 변경' : '마이크 설정'}</FrameTitle>{center(<><div className={styles.startCopy}><p className={styles.lead}>{isWakeOnly ? '호출명을 등록합니다' : '마이크 등록을 시작합니다'}</p><p className={styles.startHint}>마이크 등록은 주변 소음이 적은 조용한 환경에서<br />진행하는 것을 권장합니다.</p></div><MicGraphic /></>, styles.startCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{btn('시작하기', startWakeEnrollment, !ready || Boolean(wakeWordIssue(enrollWakeWord)))}</>)}</>; break;
-    case 'wake': content = <><FrameTitle>이름 불러보기</FrameTitle>{center(<>{f.wakeDone ? <><h2>호출명 학습이 완료되었습니다</h2>{!isWakeOnly && <p>화자등록으로 넘어가 주세요.</p>}</> : <><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p></>}{!f.wakeDone && <MicLevelWaveform levels={micPreview.levels} />}{f.wakeRejection && <p className={styles.rejection} role="status">{breakSentences(wakeRejectionMessage)}</p>}{!f.wakeDone && micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}{!isWakeOnly && btn('다음', () => send('voice_reg_start', {}, { step: 'voice', voiceTempId: null, voiceSentence: null, voiceCompleted: 0, voiceResult: null, finalVoiceReview: null }), !ready || !f.wakeDone)}</>)}</>; break;
+    case 'wake': content = <>{!f.wakeDone && <FrameTitle>이름 불러보기</FrameTitle>}{center(<>{f.wakeDone ? <><h2>호출명 학습이 완료되었습니다</h2>{!isWakeOnly && <p>화자등록으로 넘어가 주세요.</p>}</> : <><h2>“{enrollWakeWord}”라고 불러주세요</h2><p>샘플 수집 {f.wake.n} / {f.wake.total} · 호출어만 짧고 또렷하게 불러주세요</p></>}{!f.wakeDone && <MicLevelWaveform levels={micPreview.levels} />}{f.wakeRejection && <p className={styles.rejection} role="status">{breakSentences(wakeRejectionMessage)}</p>}{!f.wakeDone && micPreview.error && <p className={styles.error} role="status">{micPreview.error}</p>}</>, styles.wakeCenter)}{!f.wakeDone && foot(<>{fromSettings && btn('취소', cancelMicEnrollment, false, 'secondary')}</>)}</>; break;
     case 'voice': {
       const current = f.voiceSentence?.n ?? Math.min(f.voiceCompleted + 1, 5);
       content = <VoiceEnrollment mode="recording" current={current} total={5} sentence={sentences[current - 1] ?? '낭독 문장 원문을 기다리고 있습니다.'} micLevels={micPreview.levels} />; break;
