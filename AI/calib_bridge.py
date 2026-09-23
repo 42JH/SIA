@@ -248,10 +248,14 @@ class CalibSession:
         if len(feats) < MIN_TOTAL_SAMPLES:
             self.link._send({"type": "calib_result", "data": {
                 "tempId": self.tempId, "avgErrorPx": None, "maxErrorPx": None,
+                "cvErrorPx": None,   # 표본 부족 경로도 키 구성을 맞춘다 (FE 분기 단순화)
                 "grade": "poor", "pass": False, "points": []}})
             return
         calib = Calibrator(self.sw, self.sh)
-        calib.fit_base(np.array(feats), np.array(targets))
+        # fit_base 는 leave-one-point-out 교차검증 오차(px)를 돌려준다. 아래 avg 는 학습에 쓴
+        # 바로 그 9점을 다시 예측한 값이라 낙관적으로 나온다 — 두 수치는 성격이 다르므로 둘 다 보낸다.
+        # (실측 편차: 화면 표기 40~50px 대 교차검증 170px. 하나만 보내면 어느 쪽이든 오해를 부른다.)
+        cv_err = calib.fit_base(np.array(feats), np.array(targets))
         points, errs = [], []
         for n in sorted(self._pts):
             p = self._pts[n]
@@ -269,6 +273,10 @@ class CalibSession:
         self.link._send({"type": "calib_result", "data": {
             "tempId": self.tempId,
             "avgErrorPx": round(avg, 1), "maxErrorPx": round(mx, 1),
+            # NOTE(한계): grade·pass 판정은 기존대로 avg(학습 잔차) 기준을 유지한다 — 임계값이
+            # 그 척도에 맞춰 잡혀 있어 cv 로 바꾸면 통과 기준이 통째로 달라진다. cvErrorPx 는
+            # 표기·기록용으로만 얹는다.
+            "cvErrorPx": round(float(cv_err), 1),
             "grade": grade, "pass": grade != "poor", "points": points}})
 
     def _upload(self, path):
@@ -326,6 +334,12 @@ def _selftest():
     assert d["grade"] in ("excellent", "good", "poor")
     assert len(d["points"]) == 9 and all(set(p) == {"n", "dx", "dy"} for p in d["points"])
     assert d["tempId"] == "t1" and isinstance(d["pass"], bool)
+    # -362: 교차검증 오차를 같이 싣는다. 학습 잔차(avg)만 보내면 화면 숫자가 실제보다 낙관적이다.
+    # fit_base 반환값을 받지 않으면 이 키가 조용히 사라지므로 존재·타입·양수까지 본다.
+    assert "cvErrorPx" in d, "cvErrorPx 누락 — fit_base 반환값이 다시 버려졌다"
+    assert isinstance(d["cvErrorPx"], float) and d["cvErrorPx"] > 0, d["cvErrorPx"]
+    # 안 본 점 기준이라 학습 잔차보다 작을 수 없다 (같은 데이터·같은 모델).
+    assert d["cvErrorPx"] >= d["avgErrorPx"], (d["cvErrorPx"], d["avgErrorPx"])
     # 활성 보정 핫스왑(-245): 내려받은 npz 를 검증해 통과하면 on_reload 로 런타임 교체, 아니면 파일도 안 덮는다.
     good = open("_selftest_calib.npz", "rb").read()  # 위 _finalize 가 저장한 것 — (sw,sh), dim 2
     swapped = []
@@ -359,7 +373,7 @@ def _selftest():
         assert sorted(cs._order) == list(range(1, TOTAL + 1))  # 매번 1~9 완전 순열
         orders.add(tuple(cs._order))
     assert len(orders) > 1, "점 순서가 랜덤이 아님(항상 동일)"
-    print(f"selftest ok — grade={d['grade']} avg={d['avgErrorPx']}px 방문순서={requested} 랜덤확인={len(orders)}종")
+    print(f"selftest ok — grade={d['grade']} avg={d['avgErrorPx']}px cv={d['cvErrorPx']}px 방문순서={requested} 랜덤확인={len(orders)}종")
 
 
 if __name__ == "__main__":
