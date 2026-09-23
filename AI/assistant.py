@@ -56,6 +56,28 @@ GESTURE_HOLD_S = 0.8   # 제스처 커맨드: 이 시간 유지해야 발동 (�
 GESTURE_COOLDOWN_S = 1.2  # 연타 용도(10초 건너뛰기 반복)를 위해 짧게 — 홀드+재무장이 있어 안전
 # 정적 제스처는 동적 제스처보다 보수적으로 처리한다. 토글 성격의 명령은
 # 잠깐의 트래킹 손실만으로 재무장되지 않도록 neutral/release 시간을 길게 둔다.
+# 기하 보정이 '지어낸' 주먹/손바닥은 실행하지 않는다.
+# gesture_pose.py 의 FIST/PALM 산출은 `if fallback:`(= 모델이 아무 라벨도 못 붙인 손)
+# 블록 안에만 있다. model_gesture 가 비었는데 최종 라벨이 주먹/손바닥이면, MediaPipe 가
+# 포기한 손을 기하 조건만으로 승격시킨 것이다. 실측(BE usage_event, 2026-09-21):
+# Closed_Fist 87/117 · Open_Palm 55/71 이 이 경로였다 — 책상 위에 쉬는 손이다.
+# 감지·HUD·등록·trace 는 그대로 두고 '실행 자격'만 막는다. 되돌리기는 False 한 글자.
+EXECUTE_MODEL_LABELED_ONLY = True
+GEOMETRY_ONLY_LABELS = ("Closed_Fist", "Open_Palm")
+
+
+def model_labeled(hand, name):
+    """이 프레임의 손 자신이 모델이 인정한 name 인가 (GEOMETRY_ONLY_LABELS 한정).
+
+    stable 라벨이 아니라 **프레임 라벨**을 본다. GestureStable 은 검출이 끊긴
+    missing_grace_s(0.45초) 동안 직전 라벨을 그대로 돌려주므로(hands.py:283-288),
+    stable 만 보면 보류/모순 프레임마다 게이트가 열리고 HoldToggle 의 grace(0.55초)가
+    타이머를 안 지워서 홀드가 계속 차오른다 — 막으려던 그 상황에서 그대로 샌다.
+    """
+    return (hand is not None and hand.get("gesture") == name
+            and hand.get("model_gesture") not in (None, "None"))
+
+
 STATIC_TRIGGER_POLICY = {
     "Closed_Fist": {"hold_s": 0.80, "cooldown_s": 2.0, "grace_s": 0.55},
     "Open_Palm": {"hold_s": 0.80, "cooldown_s": 2.2, "grace_s": 0.60},
@@ -429,6 +451,7 @@ def main():
     loop_fps_started = time.monotonic()
     hand_infer_ms = 0.0
     seq = -1
+    blocked_log_at = {}   # 보정 라벨 차단 로그 throttle (이름별 2초)
     gesture_trace = open(args.gesture_trace, 'w', encoding='utf-8') if args.gesture_trace else None
     gesture_trace_last = None
     print("시아 모드 시작. 화면을 보며 말하면 됩니다. 종료는 Ctrl+C.")
@@ -822,6 +845,15 @@ def main():
                 # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
                 allowed = static_execution_allowed(gesture_active, gesture_execution_blocked,
                                                     custom_claimed, custom_pose, name)
+                if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:
+                    # fired 뒤가 아니라 HoldToggle 조건에 넣는다 — 발동 후 필터링이면
+                    # 홀드가 이미 차 있다가 라벨이 붙는 순간 발사된다.
+                    ok = model_labeled(hand, name)
+                    if (allowed and gesture == name and not ok
+                            and now - blocked_log_at.get(name, 0) > 2.0):
+                        blocked_log_at[name] = now   # 리허설 계측용 — 거짓 음성을 센다
+                        print(f"[제스처] 보정 라벨 — 실행 안 함: {name}")
+                    allowed = allowed and ok
                 fired = gesture_toggles[name].update(allowed and gesture == name, now)
                 sent = False
                 if fired and name not in disabled_gestures and not args.two_hand_preview:
