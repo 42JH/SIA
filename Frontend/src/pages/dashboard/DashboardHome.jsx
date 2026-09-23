@@ -239,26 +239,12 @@ export default function DashboardHome() {
   useEffect(() => { if (view === 'home') loadHome(); }, [view]);
   useEffect(() => {
     if (!menu) return undefined;
-    const html = document.documentElement;
-    const previous = { html: html.style.overflow, body: document.body.style.overflow, position: document.body.style.position, top: document.body.style.top, width: document.body.style.width };
-    const scrollY = window.scrollY;
-    html.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
     const blockScroll = (event) => event.preventDefault();
     window.addEventListener('wheel', blockScroll, { passive: false });
     window.addEventListener('touchmove', blockScroll, { passive: false });
     return () => {
-      html.style.overflow = previous.html;
-      document.body.style.overflow = previous.body;
-      document.body.style.position = previous.position;
-      document.body.style.top = previous.top;
-      document.body.style.width = previous.width;
       window.removeEventListener('wheel', blockScroll);
       window.removeEventListener('touchmove', blockScroll);
-      window.scrollTo(0, scrollY);
     };
   }, [menu]);
   useEffect(() => {

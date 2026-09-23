@@ -2,3 +2,6 @@
 .error { margin: 12px 0 0; color: #a32838; font-weight: 700; line-height: 1.55; text-align: center; white-space: pre-line; word-break: keep-all; overflow-wrap: break-word; }
 .wakeStage { display: grid; width: min(100%, 760px); justify-items: stretch; align-self: center; }
 .sampleNotice { margin: 18px 0 0; color: #7896c8; font-size: 15px; text-align: center; }
+.guideDescription span { display: block; }
+.guideActions { display: grid; width: min(100%, 300px); gap: 14px; margin-top: 2px; }
+.guideActions button { width: 100%; min-width: 0; min-height: 50px; }

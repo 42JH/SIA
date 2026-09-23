@@ -157,7 +157,12 @@ function GazeRadar({ compact = false }) {
 }
 
 function GazeCard({ profile, deleteMode, checked, onToggle, onRename, onActivate, busy }) {
-  return <article className={styles.profileCard}>{deleteMode && <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`${profile.name} 선택`} />}<GazeRadar compact /><div className={styles.profileInfo}><span className={styles.nameRow}><strong>{profile.name}</strong>{!deleteMode && <button className={styles.editButton} onClick={onRename} aria-label={`${profile.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button>}</span><small>등록일 {formatDate(profile.createdAt)} · 상태: {grades[profile.grade] ?? '미제공'}</small><GazeStats profile={profile} /></div>{!deleteMode && <button className={styles.pillButton} onClick={onActivate} disabled={busy}>사용으로 설정</button>}</article>;
+  const selectWithKeyboard = (event) => {
+    if (!deleteMode || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    onToggle();
+  };
+  return <article className={`${styles.profileCard} ${deleteMode ? styles.selectableCard : ''} ${checked ? styles.selectedCard : ''}`} onClick={deleteMode ? onToggle : undefined} onKeyDown={selectWithKeyboard} role={deleteMode ? 'checkbox' : undefined} aria-checked={deleteMode ? checked : undefined} tabIndex={deleteMode ? 0 : undefined}>{deleteMode && <input type="checkbox" checked={checked} onChange={onToggle} onClick={(event) => event.stopPropagation()} aria-label={`${profile.name} 선택`} />}<GazeRadar compact /><div className={styles.profileInfo}><span className={styles.nameRow}><strong>{profile.name}</strong>{!deleteMode && <button className={styles.editButton} onClick={onRename} aria-label={`${profile.name} 이름 변경`}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6-3.2-3.2L5 15.8 4 20ZM14.5 6.3l3.2 3.2M13 20h7" /></svg></button>}</span><small>등록일 {formatDate(profile.createdAt)} · 상태: {grades[profile.grade] ?? '미제공'}</small><GazeStats profile={profile} /></div>{!deleteMode && <button className={styles.pillButton} onClick={onActivate} disabled={busy}>사용으로 설정</button>}</article>;
 }
 
 function GazeStats({ profile }) {
