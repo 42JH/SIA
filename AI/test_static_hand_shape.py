@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 import numpy as np
 from static_hand_shape import hand_shape, shape_distances
-from hands import CustomGestures, normalize_landmarks
+from hands import normalize_landmarks
 from custom_motion import CustomGestureStore, read_templates, template_bytes
 from gesture_be import GestureRegistration, GestureTemplateCache
 from test_custom_motion import Link

@@ -29,7 +29,6 @@ import math
 import sys
 import threading
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np

@@ -28,7 +28,7 @@ from custom_motion import (
     encode_pose_sequence, encode_world_sequence, normalize_arm_pose,
     ordered_landmarks, ordered_world_landmarks, read_templates,
     trim_motion_frames, template_bytes as encode_template_bytes,
-    matching_distance, motion_comparison, motion_features, motion_matching_distance,
+    matching_distance, motion_comparison, motion_features,
     motion_direction_8, motion_direction_difference, swipe_trajectory_distance, swipe_direction_8,
     DIRECTION_TOLERANCE_DEG, TRACKING_GRACE_S, empty_templates,
 )

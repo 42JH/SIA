@@ -26,7 +26,6 @@ expected.json에는 채점할 필드만 적는다. 키 뒤에 ~를 붙이면 부
 import json
 import sys
 import time
-from pathlib import Path
 
 from paths import DATA_DIR
 

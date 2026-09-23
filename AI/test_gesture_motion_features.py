@@ -9,10 +9,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from custom_motion import (CustomGestureStore, distance, empty_templates, encode_sequence,
+from custom_motion import (CustomGestureStore, empty_templates, encode_sequence,
                            motion_comparison, template_bytes)
 from gesture_be import GestureRegistration, GestureTemplateCache
-from gesture_diagnostics import save_registration_diagnostic
 import test_custom_motion as fixtures
 
 
