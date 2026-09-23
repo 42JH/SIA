@@ -45,9 +45,14 @@ export default function OnboardingWakeView({
     body = <div className={voiceStyles.guideContent}>
       <div className={voiceStyles.enrollmentMic}><div className={voiceStyles.enrollmentMicCircle}><MicIcon /></div></div>
       <h2>호출명을 등록합니다</h2>
-      <p>마이크 등록은 주변 소음이 적은 조용한 환경에서<br />진행하는 것을 권장합니다.<br />약 30초 정도 걸립니다.</p>
-      <button className={voiceStyles.primary} onClick={onStart} disabled={!canStart || pending}>시작하기</button>
-      <div className={voiceStyles.actionRow}><button onClick={onCancel} disabled={pending}>취소</button></div>
+      <p className={styles.guideDescription}>
+        <span>마이크 등록은 주변 소음이 적은 조용한 환경에서 진행하는 것을 권장합니다.</span>
+        <span>약 30초 정도 걸립니다.</span>
+      </p>
+      <div className={styles.guideActions}>
+        <button className={voiceStyles.primary} onClick={onStart} disabled={!canStart || pending}>시작하기</button>
+        <button className={voiceStyles.secondary} onClick={onCancel} disabled={pending}>취소</button>
+      </div>
     </div>;
   }
 

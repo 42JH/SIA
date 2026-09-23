@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { startMicPreview, stopMicPreview, subscribeMicPreview } from '../ws/micPreview';
 
 export const MIC_WAVE_BARS = 48;
+const MAX_HISTORY_SAMPLES = MIC_WAVE_BARS * 100;
 const silentLevels = () => Array.from({ length: MIC_WAVE_BARS }, () => 0.04);
 
 function downsampleEnvelope(samples, count = MIC_WAVE_BARS) {
@@ -25,6 +26,14 @@ export function useMicPreview(enabled, resetKey) {
   const lastSeq = useRef(-1);
   const epoch = useRef(0);
   const historyRef = useRef([]);
+  const pendingLevelsRef = useRef([]);
+  const frameRef = useRef(null);
+
+  const cancelPendingFrame = () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+    pendingLevelsRef.current = [];
+  };
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -32,6 +41,7 @@ export function useMicPreview(enabled, resetKey) {
     epoch.current += 1;
     lastSeq.current = -1;
     historyRef.current = [];
+    cancelPendingFrame();
     setLevels(silentLevels());
     return undefined;
   }, [enabled, resetKey]);
@@ -41,6 +51,7 @@ export function useMicPreview(enabled, resetKey) {
       if (historyRef.current.length) setEnvelope(downsampleEnvelope(historyRef.current));
       epoch.current += 1;
       historyRef.current = [];
+      cancelPendingFrame();
       setLevels(silentLevels());
       setPhase('STOPPED');
       setError('');
@@ -52,13 +63,22 @@ export function useMicPreview(enabled, resetKey) {
       onLevel: ({ seq, level }) => {
         const nextSeq = Number(seq);
         const nextLevel = Number(level);
-        const captured = epoch.current;
         if (!Number.isFinite(nextSeq) || !Number.isFinite(nextLevel) || nextSeq <= lastSeq.current) return;
         lastSeq.current = nextSeq;
         const normalized = Math.min(1, Math.max(0, nextLevel));
         historyRef.current.push(normalized);
-        setEnvelope(downsampleEnvelope(historyRef.current));
-        setLevels((current) => (captured !== epoch.current ? current : [...current.slice(-(MIC_WAVE_BARS - 1)), normalized]));
+        if (historyRef.current.length > MAX_HISTORY_SAMPLES) historyRef.current.splice(0, historyRef.current.length - MAX_HISTORY_SAMPLES);
+        pendingLevelsRef.current.push(normalized);
+        if (frameRef.current !== null) return;
+        const captured = epoch.current;
+        frameRef.current = requestAnimationFrame(() => {
+          frameRef.current = null;
+          if (captured !== epoch.current) { pendingLevelsRef.current = []; return; }
+          const pending = pendingLevelsRef.current.splice(0);
+          if (!pending.length) return;
+          setLevels((current) => [...current, ...pending].slice(-MIC_WAVE_BARS));
+          setEnvelope(downsampleEnvelope(historyRef.current));
+        });
       },
       onState: ({ phase: nextPhase, message }) => {
         setPhase(nextPhase ?? 'STOPPED');
@@ -72,6 +92,7 @@ export function useMicPreview(enabled, resetKey) {
     return () => {
       unsubscribe();
       if (started) stopMicPreview();
+      cancelPendingFrame();
     };
   }, [enabled]);
 

@@ -188,14 +188,14 @@ button.appsOverview { display: grid; }
 .toggleRow input:checked { background: var(--sia-navy); }
 .toggleRow input:checked::after { transform: translateX(21px); }
 .modalBackdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(7 24 49 / 58%); }
-.modal { position: relative; width: min(820px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; padding: clamp(28px, 5vh, 40px) clamp(20px, 4vw, 48px) 30px; border: 2px solid var(--sia-navy); background: white; color: var(--sia-navy); text-align: center; clip-path: polygon(18px 0, 38% 0, 40% 10px, 58% 10px, 60% 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
+.modal { position: relative; width: min(680px, calc(100vw - 40px)); max-height: calc(100dvh - 48px); min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; padding: clamp(22px, 3.5vh, 30px) clamp(20px, 3vw, 36px) 24px; border: 2px solid var(--sia-navy); background: white; color: var(--sia-navy); text-align: center; clip-path: polygon(18px 0, 38% 0, 40% 10px, 58% 10px, 60% 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px), 0 18px); }
 .modal h2 { margin: 10px 0; font-size: 20px; }
 .modal p { color: var(--sia-muted); }
 .deviceChoice { display: grid; gap: 8px; margin-top: 20px; color: var(--sia-muted); text-align: left; }
 .deviceIcon { display: grid; width: 72px; height: 72px; place-items: center; margin: 0 auto 14px; border: 1px solid var(--sia-soft-line); border-radius: 50%; background: #fbfdff; box-shadow: 0 0 0 5px white, 0 0 0 6px var(--sia-soft-line); }
 .deviceIcon svg { width: 52px; height: 52px; fill: none; stroke: var(--sia-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
 .deviceIcon .signal { stroke: var(--sia-blue); stroke-width: 1.6; }
-.dialogActions { display: flex; justify-content: center; gap: 14px; margin-top: 32px; }
+.dialogActions { display: flex; justify-content: center; gap: 14px; margin-top: 22px; }
 .primary { background: var(--sia-navy) !important; color: white !important; }
 .profileList { display: grid; gap: 8px; margin-top: 18px; text-align: left; }
 .profileList label { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--sia-soft-line); }
