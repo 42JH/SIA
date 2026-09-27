@@ -4,7 +4,7 @@ Frontend/Backend/AI 세 프로세스를 하나의 데스크톱 앱으로 묶는 
 프로젝트. 실제 UI는 없고(`Frontend/dist`를 그대로 로드), 이 프로젝트가
 하는 일은:
 
-1. 앱 시작 시 BE sidecar 실행 → `runtime.json`의 PID와 `/api/status`를 확인 → AI sidecar 실행
+1. 앱 시작 시 BE sidecar 실행 → `runtime.json`의 실행 ID와 `/api/status`를 확인 → AI sidecar 실행
 2. 창의 X 버튼은 종료가 아니라 숨기기 (트레이로 감춤)
 3. 트레이 아이콘: "열기"(대시보드 다시 표시) / "종료"(sidecar까지 확실히 kill 후 종료)
 4. BE의 `/ws/fe` 알림을 overlay 창(`notify_bridge.rs` + `overlay/index.html`)으로
@@ -27,6 +27,18 @@ Frontend/Backend/AI 세 프로세스를 하나의 데스크톱 앱으로 묶는 
   자체가 실행되지 않아 실제 동작 검증은 아직 못 함.
 
 ## 빌드/검증
+
+Windows에서 설치 파일을 다시 만들 때는 프로젝트 루트에서 아래 명령을 실행한다.
+AI 빌드에는 `ai_env`의 Python을 명시한다. 이 명령은 Backend, AI, Frontend,
+Tauri 앱을 다시 빌드하고 Inno Setup 설치 파일까지 만든다.
+
+```powershell
+cd C:\Users\SSAFY\Desktop\Projects\special_project\S15P21D106
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Integration\scripts\build-sidecars.ps1 -PythonExe "C:\Users\SSAFY\miniforge3\envs\ai_env\python.exe"
+```
+
+완료된 파일: `Integration\scripts\Output\sia-desktop-0.1.0-setup.exe`
+`npx tauri build --no-bundle` 단계에서 `Frontend` 빌드도 자동 실행된다.
 
 Windows에서 Tauri/Rust 코드와 준비 확인 테스트는 실제 sidecar 파일 없이도
 검증할 수 있다.

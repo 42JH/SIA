@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use tauri::{
@@ -20,13 +20,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// `%APPDATA%/SIA/runtime.json` 의 형태. Backend(README 기준)가 기동 시 이 파일에
-/// `{token, port, pid}`를 쓴다 — AI 도 같은 파일을 읽어 접속한다.
+/// `{token, port, pid, launchId?}`를 쓴다 — AI 도 같은 파일을 읽어 접속한다.
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 struct RuntimeInfo {
     #[allow(dead_code)]
     token: String,
     port: u16,
     pid: u32,
+    #[serde(rename = "launchId")]
+    launch_id: Option<String>,
 }
 
 /// BE/AI sidecar 자식 프로세스 핸들. 트레이 "종료"에서 확실히 kill 하기 위해
@@ -51,13 +53,15 @@ pub fn run() {
         .manage(notify_bridge::LastSessionState::default())
         .invoke_handler(tauri::generate_handler![set_autostart])
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // 사이드카 스폰 실패 등은 release 빌드에서도 원인 파악이 필요해서 항상 켠다
+            // (기존엔 debug_assertions 로만 켰었는데, 그러면 release 설치본에서 문제
+            // 생겨도 로그가 아예 없어서 진단이 불가능했다). 기본 타겟(LogDir+Stdout+
+            // Webview)이라 설치본 기준 %APPDATA%\com.sia.desktop\logs\ 에 남는다.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
 
             // --- 트레이 아이콘 + 메뉴 ---
             let open_item = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
@@ -220,10 +224,17 @@ fn parse_runtime_info(text: &str) -> Option<RuntimeInfo> {
     serde_json::from_str::<RuntimeInfo>(text).ok()
 }
 
-/// runtime.json이 "이번에 Tauri가 실행한 그 Backend"를 가리키는지 판단한다.
-/// 오래된(이전 실행의) runtime.json을 현재 프로세스로 오인하지 않기 위한 대조.
-fn runtime_matches_pid(info: &RuntimeInfo, expected_pid: u32) -> bool {
-    info.pid == expected_pid
+/// jpackage 런처와 실제 JVM의 PID는 다르므로 이번 실행에 부여한 ID로 대조한다.
+fn runtime_matches_launch(info: &RuntimeInfo, expected_launch_id: &str) -> bool {
+    info.launch_id.as_deref() == Some(expected_launch_id)
+}
+
+fn new_launch_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos}", std::process::id())
 }
 
 fn is_status_ok(http_status: u16) -> bool {
@@ -387,11 +398,11 @@ fn set_autostart(app: AppHandle, enabled: bool) {
     apply_autostart(&app, enabled);
 }
 
-/// BE가 준비됐는지 한 번 확인한다: runtime.json 읽기 + PID 대조 + `/api/status` 200 확인.
+/// BE가 준비됐는지 한 번 확인한다: runtime.json 읽기 + 실행 ID 대조 + `/api/status` 200 확인.
 /// 셋 다 만족하면 포트를 반환한다. TcpStream은 블로킹이라 spawn_blocking으로 돌린다.
-async fn probe_backend_ready(expected_pid: u32) -> Option<u16> {
+async fn probe_backend_ready(expected_launch_id: &str) -> Option<u16> {
     let info = read_runtime_info()?;
-    if !runtime_matches_pid(&info, expected_pid) {
+    if !runtime_matches_launch(&info, expected_launch_id) {
         return None;
     }
 
@@ -408,10 +419,10 @@ async fn probe_backend_ready(expected_pid: u32) -> Option<u16> {
 }
 
 /// 45초 동안 0.5초 간격으로 `probe_backend_ready`를 반복한다.
-async fn wait_for_backend_ready(expected_pid: u32) -> Option<u16> {
+async fn wait_for_backend_ready(expected_launch_id: &str) -> Option<u16> {
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if let Some(port) = probe_backend_ready(expected_pid).await {
+        if let Some(port) = probe_backend_ready(expected_launch_id).await {
             return Some(port);
         }
         if Instant::now() >= deadline {
@@ -427,24 +438,48 @@ async fn wait_for_backend_ready(expected_pid: u32) -> Option<u16> {
 fn spawn_sidecars(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let shell = app.shell();
+        let launch_id = new_launch_id();
+
+        // 진단용 임시 로그 — os error 2(파일 없음) 원인 확인을 위해 Tauri가 실제로 어느
+        // 경로를 기준으로 사이드카를 찾는지 남긴다. 원인 확인되면 지워도 된다.
+        log::info!("current_exe = {:?}", std::env::current_exe());
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join("sia-backend.exe");
+                log::info!("sidecar 후보 경로 = {:?}, exists = {}", candidate, candidate.exists());
+            }
+        }
 
         let (mut be_rx, be_child) = match shell
             .sidecar("sia-backend")
+            .map(|cmd| cmd.env("SIA_LAUNCH_ID", launch_id.as_str()))
             .and_then(|cmd| cmd.spawn().map_err(Into::into))
         {
             Ok(pair) => pair,
             Err(err) => {
-                log::error!("sia-backend 실행 실패: {err}");
+                log::error!("sia-backend 실행 실패: {err:?}");
                 return;
             }
         };
-        let backend_pid = be_child.pid();
+        log::info!("Backend 런처 PID = {}", be_child.pid());
 
         if let Some(state) = app.try_state::<SidecarChildren>() {
             *state.backend.lock().unwrap() = Some(be_child);
         }
 
-        let Some(port) = wait_for_backend_ready(backend_pid).await else {
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = be_rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(line) => log::info!("[backend] {}", String::from_utf8_lossy(&line)),
+                    CommandEvent::Stderr(line) => log::error!("[backend] {}", String::from_utf8_lossy(&line)),
+                    CommandEvent::Error(err) => log::error!("[backend] 출력 수신 실패: {err}"),
+                    CommandEvent::Terminated(status) => log::warn!("[backend] 종료: {status:?}"),
+                    _ => {}
+                }
+            }
+        });
+
+        let Some(port) = wait_for_backend_ready(&launch_id).await else {
             log::error!("Backend가 45초 안에 준비되지 않아 종료하고 AI는 실행하지 않는다");
             kill_sidecars(&app);
             return;
@@ -494,17 +529,13 @@ fn spawn_sidecars(app: AppHandle) {
             *state.ai.lock().unwrap() = Some(ai_child);
         }
 
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = be_rx.recv().await {
-                if let CommandEvent::Stdout(line) = event {
-                    log::info!("[backend] {}", String::from_utf8_lossy(&line));
-                }
-            }
-        });
-
         while let Some(event) = ai_rx.recv().await {
-            if let CommandEvent::Stdout(line) = event {
-                log::info!("[ai] {}", String::from_utf8_lossy(&line));
+            match event {
+                CommandEvent::Stdout(line) => log::info!("[ai] {}", String::from_utf8_lossy(&line)),
+                CommandEvent::Stderr(line) => log::error!("[ai] {}", String::from_utf8_lossy(&line)),
+                CommandEvent::Error(err) => log::error!("[ai] 출력 수신 실패: {err}"),
+                CommandEvent::Terminated(status) => log::warn!("[ai] 종료: {status:?}"),
+                _ => {}
             }
         }
     });
@@ -516,10 +547,11 @@ mod tests {
 
     #[test]
     fn parses_valid_runtime_json() {
-        let json = r#"{"token":"abc","port":8080,"pid":1234}"#;
+        let json = r#"{"token":"abc","port":8080,"pid":1234,"launchId":"launch-1"}"#;
         let info = parse_runtime_info(json).expect("should parse");
         assert_eq!(info.port, 8080);
         assert_eq!(info.pid, 1234);
+        assert_eq!(info.launch_id.as_deref(), Some("launch-1"));
     }
 
     #[test]
@@ -529,10 +561,12 @@ mod tests {
     }
 
     #[test]
-    fn pid_must_match_exactly() {
-        let info = RuntimeInfo { token: "t".into(), port: 8080, pid: 111 };
-        assert!(runtime_matches_pid(&info, 111));
-        assert!(!runtime_matches_pid(&info, 222)); // 오래된 runtime.json 오인 방지
+    fn launch_id_must_match_exactly() {
+        let info = RuntimeInfo { token: "t".into(), port: 8080, pid: 111, launch_id: Some("current".into()) };
+        assert!(runtime_matches_launch(&info, "current"));
+        assert!(!runtime_matches_launch(&info, "previous"));
+        let stale = RuntimeInfo { launch_id: None, ..info };
+        assert!(!runtime_matches_launch(&stale, "current"));
     }
 
     #[test]

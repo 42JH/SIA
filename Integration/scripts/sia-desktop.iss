@@ -8,8 +8,8 @@
 ;
 ; 빌드 전제 (build-sidecars.ps1 [1/5]~[4/5]가 먼저 끝나 있어야 함):
 ;   - src-tauri\target\release\app.exe                       (Rust+임베디드 프런트엔드)
-;   - src-tauri\binaries\sia-backend-x86_64-pc-windows-msvc.exe
-;   - src-tauri\binaries\sia-ai-x86_64-pc-windows-msvc.exe
+;   - src-tauri\target\release\sia-backend.exe
+;   - src-tauri\target\release\sia-ai.exe
 ;   - src-tauri\binaries\app\        (BE jpackage app-image)
 ;   - src-tauri\binaries\runtime\    (BE 전용 JRE)
 ;   - src-tauri\binaries\sia-ai-support\ (AI PyInstaller onedir 지원 폴더)
@@ -62,8 +62,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; 을 찾는 로직과 100% 동일한 상대 경로 구조라 코드 수정이 필요 없다.
 [Files]
 Source: "{#SrcTauri}\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcTauri}\binaries\sia-backend-x86_64-pc-windows-msvc.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcTauri}\binaries\sia-ai-x86_64-pc-windows-msvc.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SrcTauri}\target\release\sia-backend.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SrcTauri}\target\release\sia-ai.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcTauri}\binaries\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SrcTauri}\binaries\runtime\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SrcTauri}\binaries\sia-ai-support\*"; DestDir: "{app}\sia-ai-support"; Flags: ignoreversion recursesubdirs createallsubdirs

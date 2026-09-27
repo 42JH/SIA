@@ -22,7 +22,9 @@
 param(
     # 사이드카(BE·AI)만 빌드해서 binaries/에 배치하고 끝낸다 — 최종 exe 패키징(tauri
     # build, [5/5])은 건너뛴다. 사이드카 갱신만 필요할 때(예: 반복 테스트) 씀.
-    [switch]$SkipTauriBuild
+    [switch]$SkipTauriBuild,
+    # AI 의 패키지와 PyInstaller 가 설치된 Python. 지정하지 않으면 현재 PATH 의 python.
+    [string]$PythonExe = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,14 +65,15 @@ if (-not (Get-Command jpackage -ErrorAction SilentlyContinue)) {
     throw "jpackage 를 PATH에서 못 찾았습니다. JDK 17+ (jpackage 포함) 설치 후 JAVA_HOME\bin을 PATH에 추가하세요."
 }
 
-$beName = "sia-backend-$target"
+$beName = "sia-backend"
+$beTauriName = "$beName-$target.exe"
 $bePackageOut = Join-Path $env:TEMP "sia-jpackage-out"
 Remove-Item $bePackageOut -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $bePackageOut | Out-Null
 
-# --name 을 최종 sidecar 이름으로 미리 맞춰서 만든다 — jpackage 런처 exe는 자기 파일명
-# 기준으로 app\<이름>.cfg 를 상대경로로 찾기 때문에, 나중에 exe만 따로 rename하면 그
-# cfg를 못 찾아서 실행이 깨진다. 처음부터 이 이름으로 만들면 rename이 필요 없다.
+# jpackage 런처는 실행 시 자기 파일명과 같은 app\<이름>.cfg 를 찾는다.
+# 최종 실행명은 Tauri가 배치하는 sia-backend.exe 이므로 여기서부터 그 이름으로 만든다.
+# Tauri의 externalBin 입력 파일에만 타깃 트리플을 붙여 둔다.
 jpackage `
     --type app-image `
     --input $jar.DirectoryName `
@@ -81,29 +84,34 @@ if ($LASTEXITCODE -ne 0) { throw "jpackage 실패 (exit $LASTEXITCODE)" }
 
 $beImageDir = Join-Path $bePackageOut $beName
 
-# app-image 산출물은 <beName>.exe + app\ + runtime\ 세 가지가 서로 상대경로로 얽혀
-# 있어서 통째로 옮겨야 한다. exe 하나만 binaries\ 최상단에 두고 app\·runtime\ 도
-# 그 옆(형제 폴더)에 같이 둔다. AI onedir 보조 파일은 별도의
-# `sia-ai-support\`를 쓰므로 이 두 폴더와 충돌하지 않는다.
-foreach ($name in @("$beName.exe", "app", "runtime")) {
+# app-image 산출물은 exe + app\ + runtime\ 세 가지가 서로 상대경로로 얽혀
+# 있어서 함께 배치한다. Tauri 입력 파일만 트리플 이름으로 복사한다.
+Copy-Item (Join-Path $beImageDir "$beName.exe") (Join-Path $binariesDir $beTauriName) -Force
+foreach ($name in @("app", "runtime")) {
     $destPath = Join-Path $binariesDir $name
     Remove-Item $destPath -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $beImageDir $name) $destPath -Recurse
 }
-Write-Host "BE sidecar 배치 완료: $binariesDir\$beName.exe (+ app\, runtime\)"
+Write-Host "BE sidecar 배치 완료: $binariesDir\$beTauriName (+ app\, runtime\)"
 
 # ---------------------------------------------------------------------------
 # [3/5] AI 빌드 (PyInstaller --onedir)
 # ---------------------------------------------------------------------------
 Write-Host "=== [3/5] AI 빌드 (PyInstaller --onedir) ===" -ForegroundColor Cyan
 
-if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-    throw "pyinstaller 를 PATH에서 못 찾았습니다. 'pip install pyinstaller' 먼저 실행하세요."
+if (-not (Get-Command $PythonExe -ErrorAction SilentlyContinue)) {
+    throw "Python 실행 파일을 못 찾았습니다: $PythonExe"
 }
+& $PythonExe -m PyInstaller --version
+if ($LASTEXITCODE -ne 0) { throw "선택한 Python에 PyInstaller가 없습니다: $PythonExe" }
 
 $aiName = "sia-ai-$target"
 Push-Location (Join-Path $root "AI")
 try {
+    # Windows PowerShell 5.1 은 python -c 인수의 따옴표를 제거할 수 있으므로
+    # 버전 검사는 별도 파일로 실행한다.
+    & $PythonExe (Join-Path $PSScriptRoot "check-ai-build-env.py")
+    if ($LASTEXITCODE -ne 0) { throw "torch/torchvision/torchaudio CUDA 12.8 호환성 확인 실패 — AI/requirements.txt의 공식 버전 조합을 설치하세요" }
     # 내장 모델과 호출어 학습용 부정 뱅크는 읽기 전용 자산이라
     # onedir의 sia-ai-support 폴더에 같이 넣는다.
     # wake.npz·speaker.npz·calib.npz 같은 사용자 생성 파일은 빌드 시점에 존재하지
@@ -115,7 +123,10 @@ try {
         "models\pose_landmarker_full.task",
         "models\siaya_v2.onnx",
         "models\eth-xgaze_resnet18.pth",
-        "models\wake_neg_bank.npz"
+        "models\wake_neg_bank.npz",
+        "models\openwakeword\embedding_model.onnx",
+        "models\openwakeword\melspectrogram.onnx",
+        "models\openwakeword\silero_vad.onnx"
     )
     foreach ($asset in $requiredAiAssets) {
         if (-not (Test-Path $asset)) {
@@ -134,13 +145,18 @@ try {
         Write-Host "gemini_api_key.txt 없음 — 번들 기본 키 없이 빌드 (실행 시 환경변수/%APPDATA% 키 필요)" -ForegroundColor Yellow
     }
 
-    pyinstaller --noconfirm --onedir --contents-directory "sia-ai-support" --name $aiName `
+    & $PythonExe -m PyInstaller --noconfirm --onedir --contents-directory "sia-ai-support" --name $aiName `
+        --collect-all "mediapipe.tasks.c" `
+        --collect-all "speechbrain" `
         --add-data "models\face_landmarker.task;models" `
         --add-data "models\gesture_recognizer.task;models" `
         --add-data "models\pose_landmarker_full.task;models" `
         --add-data "models\siaya_v2.onnx;models" `
         --add-data "models\eth-xgaze_resnet18.pth;models" `
         --add-data "models\wake_neg_bank.npz;models" `
+        --add-data "models\openwakeword\embedding_model.onnx;openwakeword\resources\models" `
+        --add-data "models\openwakeword\melspectrogram.onnx;openwakeword\resources\models" `
+        --add-data "models\openwakeword\silero_vad.onnx;openwakeword\resources\models" `
         @geminiKeyArgs `
         assistant.py
     if ($LASTEXITCODE -ne 0) { throw "pyinstaller 실패 (exit $LASTEXITCODE)" }
@@ -204,6 +220,10 @@ try {
 
 $appExe = Join-Path $integrationDir "src-tauri\target\release\app.exe"
 if (-not (Test-Path $appExe)) { throw "Rust 빌드 산출물을 못 찾았습니다: $appExe" }
+foreach ($name in @("sia-backend.exe", "sia-ai.exe")) {
+    $sidecarExe = Join-Path $integrationDir "src-tauri\target\release\$name"
+    if (-not (Test-Path $sidecarExe)) { throw "Tauri sidecar 산출물을 못 찾았습니다: $sidecarExe" }
+}
 
 $iscc = $null
 $isccCmd = Get-Command iscc -ErrorAction SilentlyContinue

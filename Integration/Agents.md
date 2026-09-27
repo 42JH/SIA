@@ -27,11 +27,12 @@ Backend, AI, Frontend의 세부 구현 문서가 아니라 Tauri 데스크톱 �
 준비된 것으로 판단한다.
 
 1. `%APPDATA%/SIA/runtime.json`을 읽을 수 있다.
-2. `runtime.json`의 PID가 이번에 Tauri가 실행한 Backend PID와 같다.
+2. `runtime.json`의 `launchId`가 이번에 Tauri가 Backend에 전달한 실행 ID와 같다.
 3. `runtime.json`의 포트에서 `GET /api/status`가 HTTP 200을 반환한다.
 
 45초 안에 준비되지 않으면 Backend를 종료하고 AI는 실행하지 않는다. 오래된
-`runtime.json`을 현재 Backend로 오인하지 않도록 PID 대조를 유지한다.
+`runtime.json`을 현재 Backend로 오인하지 않도록 실행 ID를 대조한다. jpackage
+런처와 실제 JVM의 PID는 서로 달라 PID 대조는 사용할 수 없다.
 
 ## 포트 정책
 

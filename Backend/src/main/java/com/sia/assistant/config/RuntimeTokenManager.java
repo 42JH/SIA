@@ -14,7 +14,8 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * MCP 공유 토큰 + runtime.json.
  * 토큰은 고정값 'sia-mcp-server' (SIA_AGENT_TOKEN 환경변수로 대체 가능) — 전부 로컬이라 고정이 기본이다.
- * AI 는 runtime.json 에서 {token, port, pid} 를 읽어 접속한다. DB 가 열리기 전에 필요한 값이라 DB 에 넣지 않는다.
+ * AI 는 runtime.json 에서 {token, port, pid} 를 읽어 접속한다. Tauri 실행 시에는
+ * 런처와 JVM을 연결하는 launchId도 기록한다. DB 가 열리기 전에 필요한 값이라 DB 에 넣지 않는다.
  */
 @Component
 public class RuntimeTokenManager {
@@ -48,6 +49,10 @@ public class RuntimeTokenManager {
             body.put("token", token);
             body.put("port", port);
             body.put("pid", ProcessHandle.current().pid());
+            String launchId = System.getenv("SIA_LAUNCH_ID");
+            if (launchId != null && !launchId.isBlank()) {
+                body.put("launchId", launchId);
+            }
             Files.createDirectories(dirs.root());
             Files.writeString(file, om.writeValueAsString(body));
             log.info("runtime.json 기록: {}", file);

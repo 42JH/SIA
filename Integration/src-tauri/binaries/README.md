@@ -18,3 +18,6 @@
 
 tauri.conf.json의 `bundle.externalBin`이 이 경로(확장자·타깃 트리플 제외한
 이름)를 참조한다: `binaries/sia-backend`, `binaries/sia-ai`.
+Tauri가 빌드 출력과 설치 폴더에 배치하는 이름은 각각 `sia-backend.exe`,
+`sia-ai.exe`다. Backend jpackage 런처도 이 최종 이름으로 생성해
+`app/sia-backend.cfg`와 짝을 맞춘다.
