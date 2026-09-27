@@ -1,0 +1,106 @@
+:global(:root) { --gaze-navy: #142853; --gaze-deep: #0f2047; --gaze-blue: #3f70d8; --gaze-line: #4f7ee1; --gaze-soft: #d5e1f5; --gaze-copy: #3f70d8; }
+
+.gazePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; color: var(--gaze-navy); }
+.gazeHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr; align-items: center; isolation: isolate; }
+.heroTitle { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.heroTitle button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); font-size: 0; cursor: pointer; }
+.heroTitle button::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
+.gazeHero h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
+.gazeHero p { margin: 12px 0 0 50px; color: var(--gaze-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
+.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: var(--gaze-navy); stroke: var(--gaze-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit path { fill: none; }
+.circuit .circuitLight { stroke: var(--gaze-blue); }
+.circuit > circle { fill: white; stroke-width: 2.4; }
+
+.calibrationGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: minmax(0, 55fr) minmax(0, 45fr); gap: 20px; }
+.frame { position: relative; border: 2px solid var(--gaze-line); border-radius: 8px; }
+.frameLine { display: none; }
+.activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; border-color: var(--gaze-line); background: linear-gradient(135deg, #101f45 0%, #223d75 100%); color: white; }
+.activePanel > small, .listTitle small { margin: 0 0 15px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
+.activePanel h2, .listTitle h2 { margin: 0; font-size: clamp(28px, 2.55vw, 40px); letter-spacing: -.04em; }
+.activePanel .frameLine { background: #6191f2; }
+.activeRadar { display: grid; min-height: 260px; flex: 1; place-items: center; }
+.radar { width: min(290px, 68%); height: min(290px, 68%); overflow: visible; fill: none; stroke: #dcecff; stroke-width: 2; }
+.radarOuter { stroke-dasharray: 2 6; opacity: .72; }
+.radarTarget { fill: white; stroke: white; }
+.radarCenter { fill: #8ebdff; stroke: none; }
+.activeFooter { display: flex; align-items: end; justify-content: space-between; }
+.activeFooter span { display: grid; gap: 8px; }
+.activeFooter strong { font-size: 27px; }
+.activeFooter small { color: #d8e5fb; font-size: 18px; }
+.activeFooter em { display: flex; min-width: 132px; height: 48px; align-items: center; justify-content: center; gap: 14px; border: 1px solid white; border-radius: 26px; font-size: 18px; font-style: normal; }
+.activeFooter em i { width: 17px; height: 17px; border-radius: 50%; background: white; }
+.emptyActive { display: grid; flex: 1; place-items: center; color: #dceaff; }
+.emptyActive .radar { max-height: 250px; opacity: .35; }
+
+.storedPanel { min-width: 0; padding: 34px 25px 22px; background: rgb(255 255 255 / 82%); }
+.listTitle { display: flex; align-items: center; justify-content: space-between; }
+.listTitle span { display: grid; }
+.listTitle b { min-width: 180px; padding: 17px 20px; border: 1px solid #a6bee4; border-radius: 5px; background: #e4edf9; color: #7a94bb; text-align: center; }
+.primary, .secondary, .pillButton, .deleteActions button, .modal button { min-height: 50px; padding: 0 28px; border: 2px solid var(--gaze-navy); border-radius: 5px; background: white; color: var(--gaze-navy); font: inherit; font-size: 17px; font-weight: 800; cursor: pointer; }
+.primary { background: linear-gradient(135deg, #101f45, #243f79); color: white; }
+button:disabled { cursor: default; opacity: .45; }
+.listTitle .primary { min-width: 154px; }
+.profileList { display: grid; gap: 12px; max-height: 408px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
+.profileCard { display: grid; min-width: 0; min-height: 88px; box-sizing: border-box; grid-template-columns: 62px minmax(0, 1fr) max-content; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--gaze-soft); border-radius: 5px; background: white; }
+.selectableCard { cursor: pointer; user-select: none; }
+.selectableCard:hover, .selectableCard:focus-visible { border-color: var(--gaze-line); background: #f7faff; outline: none; }
+.selectedCard { border-color: var(--gaze-blue); background: #eef5ff; box-shadow: inset 0 0 0 1px var(--gaze-blue); }
+.profileCard:has(> input) { grid-template-columns: 28px 62px minmax(0, 1fr); }
+.profileCard > input { width: 24px; height: 24px; margin: 0; accent-color: var(--gaze-navy); }
+.compactRadar { width: 62px; height: 62px; align-self: center; fill: none; stroke: var(--gaze-navy); stroke-width: 6; }
+.compactRadar .radarOuter { stroke-dasharray: 2 6; opacity: .72; }
+.compactRadar .radarTarget { fill: var(--gaze-navy); stroke: var(--gaze-navy); }
+.compactRadar .radarCenter { fill: var(--gaze-navy); }
+.profileInfo { display: grid; min-width: 0; gap: 6px; }
+.nameRow { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.activeFooter .nameRow { display: flex; align-items: center; }
+.profileInfo strong { overflow: hidden; font-size: clamp(13px, 1.2vw, 19px); text-overflow: ellipsis; white-space: nowrap; }
+.profileInfo small { min-width: 0; color: var(--gaze-blue); font-size: clamp(11px, 0.95vw, 14px); line-height: 1.35; overflow-wrap: anywhere; }
+.editButton, .activeEditButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gaze-navy); cursor: pointer; }
+.activeEditButton { color: white; }
+.editButton svg, .activeEditButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.pillButton { grid-row: 1; grid-column: 3; align-self: center; min-width: 0; min-height: 42px; margin: 0; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
+.profileCard:has(> input) .pillButton { grid-column: 4; }
+.emptyList { margin: 80px 0; color: var(--gaze-copy); text-align: center; }
+.deleteNotice { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--gaze-copy); }
+.deleteNotice span { display: grid; width: 28px; height: 28px; place-items: center; border: 2px solid var(--gaze-navy); border-radius: 50%; color: var(--gaze-navy); font-weight: 800; }
+.deleteNotice p { margin: 0; }
+
+.bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 80%); }
+.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--gaze-navy); border-radius: 50%; font-size: 22px; font-weight: 800; line-height: 1; }
+.bottomBar > strong { color: var(--gaze-blue); font-size: 17px; }
+.bottomBar > button, .deleteActions { margin-left: auto; }
+.bottomBar > .secondary { min-width: 220px; }
+.deleteActions { display: flex; align-items: center; gap: 16px; }
+.deleteActions span { padding-left: 18px; border-left: 1px solid #abc0e2; color: var(--gaze-blue); font-weight: 800; white-space: nowrap; }
+.loading, .error { position: fixed; z-index: 40; top: 64px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--gaze-line); background: white; transform: translateX(-50%); }
+.error { color: #a32838; }
+
+.backdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(39 61 91 / 56%); }
+.modal { position: relative; width: min(680px, 100%); max-height: calc(100dvh - 48px); min-height: 0; box-sizing: border-box; overflow-y: auto; padding: clamp(22px, 3.5vh, 30px) clamp(20px, 3vw, 36px) 24px; border: 2px solid var(--gaze-line); border-radius: 8px; background: white; color: var(--gaze-navy); text-align: center; }
+.modal h2 { margin: 18px 0; font-size: 27px; }
+.modal p { color: #7695c7; font-size: 17px; line-height: 1.7; }
+.modal p span { display: block; white-space: nowrap; }
+.modal > .primary { min-width: 190px; margin-top: 22px; }
+.modalIcon { position: relative; display: grid; width: 66px; height: 66px; place-items: center; margin: 0 auto 12px; border: 2px solid var(--gaze-navy); border-radius: 50%; font-size: 34px; font-weight: 400; line-height: 1; }
+.modalIcon i { width: 14px; height: 14px; border-radius: 50%; background: var(--gaze-navy); }
+.addedName { display: block; margin-bottom: -6px; font-size: 18px; }
+.modalActions { display: flex; justify-content: center; gap: 14px; margin-top: 22px; }
+.modalActions button { min-width: 190px; }
+.renameContent { text-align: left; }
+.renameContent h2 { font-size: 32px; }
+.titleUnderline { display: block; width: 42px; height: 2px; margin: 4px 0 34px; background: var(--gaze-line); }
+.renameContent label { display: grid; gap: 14px; font-size: 17px; font-weight: 800; }
+.renameContent input { height: 62px; padding: 0 20px; border: 2px solid var(--gaze-navy); border-radius: 4px; color: var(--gaze-navy); font: inherit; font-size: 18px; }
+
+@media (min-width: 1001px) and (max-height: 800px) {
+  .gazePage { gap: 12px; }
+  .calibrationGrid { min-height: calc(100vh - 330px); }
+  .activePanel { padding-top: 26px; padding-bottom: 20px; }
+  .activeRadar { min-height: 190px; }
+  .radar { width: min(215px, 62%); height: min(215px, 62%); }
+  .bottomBar { min-height: 62px; }
+}
+@media (max-width: 1050px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .calibrationGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } }
+@media (max-width: 760px) { .gazeHero { grid-template-columns: minmax(0, auto) 1fr; } .circuit { display: none; } .gazeHero p { margin-left: 0; font-size: 15px; } .activePanel { min-height: 440px; } .activePanel, .storedPanel { padding: 28px 18px 22px; } .listTitle { align-items: flex-start; gap: 12px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .pillButton { font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .modal { padding: 30px 20px 26px; } .modal p span { white-space: normal; } .modalActions { flex-direction: column; } .modalActions button { width: 100%; min-width: 0; } }

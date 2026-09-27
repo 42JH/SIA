@@ -1,0 +1,260 @@
+﻿# BE(jpackage)·AI(PyInstaller)를 빌드해서 Tauri sidecar 규칙에 맞는 이름으로
+# src-tauri/binaries/ 에 배치하고, 이어서 `tauri build`로 최종 설치파일까지 만든다.
+# `npm run build:sidecars`로 실행 (사이드카만 필요하면 `-SkipTauriBuild` 옵션).
+#
+# 전제(Agents.md "현재 배포 계약"과 동일):
+#   - sidecar 논리 이름: sia-backend, sia-ai
+#   - Windows 타깃 트리플: x86_64-pc-windows-msvc
+#   - Tauri 입력 파일명: sia-backend-x86_64-pc-windows-msvc.exe / sia-ai-x86_64-pc-windows-msvc.exe
+#   - release·설치 파일명: sia-backend.exe / sia-ai.exe
+#
+# 필요 도구: JDK 17+ (jpackage 포함, 이 프로젝트는 toolchain 21), Python + PyInstaller.
+# Python은 PATH에서 찾거나 -PythonExe로 명시한다.
+#
+# [해결됨, 2026-09-21 재확인] AI/assistant.py·brain.py의 사용자 데이터 경로 문제는
+# AI/paths.py 도입으로 이미 고쳐졌다 — frozen 상태에서는 `%APPDATA%\SIA\ai`(data_path)
+# 를 쓰고, 읽기 전용 모델만 `_MEIPASS`(asset_path)를 본다. 온보딩 데이터가 재시작마다
+# 사라지는 문제는 더 이상 없다. 이 스크립트로 사이드카를 새로 만들 때 추가로 손볼 것 없음.
+#
+# jpackage app-image의 `app/`·`runtime/`과 PyInstaller onedir의 `sia-ai-support/`는
+# sidecar exe 옆에 있어야 한다. 스크립트가 세 폴더를 `src-tauri/binaries/`에 배치하고,
+# `tauri.conf.json`의 `bundle.resources`가 최종 설치본의 exe 옆에도 함께 넣는다.
+
+param(
+    # 사이드카(BE·AI)만 빌드해서 binaries/에 배치하고 끝낸다 — 최종 exe 패키징(tauri
+    # build, [5/5])은 건너뛴다. 사이드카 갱신만 필요할 때(예: 반복 테스트) 씀.
+    [switch]$SkipTauriBuild,
+    # AI 의 패키지와 PyInstaller 가 설치된 Python. 지정하지 않으면 현재 PATH 의 python.
+    [string]$PythonExe = "python"
+)
+
+$ErrorActionPreference = "Stop"
+
+$root = Resolve-Path "$PSScriptRoot\..\.."
+$integrationDir = Resolve-Path "$PSScriptRoot\.."
+$binariesDir = Join-Path $integrationDir "src-tauri\binaries"
+$target = "x86_64-pc-windows-msvc"
+
+if (-not (Test-Path $binariesDir)) {
+    New-Item -ItemType Directory -Path $binariesDir | Out-Null
+}
+
+# ---------------------------------------------------------------------------
+# [1/5] Backend 빌드 (bootJar)
+# ---------------------------------------------------------------------------
+Write-Host "=== [1/5] Backend 빌드 (gradlew bootJar) ===" -ForegroundColor Cyan
+Push-Location (Join-Path $root "Backend")
+try {
+    & .\gradlew.bat bootJar
+    if ($LASTEXITCODE -ne 0) { throw "gradlew bootJar 실패 (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+
+$jar = Get-ChildItem (Join-Path $root "Backend\build\libs\*.jar") |
+    Where-Object { $_.Name -notlike "*-plain.jar" } |
+    Select-Object -First 1
+if (-not $jar) { throw "빌드된 BE 실행 가능 jar를 못 찾았습니다 (Backend\build\libs\*.jar, *-plain.jar 제외)" }
+Write-Host "BE jar: $($jar.Name)"
+
+# ---------------------------------------------------------------------------
+# [2/5] Backend jpackage (app-image) -> src-tauri/binaries/
+# ---------------------------------------------------------------------------
+Write-Host "=== [2/5] Backend jpackage (app-image) ===" -ForegroundColor Cyan
+
+if (-not (Get-Command jpackage -ErrorAction SilentlyContinue)) {
+    throw "jpackage 를 PATH에서 못 찾았습니다. JDK 17+ (jpackage 포함) 설치 후 JAVA_HOME\bin을 PATH에 추가하세요."
+}
+
+$beName = "sia-backend"
+$beTauriName = "$beName-$target.exe"
+$bePackageOut = Join-Path $env:TEMP "sia-jpackage-out"
+Remove-Item $bePackageOut -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $bePackageOut | Out-Null
+
+# jpackage 런처는 실행 시 자기 파일명과 같은 app\<이름>.cfg 를 찾는다.
+# 최종 실행명은 Tauri가 배치하는 sia-backend.exe 이므로 여기서부터 그 이름으로 만든다.
+# Tauri의 externalBin 입력 파일에만 타깃 트리플을 붙여 둔다.
+jpackage `
+    --type app-image `
+    --input $jar.DirectoryName `
+    --main-jar $jar.Name `
+    --name $beName `
+    --dest $bePackageOut
+if ($LASTEXITCODE -ne 0) { throw "jpackage 실패 (exit $LASTEXITCODE)" }
+
+$beImageDir = Join-Path $bePackageOut $beName
+
+# app-image 산출물은 exe + app\ + runtime\ 세 가지가 서로 상대경로로 얽혀
+# 있어서 함께 배치한다. Tauri 입력 파일만 트리플 이름으로 복사한다.
+Copy-Item (Join-Path $beImageDir "$beName.exe") (Join-Path $binariesDir $beTauriName) -Force
+foreach ($name in @("app", "runtime")) {
+    $destPath = Join-Path $binariesDir $name
+    Remove-Item $destPath -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item (Join-Path $beImageDir $name) $destPath -Recurse
+}
+Write-Host "BE sidecar 배치 완료: $binariesDir\$beTauriName (+ app\, runtime\)"
+
+# ---------------------------------------------------------------------------
+# [3/5] AI 빌드 (PyInstaller --onedir)
+# ---------------------------------------------------------------------------
+Write-Host "=== [3/5] AI 빌드 (PyInstaller --onedir) ===" -ForegroundColor Cyan
+
+if (-not (Get-Command $PythonExe -ErrorAction SilentlyContinue)) {
+    throw "Python 실행 파일을 못 찾았습니다: $PythonExe"
+}
+& $PythonExe -m PyInstaller --version
+if ($LASTEXITCODE -ne 0) { throw "선택한 Python에 PyInstaller가 없습니다: $PythonExe" }
+
+$aiName = "sia-ai-$target"
+Push-Location (Join-Path $root "AI")
+try {
+    # Windows PowerShell 5.1 은 python -c 인수의 따옴표를 제거할 수 있으므로
+    # 버전 검사는 별도 파일로 실행한다.
+    & $PythonExe (Join-Path $PSScriptRoot "check-ai-build-env.py")
+    if ($LASTEXITCODE -ne 0) { throw "torch/torchvision/torchaudio CUDA 12.8 호환성 확인 실패 — AI/requirements.txt의 공식 버전 조합을 설치하세요" }
+    # 내장 모델과 호출어 학습용 부정 뱅크는 읽기 전용 자산이라
+    # onedir의 sia-ai-support 폴더에 같이 넣는다.
+    # wake.npz·speaker.npz·calib.npz 같은 사용자 생성 파일은 빌드 시점에 존재하지
+    # 않으므로 여기 안 들어간다. 해당 파일들은 AI/paths.py가 %APPDATA%\SIA\ai 아래에서
+    # 별도로 관리한다.
+    $requiredAiAssets = @(
+        "models\face_landmarker.task",
+        "models\gesture_recognizer.task",
+        "models\pose_landmarker_full.task",
+        "models\siaya_v2.onnx",
+        "models\eth-xgaze_resnet18.pth",
+        "models\wake_neg_bank.npz",
+        "models\openwakeword\embedding_model.onnx",
+        "models\openwakeword\melspectrogram.onnx",
+        "models\openwakeword\silero_vad.onnx"
+    )
+    foreach ($asset in $requiredAiAssets) {
+        if (-not (Test-Path $asset)) {
+            throw "AI 빌드 자산을 못 찾았습니다: $asset"
+        }
+    }
+
+    # gemini_api_key.txt는 gitignore 대상이라 클론 직후엔 없을 수 있다 — 있으면 번들
+    # 기본 키로 sia-ai-support 루트(asset_path)에 넣고, 없으면 조용히 건너뛴다.
+    # (런타임 우선순위는 brain.py 참고: 환경변수 > %APPDATA%\SIA\ai 오버라이드 > 번들 기본값)
+    $geminiKeyArgs = @()
+    if (Test-Path "gemini_api_key.txt") {
+        $geminiKeyArgs = @("--add-data", "gemini_api_key.txt;.")
+        Write-Host "gemini_api_key.txt 발견 — 번들 기본 키로 포함"
+    } else {
+        Write-Host "gemini_api_key.txt 없음 — 번들 기본 키 없이 빌드 (실행 시 환경변수/%APPDATA% 키 필요)" -ForegroundColor Yellow
+    }
+
+    & $PythonExe -m PyInstaller --noconfirm --onedir --contents-directory "sia-ai-support" --name $aiName `
+        --collect-all "mediapipe.tasks.c" `
+        --collect-all "speechbrain" `
+        --add-data "models\face_landmarker.task;models" `
+        --add-data "models\gesture_recognizer.task;models" `
+        --add-data "models\pose_landmarker_full.task;models" `
+        --add-data "models\siaya_v2.onnx;models" `
+        --add-data "models\eth-xgaze_resnet18.pth;models" `
+        --add-data "models\wake_neg_bank.npz;models" `
+        --add-data "models\openwakeword\embedding_model.onnx;openwakeword\resources\models" `
+        --add-data "models\openwakeword\melspectrogram.onnx;openwakeword\resources\models" `
+        --add-data "models\openwakeword\silero_vad.onnx;openwakeword\resources\models" `
+        @geminiKeyArgs `
+        assistant.py
+    if ($LASTEXITCODE -ne 0) { throw "pyinstaller 실패 (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+
+# ---------------------------------------------------------------------------
+# [4/5] AI onedir 산출물 배치 -> src-tauri/binaries/
+# ---------------------------------------------------------------------------
+Write-Host "=== [4/5] AI onedir 산출물 배치 ===" -ForegroundColor Cyan
+$aiDistDir = Join-Path $root "AI\dist\$aiName"
+$aiExe = Join-Path $aiDistDir "$aiName.exe"
+$aiSupport = Join-Path $aiDistDir "sia-ai-support"
+if (-not (Test-Path $aiExe)) { throw "AI 빌드 산출물을 못 찾았습니다: $aiExe" }
+if (-not (Test-Path $aiSupport)) { throw "AI onedir 보조 폴더를 못 찾았습니다: $aiSupport" }
+
+Copy-Item $aiExe $binariesDir -Force
+$aiSupportDest = Join-Path $binariesDir "sia-ai-support"
+Remove-Item $aiSupportDest -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item $aiSupport $aiSupportDest -Recurse
+Write-Host "AI sidecar 배치 완료: $binariesDir\$aiName.exe (+ sia-ai-support\)"
+
+Write-Host ""
+Write-Host "=== 사이드카 배치 완료 — $binariesDir ===" -ForegroundColor Green
+Get-ChildItem $binariesDir
+
+# ---------------------------------------------------------------------------
+# [5/5] 최종 패키징 (Rust 빌드 + Inno Setup) -> Integration/scripts/Output/
+# ---------------------------------------------------------------------------
+# NSIS(makensis)·WiX(light.exe) 는 둘 다 32비트 컴파일러라 sia-ai-support
+# (CUDA torch 포함, 수 GB)를 통째로 mmap 하려다 주소공간을 넘겨서 실패한다
+# ("Internal compiler error #12345: error mmapping file ... is out of range").
+# GPU torch 는 유지해야 하므로 용량을 줄이는 대신, Tauri 자체 번들링(NSIS/WiX)은
+# --no-bundle 로 건너뛰고 (app.exe 컴파일까지만 수행), 최종 설치본은 대용량
+# payload 를 스트리밍 방식으로 압축하는 Inno Setup(scripts\sia-desktop.iss)
+# 으로 따로 만든다. 사전 준비: Inno Setup 6 설치 (https://jrsoftware.org/isinfo.php)
+if ($SkipTauriBuild) {
+    Write-Host ""
+    Write-Host "=== [5/5] 건너뜀 (-SkipTauriBuild) — 사이드카만 배치하고 종료 ===" -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host ""
+Write-Host "=== [5/5] 전체 패키징 (Rust 빌드 + Inno Setup) ===" -ForegroundColor Cyan
+$requiredBundleResources = @("app", "runtime", "sia-ai-support")
+foreach ($name in $requiredBundleResources) {
+    $resourcePath = Join-Path $binariesDir $name
+    if (-not (Test-Path $resourcePath -PathType Container)) {
+        throw "최종 설치본에 필요한 보조 폴더를 못 찾았습니다: $resourcePath"
+    }
+}
+
+Push-Location $integrationDir
+try {
+    npx tauri build --no-bundle
+    if ($LASTEXITCODE -ne 0) { throw "tauri build --no-bundle 실패 (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+
+$appExe = Join-Path $integrationDir "src-tauri\target\release\app.exe"
+if (-not (Test-Path $appExe)) { throw "Rust 빌드 산출물을 못 찾았습니다: $appExe" }
+foreach ($name in @("sia-backend.exe", "sia-ai.exe")) {
+    $sidecarExe = Join-Path $integrationDir "src-tauri\target\release\$name"
+    if (-not (Test-Path $sidecarExe)) { throw "Tauri sidecar 산출물을 못 찾았습니다: $sidecarExe" }
+}
+
+$iscc = $null
+$isccCmd = Get-Command iscc -ErrorAction SilentlyContinue
+if ($isccCmd) {
+    $iscc = $isccCmd.Source
+} else {
+    # Inno Setup 6 설치 마법사 옵션에 따라 세 곳 중 하나에 깔린다:
+    # 최신 버전은 "이 사용자만"이 기본값이라 LOCALAPPDATA 쪽이 제일 흔하다.
+    $isccCandidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
+    )
+    foreach ($candidate in $isccCandidates) {
+        if (Test-Path $candidate) { $iscc = $candidate; break }
+    }
+}
+if (-not $iscc) {
+    throw "Inno Setup 컴파일러(ISCC.exe)를 못 찾았습니다. https://jrsoftware.org/isinfo.php 에서 설치하세요 (설치 위치: $($isccCandidates -join ', '))."
+}
+
+$issScript = Join-Path $integrationDir "scripts\sia-desktop.iss"
+if (-not (Test-Path $issScript)) { throw "Inno Setup 스크립트를 못 찾았습니다: $issScript" }
+
+& $iscc $issScript
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup 빌드 실패 (exit $LASTEXITCODE)" }
+
+$outputDir = Join-Path $integrationDir "scripts\Output"
+Write-Host ""
+Write-Host "=== 전체 빌드 및 패키징 완료 — $outputDir ===" -ForegroundColor Green
+if (Test-Path $outputDir) {
+    Get-ChildItem $outputDir -Recurse -File | Select-Object FullName, Length
+}

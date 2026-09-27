@@ -1,0 +1,84 @@
+/* 색상 · 여백 · 폰트 디자인 토큰 (agents.md 3장, 6장)
+   지금 단계는 스타일 최소화가 목적이므로 값 자체는 임시. 추후 디자인 교체 시 이 파일 위주로 수정한다. */
+:root {
+  --setup-background: #f0f0f0;
+  --setup-panel: #f5f5f5;
+  --setup-muted: #777;
+  --setup-border: 1px solid #333;
+  --setup-card-width: 920px;
+  --setup-card-height: 540px;
+  --setup-card-padding: 36px;
+  --setup-control-height: 44px;
+  --setup-title-size: 18px;
+  --setup-heading-size: 20px;
+  --setup-icon-size: 88px;
+  --setup-icon-font: 40px;
+  --setup-mole: 56px;
+  --setup-plot-height: 180px;
+  --setup-layer: 1100;
+  --setup-modal-layer: 1200;
+  --setup-dialog-width: 440px;
+  --setup-audio-height: 90px;
+  --setup-video-height: 180px;
+  --setup-voice-card-width: 920px;
+  --setup-voice-card-height: 540px;
+  --onboarding-navy: #0b1f45;
+  --onboarding-ink: #12244d;
+  --onboarding-blue: #3d6ad6;
+  --onboarding-cyan: #3ec8e0;
+  --onboarding-line: #c5d4ea;
+  --onboarding-muted: #7a90b4;
+  --onboarding-panel: #f7fbff;
+  --onboarding-page: #eceff3;
+  --setup-voice-padding: 28px;
+  --setup-voice-heading-size: 30px;
+  --setup-sentence-size: 20px;
+  --setup-voice-button-width: 160px;
+  --setup-radius: 6px;
+  --overlay-background: rgb(0 0 0 / 32%);
+  --gaze-card-height: 74px;
+  --gaze-card-icon-size: 34px;
+  --gaze-preview-icon-size: 70px;
+  --gaze-dot-size: 5px;
+  --gaze-center-dot-size: 7px;
+  --gaze-control-width: 104px;
+  --gaze-modal-width: 480px;
+  --color-bg: #ffffff;
+  --color-text: #1a1a1a;
+  --color-border: #d0d0d0;
+  --color-accent: #333333;
+  --color-danger: #b00020;
+  --color-muted: #777777;
+  --color-surface-muted: #fafafa;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+
+  --font-size-sm: 13px;
+  --font-size-md: 15px;
+
+  --dashboard-bg: #f6f6f6;
+  --dashboard-width: 1180px;
+  --dashboard-header: 64px;
+  --dashboard-title: 18px;
+  --dashboard-value: 28px;
+  --dashboard-border: #999999;
+  --dashboard-radius: 8px;
+  --dashboard-bar: #bdbdbd;
+  --sia-page: #f7f9fc;
+  --sia-ink: #102342;
+  --sia-navy: #071a36;
+  --sia-blue: #5f88bc;
+  --sia-steel: #7795bb;
+  --sia-muted: #6f83a1;
+  --sia-pale: #cbd9ea;
+  --sia-line: #89a8cf;
+  --sia-soft-line: #d9e3ef;
+  --sia-soft: #e7edf5;
+  --gesture-result-width: 900px;
+  --gesture-result-single-width: 640px;
+  --gesture-result-title-size: 24px;
+  --gesture-result-icon-size: 88px;
+}

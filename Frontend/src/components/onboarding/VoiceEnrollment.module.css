@@ -1,0 +1,29 @@
+.enrollment { position: relative; display: grid; min-height: 360px; align-content: start; color: var(--onboarding-ink); }
+.title { width: max-content; margin: 0; font-size: 30px; letter-spacing: -.045em; }
+.title::after { display: block; width: 78px; height: 5px; margin-top: 16px; border-radius: 4px; background: linear-gradient(90deg, var(--onboarding-cyan), var(--onboarding-blue)); content: ""; }
+.description { margin: 22px 0 0; color: var(--onboarding-muted); font-size: 17px; }
+.count { margin: 28px 0 0; color: var(--onboarding-muted); font-size: 18px; }
+.sentence { display: grid; min-height: 88px; place-items: center; margin: 20px 0 0; padding: 16px 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; background: var(--onboarding-panel); color: var(--onboarding-ink); font-size: 19px; text-align: center; }
+.waiting { margin: 18px 0 0; color: var(--onboarding-muted); font-size: 15px; }
+.liveWave { width: 100%; margin-top: 22px; }
+.quality { display: flex; min-height: 58px; align-items: center; margin-top: 22px; padding: 0 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; color: var(--onboarding-muted); }
+.quality strong { color: var(--onboarding-ink); }
+.reviewAudio { display: grid; width: 100%; min-height: 112px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; margin-top: 24px; padding: 16px 22px; border: 1.5px solid var(--onboarding-line); border-radius: 10px; background: var(--onboarding-panel); color: var(--onboarding-ink); }
+.reviewAudio time { flex-shrink: 0; color: var(--onboarding-muted); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.reviewPlayButton { position: relative; display: grid !important; width: 72px !important; min-width: 72px !important; height: 72px; min-height: 72px !important; place-items: center; padding: 0 !important; border: 1.5px solid var(--onboarding-line) !important; border-radius: 50% !important; background: #fff !important; }
+.playIcon { width: 28px; height: 28px; margin-left: 4px; fill: var(--onboarding-navy); }
+.pauseIcon { display: block; width: 18px; height: 24px; border-right: 6px solid var(--onboarding-navy); border-left: 6px solid var(--onboarding-navy); }
+.reviewWave { display: flex; min-width: 0; height: 52px; align-items: center; gap: 3px; overflow: hidden; }
+.reviewWave i { min-width: 3px; flex: 1 1 3px; border-radius: 3px; background: linear-gradient(#66c9df, #1a3a78); transition: height 70ms linear; }
+.reviewWavePlayed { background: linear-gradient(#3aa8c4, #0f274f) !important; }
+.actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.actions button { min-width: 160px; min-height: 48px; border-radius: 8px; }
+.actions .primary { background: var(--onboarding-navy); color: white; }
+.spinner { width: 88px; height: 88px; justify-self: center; border: 5px solid #dce5f3; border-top-color: var(--onboarding-blue); border-radius: 50%; animation: spin .9s linear infinite; }
+.spinner + .title { justify-self: center; margin-top: 28px; }
+.spinner ~ p { justify-self: center; color: var(--onboarding-muted); }
+.error { color: #aa293b; }
+.fullScreen { position: static; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 900px) { .title, .count, .sentence, .waiting { grid-column: 1; } .reviewAudio { grid-template-columns: auto minmax(0, 1fr) auto; } }
+@media (max-width: 620px) { .enrollment { min-height: 520px; } .reviewAudio { grid-template-columns: auto minmax(0, 1fr); padding: 14px 16px; } .reviewAudio time { grid-column: 2; justify-self: end; } .reviewPlayButton { width: 64px !important; min-width: 64px !important; height: 64px; min-height: 64px !important; } .actions { flex-wrap: wrap; } .actions button { width: 100%; min-width: 0; } }

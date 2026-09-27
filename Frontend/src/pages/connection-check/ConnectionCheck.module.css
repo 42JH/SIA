@@ -1,0 +1,7 @@
+.page {
+  padding: var(--spacing-lg);
+}
+
+.error {
+  color: var(--color-danger);
+}

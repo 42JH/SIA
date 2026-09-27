@@ -1,0 +1,240 @@
+:global(:root) {
+  --gesture-navy: #082c59;
+  --gesture-ink: #082756;
+  --gesture-blue: #176bd1;
+  --gesture-line: #9bbce0;
+  --gesture-soft-line: #d9e8f7;
+  --gesture-copy: #5684bd;
+  --gesture-page: #edf7ff;
+  --gesture-danger: #d75b66;
+}
+
+.panel { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: visible; }
+.list { min-height: 0; flex: 1 1 auto; overflow: auto; scrollbar-width: none; }
+.list::-webkit-scrollbar { display: none; }
+.toolbar { position: relative; z-index: 5; height: 0; }
+.toolbarActions { position: absolute; top: -84px; right: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: min(560px, 52%); }
+.toolbarActions > button { min-height: 46px; padding: 0 26px; border: 1.5px solid var(--gesture-navy); border-radius: 5px; background: #fff; color: var(--gesture-ink); font: inherit; font-weight: 700; cursor: pointer; }
+.toolbarActions > button:disabled { border-color: #cad7e8; color: #9aaabd; cursor: default; }
+.toolbarActions .danger { border-color: var(--gesture-danger); color: var(--gesture-danger); }
+.primary, .actions button, .addStep, .cancelCapture { min-height: 46px; padding: 0 30px; border: 1.5px solid var(--gesture-navy); border-radius: 5px; background: #fff; color: var(--gesture-ink); font: inherit; font-weight: 700; cursor: pointer; }
+.primary { background: linear-gradient(135deg, #061d3d, #0a376b); color: #fff; }
+.primary:disabled, .addStep:disabled { border-color: #cad7e8; background: #cad7e8; color: #fff; cursor: default; }
+.section { margin-bottom: 46px; }
+.section h3 { margin: 0 0 18px; color: var(--gesture-ink); font-size: 27px; font-weight: 800; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+.card { position: relative; display: grid; min-height: 238px; grid-template-columns: 58% 42%; overflow: hidden; border: 1.5px solid var(--gesture-line); border-radius: 8px; background: rgb(255 255 255 / 82%); color: var(--gesture-ink); cursor: pointer; }
+.card:has(.customPreview) { grid-template-columns: 58% 42%; min-height: 238px; }
+.card.disabled { color: #8798b2; opacity: .68; }
+.preview { position: relative; display: grid; min-width: 0; height: 100%; place-items: center; overflow: hidden; border: 1.5px solid #3d6db3; border-radius: 8px; background: linear-gradient(145deg, #122957, #233e72); }
+.card .preview { height: calc(100% - 30px); min-height: 0; align-self: center; margin: 15px; box-sizing: border-box; }
+.card .customPreview { width: auto; height: calc(100% - 30px); aspect-ratio: auto; justify-self: stretch; background: linear-gradient(145deg, #fff, #f6fbff); border-color: var(--gesture-blue); }
+.card .customPreview img, .card .customPreview video { object-fit: contain; object-position: center; }
+.preview img, .preview video { width: 100%; height: 100%; object-fit: contain; }
+.card .defaultPreview img, .card .defaultPreview video { width: 76%; height: 76%; object-position: center; filter: invert(1); mix-blend-mode: screen; }
+.preview > span { color: #d7e8ff; font-size: 48px; }
+.preview small { position: absolute; z-index: 3; right: 0; bottom: 18px; left: 0; color: #9bb6d4; text-align: center; font-size: 11px; }
+.card .preview small { display: none; }
+.preview video + small { display: none; }
+.largePreview { width: min(100%, 520px); height: auto; max-height: 100%; aspect-ratio: 1; align-self: center; justify-self: center; margin: 0; border-color: #477ecb; background: linear-gradient(145deg, #163062, #243f73); }
+.largePreview.defaultPreview { background: #fff; }
+.largePreview.defaultPreview img { width: 88%; height: 88%; object-position: center; }
+.largePreview.defaultPreview video { width: 80%; height: 80%; object-fit: contain; object-position: center; }
+.largePreview.customPreview img, .largePreview.customPreview video { width: 100%; height: 100%; object-position: center; }
+.largePreview small { display: none; }
+.detailMedia .largePreview { width: 100%; height: 100%; max-width: 100%; max-height: 100%; aspect-ratio: auto; }
+.switch { position: absolute; z-index: 4; top: 20px; right: 20px; display: inline-flex; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; }
+.switch i { display: block; width: 52px; height: 28px; padding: 3px; border-radius: 20px; background: #c8d3e2; transition: background .2s; }
+.switch i::after { display: block; width: 22px; height: 22px; border-radius: 50%; background: #fff; content: ""; transition: transform .2s; }
+.switch input:checked + i { background: var(--gesture-navy); }
+.switch input:checked + i::after { transform: translateX(24px); }
+.switch input:disabled + i { cursor: not-allowed; opacity: .55; }
+.deleteSelectable { outline: 2px solid transparent; outline-offset: 3px; }
+.deleteSelectable:has(.deleteCheck input:checked) { outline-color: var(--gesture-blue); }
+.deleteCheck { position: absolute; z-index: 5; top: 19px; right: 19px; display: grid; width: 34px; height: 34px; place-items: center; border: 2px solid var(--gesture-navy); border-radius: 4px; background: white; cursor: pointer; }
+.deleteCheck input { width: 20px; height: 20px; accent-color: var(--gesture-navy); cursor: pointer; }
+.cardInfo { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 52px 22px 18px 6px; }
+.cardInfo strong { font-size: 22px; font-weight: 800; }
+.cardInfo > span { margin-top: 13px; overflow: hidden; color: #3975d3; font-size: 17px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.cardAction { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--gesture-soft-line); color: var(--gesture-copy); font-size: 14px; font-weight: 700; }
+.cardAction b { display: grid; width: 18px; height: 18px; place-items: center; font-size: 0; }
+.cardAction b::before { width: 7px; height: 7px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; transform: rotate(45deg); content: ""; }
+.warning { position: absolute; right: 15px; bottom: 4px; left: 58%; color: var(--gesture-danger); font-size: 10px; }
+.empty { padding: 48px; border: 1px dashed var(--gesture-line); color: var(--gesture-copy); text-align: center; }
+.error { color: var(--gesture-danger); }
+
+.toolbar, .section, .backdrop, .registration { font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif; }
+.backdrop { position: fixed; z-index: 200; inset: 0; display: grid; overflow: hidden; place-items: center; padding: clamp(16px, 3vw, 32px); background: rgb(6 29 61 / 86%); }
+.detailModal { position: relative; display: flex; width: min(900px, 92vw); max-width: 100%; height: min(540px, calc(100dvh - 64px)); max-height: calc(100dvh - 64px); min-height: 0; overflow: hidden; flex-direction: column; box-sizing: border-box; padding: 12px 18px 16px; border-radius: 8px; background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 24%); }
+.detailModal > header { position: relative; z-index: 6; display: grid; grid-template-columns: 38px minmax(0, 1fr) 38px; align-items: center; column-gap: 8px; min-height: 38px; flex-shrink: 0; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--gesture-soft-line); background: rgb(255 255 255 / 96%); }
+.detailModal header h2 { margin: 0; overflow: hidden; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; text-overflow: ellipsis; white-space: nowrap; }
+.detailModal header button { position: relative; display: grid; width: 38px; height: 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gesture-ink); font-size: 0; cursor: pointer; }
+.detailModal header button:first-child::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
+.detailModal header button:last-child { visibility: hidden; }
+.detailLayout { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 54%); gap: clamp(10px, 1.4vw, 18px); min-width: 0; min-height: 0; flex: 1; overflow: hidden; align-items: stretch; }
+.detailMedia, .capturedPanel { position: relative; display: grid; min-width: 0; min-height: 0; box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr) auto; padding: clamp(16px, 2vw, 26px) clamp(16px, 2.2vw, 30px) 18px; overflow: hidden; border-radius: 8px; background: linear-gradient(145deg, #122957, #233e72); color: #fff; }
+.detailMedia h3, .capturedPanel h3 { z-index: 2; margin: 0 0 16px; font-size: clamp(16px, 1.6vw, 21px); }
+.detailMedia > small, .capturedPanel > small { margin-top: 12px; font-size: 11px; font-weight: 700; }
+.detailPanel, .registrationFormPanel, .completePanel { position: relative; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; border: 1.5px solid var(--gesture-line); border-radius: 8px; background: rgb(255 255 255 / 92%); }
+.detailMedia, .detailPanel { min-height: 0; }
+.detailPanel { display: flex; overflow: hidden; flex-direction: column; }
+.detailBody { display: flex; min-height: 0; overflow-x: hidden; overflow-y: auto; flex: 1; flex-direction: column; gap: 9px; padding: 30px 30px 12px; text-align: left; }
+.detailBody > small { margin-top: 2px; color: var(--gesture-copy); font-size: 10px; font-weight: 800; }
+.detailBody h3 { overflow-wrap: anywhere; margin: -2px 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--gesture-soft-line); font-size: clamp(22px, 2vw, 28px); line-height: 1.25; }
+.detailBody > strong { margin-bottom: 12px; font-size: 17px; }
+.detailBody > p { color: var(--gesture-copy); font-size: 13px; }
+.detailToggle { display: flex; min-height: 62px; align-items: center; flex-shrink: 0; justify-content: space-between; margin-top: auto; padding: 12px 18px; border: 1px solid var(--gesture-soft-line); border-radius: 8px; background: #f8fbff; }
+.detailToggle span { display: grid; gap: 3px; font-weight: 700; }
+.detailToggle span small { color: var(--gesture-copy); font-size: 9px; letter-spacing: 2px; }
+.detailToggle .switch { position: relative; inset: auto; }
+.detailPanel > .actions { position: relative; z-index: 1; flex-shrink: 0; justify-content: flex-end; padding: 12px 20px 16px; background: rgb(255 255 255 / 96%); }
+.detailPanel > .form { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding-bottom: 18px; }
+.actions { display: flex; justify-content: center; gap: 12px; padding: 22px; }
+.actions button { min-width: 120px; }
+.innerBackdrop { position: fixed; z-index: 210; inset: 0; display: grid; overflow: hidden; place-items: center; padding: 30px; background: rgb(6 29 61 / 58%); }
+.confirm { position: relative; width: min(440px, calc(100vw - 48px)); box-sizing: border-box; overflow: hidden; padding: 40px 36px 28px; border: 2px solid var(--gesture-navy); border-radius: 8px; background: #fff; text-align: center; }
+.confirm .alertIcon { margin: 0 auto; }
+.confirm h3 { margin: 12px 0; font-size: 26px; }
+.confirm p { color: var(--gesture-copy); }
+
+.actionList { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.actionList li { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--gesture-soft-line); background: #f8fbff; }
+.actionList b { font-size: 16px; }
+.actionList span { color: var(--gesture-copy); font-size: 14px; overflow-wrap: anywhere; }
+.form { display: grid; align-content: start; gap: 18px; min-width: 0; max-width: 100%; padding: clamp(16px, 2.4vw, 38px) clamp(12px, 2vw, 34px) 24px; text-align: left; overflow-x: hidden; }
+.form label { display: grid; gap: 8px; color: var(--gesture-ink); font-weight: 700; }
+.form input:not([type="checkbox"]), .form select { min-height: 42px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--gesture-line); border-radius: 5px; background: #fff; color: var(--gesture-ink); }
+.form > div { min-width: 0; max-width: 100%; }
+.form > div > span { display: block; margin-bottom: 12px; color: var(--gesture-copy); font-weight: 700; }
+.stepEditor { display: grid; grid-template-columns: 18px 24px minmax(0, 1fr) 32px; grid-template-rows: auto auto; align-items: center; justify-content: start; column-gap: 8px; row-gap: 8px; width: 100%; max-width: 100%; margin-bottom: 10px; padding: 8px 10px; border: 1px solid var(--gesture-soft-line); border-radius: 6px; min-width: 0; box-sizing: border-box; overflow: hidden; }
+.stepEditor::before { grid-column: 1; grid-row: 1; color: var(--gesture-blue); content: "⠿"; }
+.stepEditor > b { grid-column: 2; grid-row: 1; text-align: center; }
+.stepEditor > select { grid-column: 3; grid-row: 1; width: 100%; min-width: 0; max-width: 100%; }
+.stepEditor > .removeStep { grid-column: 4; grid-row: 1; display: grid; width: 30px; min-width: 30px; max-width: 30px; min-height: 30px; place-items: center; padding: 0; border: 1px solid var(--gesture-line); border-radius: 50%; background: #fff; color: var(--gesture-blue); font-size: 18px; line-height: 1; cursor: pointer; }
+.stepBody { grid-column: 1 / 5; grid-row: 2; min-width: 0; max-width: 100%; }
+.stepBody:empty { display: none; }
+.stepSettings { display: grid; gap: 5px; min-width: 0; max-width: 100%; }
+.stepSettings input, .stepSettings select { width: 100%; min-width: 0; max-width: 100%; }
+.coordinates { grid-template-columns: repeat(4, minmax(42px, 1fr)); }
+.filePicker { display: grid; gap: 8px; min-width: 0; }
+.filePicker > input { min-width: 0; width: 100%; }
+.pickerRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-width: 0; align-items: center; }
+.pickerRow select { width: 100%; min-width: 0; }
+.pickerRow button { min-height: 42px; padding: 0 14px; border: 1px solid var(--gesture-line); border-radius: 5px; background: #fff; color: var(--gesture-ink); white-space: nowrap; cursor: pointer; }
+.pickerReset { justify-self: start; min-height: 36px; padding: 0 4px; border: 0; background: transparent; color: var(--gesture-copy); font-weight: 700; cursor: pointer; }
+.form .hiddenPicker { display: none; }
+.filePicker .pickerError { margin: 0; line-height: 1.45; color: var(--gesture-danger); }
+.addStep { width: 100%; max-width: 100%; border-color: var(--gesture-line); border-style: dashed; color: var(--gesture-copy); text-align: left; }
+.form small { display: block; margin-top: 8px; color: var(--gesture-copy); }
+.form .repeat { display: flex; width: max-content; max-width: 100%; align-items: center; gap: 10px; margin-top: 4px; }
+.form .repeat input { width: 18px; min-width: 18px; height: 18px; min-height: 18px; padding: 0; border: 1px solid var(--gesture-line); border-radius: 3px; accent-color: var(--gesture-navy); cursor: pointer; }
+
+.registration { position: fixed; z-index: 15; inset: 54px 0 0; display: flex; overflow: hidden; flex-direction: column; background: linear-gradient(135deg, #fff, var(--gesture-page)); color: var(--gesture-ink); }
+:global(body):has(.registration), :global(body):has(.detailModal) { overflow: hidden; }
+:global(body):has(.detailModal) :global(main) > :global(header) { visibility: hidden; opacity: 0; pointer-events: none; }
+.registrationHeading { position: relative; z-index: 3; display: flex; width: 100%; min-height: 38px; flex-shrink: 0; align-items: flex-start; gap: 8px; box-sizing: border-box; padding: 16px 32px 14px; border-bottom: 1px solid var(--gesture-soft-line); background: linear-gradient(135deg, #fff, var(--gesture-page)); }
+.registrationHeading button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--gesture-ink); font-size: 0; cursor: pointer; }
+.registrationHeading button::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
+.registrationHeading h1 { margin: 0; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
+.registrationHeading p { margin: 2px 0 0; color: var(--gesture-copy); font-weight: 600; }
+.registrationBody { display: flex; width: min(1540px, calc(100% - 32px)); min-height: 0; flex: 1; align-items: center; flex-direction: column; justify-content: center; margin: 0 auto; padding: 16px clamp(16px, 2vw, 36px) 20px; text-align: center; box-sizing: border-box; overflow: hidden; }
+.registrationBody > p { font-weight: 700; }
+.registrationBody > small { margin-top: 12px; color: var(--gesture-copy); }
+.cameraBox, .liveFrame { position: relative; display: grid; width: min(900px, 78vw, calc(46vh * 16 / 9)); max-height: 46vh; aspect-ratio: 16 / 9; flex-shrink: 1; place-items: center; overflow: hidden; border: 2px solid var(--gesture-navy); border-radius: 8px; background: #fbfdff; color: var(--gesture-copy); }
+.cameraBox > img, .liveFrame img { width: 100%; height: 100%; object-fit: contain; background: #f8fbff; }
+.cameraState { display: none; }
+.liveFrame b { position: absolute; z-index: 3; top: 20px; left: 25px; color: var(--gesture-navy); font-size: 13px; }
+.liveFrame .recordingIndicator { color: var(--gesture-danger); animation: recordingPulse 1s ease-in-out infinite; }
+.countdown { position: absolute; z-index: 4; inset: 0; display: grid; place-items: center; background: rgb(6 29 61 / 35%); color: #fff; font-size: 90px; text-shadow: 0 2px 10px rgb(0 0 0 / 35%); }
+.frameNotice { position: absolute; z-index: 3; right: 18px; bottom: 18px; padding: 4px 8px; background: rgb(6 29 61 / 70%); color: #fff; font-size: 12px; }
+.captureFlash { position: absolute; z-index: 5; inset: 0; background: #fff; opacity: 0; pointer-events: none; animation: captureFlash 450ms ease-out; }
+.progress { width: min(840px, 74vw); height: 10px; margin-top: 28px; overflow: hidden; border-radius: 7px; background: var(--gesture-soft-line); }
+.progress i { display: block; height: 100%; border-radius: inherit; background: var(--gesture-navy); transition: width .25s; }
+.cancelCapture { margin-top: 18px; min-width: 230px; }
+.reviewVideo { width: min(820px, 74vw); max-height: 42vh; aspect-ratio: 16 / 9; object-fit: contain; border: 2px solid var(--gesture-navy); border-radius: 8px; background: #fbfdff; }
+.takeChoices { display: flex; gap: 16px; margin-top: 20px; margin-bottom: 40px; }
+.takeChoices button { position: relative; width: 112px; aspect-ratio: 1.35; overflow: visible; padding: 0; border: 1.5px solid var(--gesture-line); border-radius: 8px; background: #f8fbff; cursor: pointer; }
+.takeChoices button.selectedTake { border-color: var(--gesture-blue); box-shadow: 0 0 0 2px rgb(23 107 209 / 16%); }
+.takeChoices video, .takeChoices img { width: 100%; height: 100%; object-fit: cover; }
+.takeChoices span { position: absolute; right: 0; bottom: -28px; left: 0; color: var(--gesture-ink); font-weight: 700; }
+.alertIcon, .completeIcon { display: grid; width: 74px; height: 74px; place-items: center; border: 2px solid var(--gesture-navy); border-radius: 50%; font-size: 42px; }
+.rejectedResult { display: flex; width: 100%; min-height: 0; flex: 1; align-items: center; flex-direction: column; overflow: hidden; }
+.rejectedResult h3 { display: grid; gap: 4px; margin: 8px 0 6px; font-size: clamp(20px, 2.2vw, 28px); line-height: 1.35; text-align: center; }
+.rejectedResult h3 span { display: block; }
+.rejectedResult > p { margin: 0; color: var(--gesture-copy); line-height: 1.55; text-align: center; }
+.rejectedResult > small { margin-top: 2px; color: var(--gesture-copy); }
+.similarityGrid { display: grid; width: min(1180px, 100%); min-height: 0; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 10px 0 12px; }
+.similarityGrid.singlePreview { width: min(900px, 78vw, calc(46vh * 16 / 9)); grid-template-columns: 1fr; }
+.similarityGrid.singlePreview article { padding: 0; border: 0; background: transparent; }
+.similarityGrid.singlePreview article > strong { display: none; }
+.similarityGrid.singlePreview .compareMedia { max-height: 46vh; width: 100%; }
+.similarityGrid article { position: relative; display: flex; min-height: 0; align-items: stretch; flex-direction: column; gap: 6px; padding: 36px 14px 10px; border: 1.5px solid var(--gesture-line); border-radius: 8px; text-align: left; }
+.similarityGrid article > strong { position: absolute; top: 12px; left: 18px; font-size: 16px; }
+.similarityGrid .preview { width: 100%; height: min(34vh, 280px); max-height: min(34vh, 280px); aspect-ratio: auto; }
+.similarityGrid .defaultPreview img { width: 62%; height: 78%; object-position: center; }
+.similarityGrid .similarGesturePreview { display: grid; place-items: center; }
+.similarityGrid .similarGesturePreview.defaultPreview img { width: 52%; height: 68%; object-fit: contain; object-position: center; }
+.similarityGrid .similarGesturePreview.customPreview img, .similarityGrid .similarGesturePreview.customPreview video { width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.similarityGrid small { color: var(--gesture-copy); }
+.compareMedia { position: relative; display: grid; width: 100%; min-height: 0; flex: 1; aspect-ratio: 16 / 9; max-height: min(34vh, 280px); place-items: center; overflow: hidden; border: 1.5px solid var(--gesture-navy); border-radius: 8px; background: #f8fbff; color: var(--gesture-copy); }
+.compareMedia img, .compareMedia video { position: absolute; width: 100%; height: 100%; inset: 0; object-fit: contain; }
+
+.captureTypeBackdrop { position: fixed; z-index: 8; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(6 29 61 / 58%); }
+/* 추정값 - 원본 이미지에서 명확히 확인 불가: 모달 그림자 blur와 투명도 */
+.captureTypeDialog { position: relative; width: min(680px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); box-sizing: border-box; overflow: auto; padding: 26px 32px 24px; border: 2px solid var(--gesture-navy); border-radius: 8px; background: #fff; color: var(--gesture-ink); box-shadow: 0 18px 50px rgb(6 29 61 / 22%); }
+.captureTypeDialog > h3 { margin: 0 0 8px; font-size: 28px; }
+.captureTypeDialog > p { margin: 0 0 26px; color: var(--gesture-copy); }
+.captureTypeDialog > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.captureTypeDialog article { display: flex; min-height: 250px; align-items: center; flex-direction: column; justify-content: center; padding: 18px; border: 1.5px solid var(--gesture-line); border-radius: 8px; }
+.captureTypeDialog article > strong { font-size: 22px; }
+.captureTypeDialog article > p { min-height: 48px; color: var(--gesture-copy); font-size: 14px; line-height: 1.7; }
+.captureTypeDialog article .primary { width: 100%; margin-top: auto; }
+.captureTypeIcon { display: grid; width: 70px; height: 70px; place-items: center; margin-bottom: 14px; border: 2px solid var(--gesture-blue); border-radius: 50%; background: #f7fbff; }
+.captureTypeIcon svg { width: 40px; height: 40px; fill: none; stroke: var(--gesture-navy); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+
+.registrationWorkspace { display: grid; width: 100%; min-width: 0; min-height: 0; flex: 1; overflow: hidden; grid-template-columns: minmax(0, 40%) minmax(0, 60%); grid-template-rows: minmax(0, 1fr); gap: 20px; align-items: stretch; align-self: stretch; }
+.capturedPanel { min-height: 0; height: 100%; overflow: hidden; }
+.capturedMedia { position: relative; width: 100%; min-height: 0; height: 100%; overflow: hidden; border: 1px solid #477ecb; background: #f8fbff; }
+.capturedMedia img, .capturedMedia video { position: absolute; width: 100%; height: 100%; inset: 0; object-fit: contain; }
+.capturedPanel > span { justify-self: center; margin-top: 16px; padding: 7px 28px; border: 1px solid #79c7ff; border-radius: 20px; font-size: 13px; }
+.registrationFormPanel { display: flex; overflow: hidden; flex-direction: column; }
+.registrationFormPanel > .form { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; padding-bottom: 18px; }
+.registrationFormPanel > .actions { position: relative; z-index: 2; flex-shrink: 0; justify-content: flex-end; padding: 12px 28px 22px; background: rgb(255 255 255 / 96%); }
+.completePanel { display: flex; min-height: 560px; align-items: center; flex-direction: column; justify-content: center; padding: 40px; }
+.completePanel .completeIcon { margin-bottom: 18px; }
+.completePanel h3 { margin: 0; font-size: 29px; }
+.completePanel > strong { margin: 12px 0; font-size: 18px; }
+.completePanel > p { color: var(--gesture-copy); }
+.completePanel > .primary { min-width: 230px; margin-top: 28px; }
+.completeSteps { display: flex; width: min(480px, 100%); align-items: center; justify-content: center; padding: 16px; border: 1px solid var(--gesture-soft-line); background: #f8fbff; }
+.completeSteps span { font-weight: 700; }
+.completeSteps span + span::before { margin: 0 7px; content: "→"; }
+
+/* 추정값 - 원본 이미지에서 명확히 확인 불가: 반응형 전환 지점과 축소 간격 */
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detailMedia, .capturedPanel { min-height: 0; }
+  .detailPanel, .registrationFormPanel, .completePanel { min-height: 0; }
+}
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; }
+  .toolbar { height: auto; margin-bottom: 16px; }
+  .toolbarActions { position: static; max-width: none; }
+  .toolbarActions > button { flex: 1; padding: 0 12px; }
+  .backdrop, .registrationBody { padding-right: 16px; padding-left: 16px; }
+  .registrationHeading { width: 100%; padding: 0 16px; }
+  .registrationBody { width: 100%; }
+  .detailLayout, .registrationWorkspace { grid-template-columns: 1fr; }
+  .registrationWorkspace { overflow: auto; grid-template-rows: none; }
+  .detailLayout { gap: 12px; }
+  .detailMedia, .capturedPanel, .detailPanel, .registrationFormPanel { min-height: min(360px, 52vh); }
+  .stepEditor { grid-template-columns: 18px 24px minmax(0, 1fr) 32px; max-width: 100%; }
+  .pickerRow { grid-template-columns: 1fr; }
+  .captureTypeDialog > div, .similarityGrid { grid-template-columns: 1fr; }
+  .captureTypeDialog { max-height: 90vh; overflow: auto; }
+  .captureTypeDialog article { min-height: 270px; }
+}
+@keyframes captureFlash { from { opacity: .9; } to { opacity: 0; } }
+@keyframes recordingPulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .captureFlash, .liveFrame .recordingIndicator { animation-duration: .01ms; } }

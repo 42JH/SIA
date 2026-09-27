@@ -21,6 +21,7 @@ node_modules/
 out/
 .turbo/
 *.tsbuildinfo
+Frontend/dist/
 
 # Backend (Java/Spring)
 build/
@@ -33,7 +34,24 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.gesture_research/
+AI/dist/
+AI/*.spec
 
 # Logs
 *.log
 npm-debug.log*
+
+# Integration (Tauri)
+Integration/node_modules/
+Integration/src-tauri/target/
+Integration/src-tauri/gen/
+Integration/src-tauri/binaries/*
+!Integration/src-tauri/binaries/README.md
+
+# Integration overlay 창 산출물 — Integration/overlay/ 가 원본이고, 빌드/개발 시
+# scripts/sync-overlay.cjs 가 여기로 복사한다 (Frontend 소스 아님)
+Frontend/public/overlay/
+
+# Inno Setup 빌드 산출물 (수 GB 설치 파일)
+Integration/scripts/Output/

@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>SIA Overlay</title>
+<style>
+  /* 디자인 토큰: Frontend/src/styles/tokens.css 중 팝업 관련 값에서 출발했지만,
+     원본은 대시보드용 큰 사이즈라 오버레이 토스트에 맞게 축소함 (수정사항 반영). */
+  :root {
+    --popup-navy: #071a33;
+    --popup-border-color: #17345c;
+    --popup-accent: #173f70;
+    --popup-steel: #7791aa;
+    --popup-muted: #6d859e;
+    --popup-line: #d7e0e9;
+    --popup-surface: #f4f7fa;
+    --popup-top: 16px;
+    /* 오버레이 창은 주 모니터 "물리" 크기 전체로 뜬다(lib.rs) — 작업표시줄이 차지하는
+       영역까지 창 안에 포함되므로, 16px만 주면 작업표시줄(기본 높이 약 48px)에
+       가려진다. 여백 16px + 작업표시줄 여유분 48px = 64px로 띄워서 그 위에 뜨게 한다. */
+    --popup-bottom: 64px;
+    --popup-width: min(360px, calc(100vw - 24px));
+    --popup-min-height: 50px;
+    --popup-padding: 12px 16px;
+    --popup-gap: 12px;
+    --popup-icon-size: 34px;
+    --popup-font-size: 14px;
+    --popup-radius: 12px;
+    --popup-border: 1.5px solid var(--popup-border-color);
+    --popup-background: rgb(255 255 255 / 85%);
+    --popup-shadow: 0 6px 16px rgb(7 26 51 / 18%);
+    --popup-thumbnail-width: 96px;
+    --popup-thumbnail-height: 54px;
+    --popup-layer: 1000;
+    --color-danger: #b00020;
+  }
+
+  /* Pretendard는 Frontend 전역에서 로드되는 폰트라 이 오버레이엔 없음 — 없으면 시스템 산세리프로 자연 폴백 */
+  html, body {
+    margin: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+    overflow: hidden;
+    font-family: Pretendard, "Noto Sans KR", sans-serif;
+    color: var(--popup-navy);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* 이 창은 클릭을 절대 받지 않는다(choices 버튼 제거 결정 이후로 상호작용 자체가 없음) —
+     Rust 쪽 set_ignore_cursor_events(true)와 짝을 이룬다. 카드 자체도 pointer-events:none. */
+  * { pointer-events: none; }
+
+  .card {
+    position: fixed;
+    display: flex;
+    min-height: var(--popup-min-height);
+    align-items: center;
+    gap: var(--popup-gap);
+    padding: var(--popup-padding);
+    border: var(--popup-border);
+    border-radius: var(--popup-radius);
+    background: var(--popup-background);
+    box-shadow: var(--popup-shadow);
+    z-index: var(--popup-layer);
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .card.visible { opacity: 1; transform: translateY(0); }
+
+  /* 상단 토스트 영역 — TopNotification.module.css .container 위치를 그대로 가져옴 */
+  #toast {
+    top: var(--popup-top);
+    left: 50%;
+    width: var(--popup-width);
+    transform: translateX(-50%) translateY(-8px);
+  }
+  #toast.visible { transform: translateX(-50%) translateY(0); }
+
+  /* 하단 진행상태 영역(listening/session_countdown/boot) — BootToast.module.css .toast 위치를 그대로 가져옴 */
+  #progress {
+    right: 16px;
+    bottom: var(--popup-bottom);
+    width: min(300px, calc(100vw - 24px));
+  }
+
+  .row { display: flex; min-width: 0; align-items: center; gap: var(--popup-gap); width: 100%; }
+  .message { min-width: 0; flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-size: var(--popup-font-size); font-weight: 620; line-height: 1.4; }
+
+  .icon { display: grid; width: var(--popup-icon-size); height: var(--popup-icon-size);
+    flex: 0 0 var(--popup-icon-size); place-items: center; border: 1px solid var(--popup-steel);
+    border-radius: 50%; background: var(--popup-surface); color: var(--popup-accent); }
+  .icon svg { width: 62%; height: 62%; }
+
+  .listeningIcon { display: flex; justify-content: center; gap: 3px; }
+  .listeningIcon i { width: 3px; height: 11px; border-radius: 2px; background: var(--popup-accent);
+    animation: wave 1s ease-in-out infinite; }
+  .listeningIcon i:nth-child(2) { height: 18px; animation-delay: -0.2s; }
+  .listeningIcon i:nth-child(3) { height: 13px; animation-delay: -0.4s; }
+
+  .timerRing { --timer-progress: 360deg; position: relative; display: grid; width: 32px; height: 32px;
+    flex: 0 0 32px; place-items: center; border-radius: 50%;
+    background: conic-gradient(var(--popup-accent) var(--timer-progress), #d5dfe9 0); }
+  .timerRing::before { position: absolute; inset: 3px; border-radius: inherit; background: white; content: ""; }
+  .timerRing span { position: relative; font-size: 11px; font-weight: 700; }
+
+  .detailContent { width: 100%; }
+  .transcriptBlock, .summaryList { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--popup-line); }
+  .caption { color: var(--popup-muted); font-size: 11px; }
+  .transcript { margin: 6px 0 0; padding: 8px 12px; border: 1px solid #d1dce7; border-radius: 6px;
+    background: #f7f9fb; color: #304c69; font-size: 13px; line-height: 1.25; }
+  .summaryList { margin-bottom: 0; padding-left: 20px; color: #304c69; font-size: 12px; }
+  .summaryList li { padding: 4px 0 4px 2px; line-height: 1.35; }
+
+  .captureContent { display: flex; align-items: center; gap: var(--popup-gap); width: 100%; }
+  .captureImage { width: var(--popup-thumbnail-width); max-height: var(--popup-thumbnail-height);
+    border: 1px solid var(--popup-line); border-radius: 6px; object-fit: cover; }
+  .captureMeta { min-width: 0; flex: 1; }
+
+  /* 하단 로고 펄스 — BootToast.module.css .logo 그대로 (크기만 축소) */
+  .logo { position: relative; display: grid; width: 34px; height: 34px; flex: 0 0 34px;
+    place-items: center; border: 1px solid var(--popup-steel); border-radius: 50%; background: var(--popup-surface); }
+  .logo i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--popup-accent); }
+  .logo i:first-child { width: 7px; height: 7px; animation: logoPulse 1.6s ease-in-out infinite; }
+  .logo i:nth-child(2) { transform: translateX(-8px); opacity: 0.7; }
+  .logo i:nth-child(3) { transform: translateX(8px); opacity: 0.7; }
+  .logo i:nth-child(4) { transform: translateY(-8px); opacity: 0.7; }
+  .logo i:nth-child(5) { transform: translateY(8px); opacity: 0.7; }
+
+  @keyframes wave { 0%, 100% { transform: scaleY(0.65); } 50% { transform: scaleY(1.25); } }
+  @keyframes logoPulse { 50% { transform: scale(1.6); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .listeningIcon i, .logo i:first-child { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="toast" class="card"></div>
+  <div id="progress" class="card"></div>
+
+  <script>
+  // 이 페이지는 Frontend/ 소속이 아니라 Integration 소속 — 번들러 없는 순수 HTML/JS.
+  // Frontend/src/store/notificationStore.js + TopNotification.jsx + BootToast.jsx의 표시 로직을
+  // "네이티브 토스트/오버레이 창" 설계에 맞게 그대로 옮겨온 것 (핸드오프 스펙 참고).
+  //
+  // 레이아웃: 위(#toast) = 1회성 알림(예전 TopNotification 자리), 아래(#progress) = 지속 상태
+  // (listening/session_countdown/boot, 예전 BootToast 자리). notify_bridge.rs가 emit하는
+  // "sia://notify" 이벤트 하나로 전부 들어오고, kind별 분기는 전부 이 스크립트가 담당한다.
+
+  const AUTO_HIDE_MS = 3000;
+  const DETAIL_HIDE_MS = 5000;
+  const SUMMARY_HIDE_MS = 10000;
+  const CONFIRM_TIMEOUT_SEC = 10;
+  const CHOICE_TIMEOUT_SEC = 12;
+  const BOOT_VISIBLE_MS = 3000;
+
+  const toastEl = document.getElementById("toast");
+  const progressEl = document.getElementById("progress");
+  let toastHideTimer = null;
+  let toastRingTimer = null;
+  let progressRingTimer = null;
+  let bootShown = false; // triggerBootToast()의 1회성 가드와 동일 — 앱 실행당 한 번만
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function iconSvg(name) {
+    const common = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"';
+    if (name === "check") return `<svg ${common}><path d="m6 12 4 4 8-9" /></svg>`;
+    if (name === "warning") return `<svg ${common}><path d="M12 5v9M12 18h.01" /></svg>`;
+    if (name === "info") return `<svg ${common}><path d="M12 10v7M12 7h.01" /></svg>`;
+    if (name === "summary") return `<svg ${common}><path d="M7 8h10M7 12h10M7 16h6" /></svg>`;
+    if (name === "trash") return `<svg ${common}><path d="M7 8h10v11H7zM9 5h6M10 3h4" /></svg>`;
+    return `<svg ${common}><path d="M9.7 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1.2.9-1.2 1.7M12 17h.01" /></svg>`;
+  }
+
+  function iconHtml(name) {
+    if (name === "listening") {
+      return `<span class="icon"><span class="listeningIcon"><i></i><i></i><i></i></span></span>`;
+    }
+    return `<span class="icon">${iconSvg(name)}</span>`;
+  }
+
+  function ringHtml(remaining, total, showValue) {
+    const progress = Math.max(0, Math.min(1, remaining / total)) * 360;
+    return `<span class="timerRing" style="--timer-progress:${progress}deg">${showValue ? `<span>${remaining}</span>` : ""}</span>`;
+  }
+
+  // --- 상단 토스트 (1회성 알림) ---
+  // notice/tool_result/gesture_result/... 가 전부 이 #toast 하나를 공유하다 보니,
+  // 짧은 간격으로 여러 이벤트가 오면 앞선 알림이 화면에 반영되기도 전에 덮어써지는
+  // 문제가 있었다. 큐에 쌓아뒀다가 하나씩 순서대로(끝까지 보여준 뒤 다음 것) 처리한다.
+
+  const toastQueue = [];
+  let toastActive = false;
+
+  function clearToastTimers() {
+    clearTimeout(toastHideTimer); toastHideTimer = null;
+    clearInterval(toastRingTimer); toastRingTimer = null;
+  }
+
+  function renderToast(html) {
+    toastEl.innerHTML = html;
+    // 리플로우 한 번 강제해야 opacity/transform 전환이 재생됨(연속 알림 대비)
+    toastEl.classList.remove("visible");
+    void toastEl.offsetWidth;
+    toastEl.classList.add("visible");
+  }
+
+  // 현재 표시 중인 토스트를 끝내고 큐에 다음 항목이 있으면 이어서 보여준다.
+  function finishToast() {
+    clearToastTimers();
+    toastEl.classList.remove("visible");
+    toastActive = false;
+    advanceToastQueue();
+  }
+
+  function advanceToastQueue() {
+    if (toastActive || toastQueue.length === 0) return;
+    toastActive = true;
+    const job = toastQueue.shift();
+    job();
+  }
+
+  // autoHideMs가 없으면(progress 등 자동으로 안 사라지는 지속 상태) 큐를 막지 않도록
+  // 즉시 다음 항목으로 넘어간다 — 화면 자체는 다음 렌더가 있을 때까지 그대로 유지된다.
+  function queueToast(html, autoHideMs) {
+    toastQueue.push(() => {
+      renderToast(html);
+      if (autoHideMs) {
+        toastHideTimer = setTimeout(finishToast, autoHideMs);
+      } else {
+        toastActive = false;
+        advanceToastQueue();
+      }
+    });
+    advanceToastQueue();
+  }
+
+  function queueToastWithCountdown(icon, message, totalSec, afterRenderHtml) {
+    toastQueue.push(() => {
+      let remaining = totalSec;
+      const render = () => {
+        renderToast(`<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p>${ringHtml(remaining, totalSec, true)}</div>`);
+        if (afterRenderHtml) toastEl.querySelector(".row")?.insertAdjacentHTML("afterend", afterRenderHtml);
+      };
+      render();
+      toastRingTimer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) { finishToast(); return; }
+        render();
+      }, 1000);
+    });
+    advanceToastQueue();
+  }
+
+  function handleNotice(data) {
+    const message = typeof data.message === "string" ? data.message : "";
+    if (data.kind === "confirm") {
+      queueToastWithCountdown("trash", message, CONFIRM_TIMEOUT_SEC);
+      return;
+    }
+    if (data.kind === "choices") {
+      // 클릭 응답 제거(핸드오프 스펙 결정 2번) — 선택지는 텍스트로만 보여주고 응답은 음성으로 받는다.
+      const list = Array.isArray(data.choices)
+        ? `<ol class="summaryList">${data.choices.map((c) => `<li>${esc(c.label)}${c.detail ? ` <span class="caption">— ${esc(c.detail)}</span>` : ""}</li>`).join("")}</ol>`
+        : "";
+      queueToastWithCountdown(
+        "question" /* falls back to default icon */,
+        message,
+        data.timeoutSec ?? CHOICE_TIMEOUT_SEC,
+        list ? `<div class="detailContent">${list}</div>` : null,
+      );
+      return;
+    }
+    if (data.kind === "unknown_command") {
+      const transcript = data.transcript
+        ? `<div class="transcriptBlock"><span class="caption">인식된 말</span><p class="transcript">"${esc(data.transcript)}"</p></div>`
+        : "";
+      queueToast(`<div class="detailContent"><div class="row">${iconHtml("question")}<p class="message">${esc(message)}</p></div>${transcript}</div>`, DETAIL_HIDE_MS);
+      return;
+    }
+    if (data.kind === "progress") {
+      queueToast(`<div class="row">${iconHtml("spinner")}<p class="message">${esc(message || "실행 중...")}</p></div>`, null);
+      return;
+    }
+    if (data.kind === "summary" || Array.isArray(data.items)) {
+      const items = Array.isArray(data.items) ? data.items.filter((i) => typeof i === "string") : [];
+      const list = items.length
+        ? `<ol class="summaryList">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>`
+        : `<p class="caption">요약 중</p>`;
+      queueToast(`<div class="detailContent"><div class="row">${iconHtml("summary")}<p class="message">${esc(message)}</p></div>${list}</div>`, SUMMARY_HIDE_MS);
+      return;
+    }
+    const icon = data.kind === "success" ? "check" : "info";
+    queueToast(`<div class="row">${iconHtml(icon)}<p class="message">${esc(message)}</p></div>`, AUTO_HIDE_MS);
+  }
+
+  function handleToolResult(data) {
+    if (data.caller === "GESTURE" || data.outcome === "EXECUTED" || !data.message) return;
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
+  }
+
+  function handleGestureResult(data) {
+    if (!data.message) return;
+    queueToast(`<div class="row">${iconHtml(data.ok ? "check" : "warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
+  }
+
+  function handleCaptureSaved(data) {
+    const src = typeof data.url === "string" && data.url.startsWith("/api/captures/")
+      ? `http://127.0.0.1:8080${data.url}` : null;
+    const dims = data.width && data.height ? `<span class="caption">${data.width} × ${data.height}</span>` : "";
+    queueToast(
+      `<div class="captureContent"><span class="icon">${iconSvg("check")}</span>` +
+      (src ? `<img class="captureImage" src="${esc(src)}" alt="저장된 화면 캡처" />` : "") +
+      `<div class="captureMeta"><p class="message">${esc(data.path)}</p>${dims}</div></div>`,
+      DETAIL_HIDE_MS,
+    );
+  }
+
+  function handleVoiceRejected(data) {
+    if (!data.message) return;
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, AUTO_HIDE_MS);
+  }
+
+  function handleError(data) {
+    if (!data.message) return;
+    queueToast(`<div class="row">${iconHtml("warning")}<p class="message">${esc(data.message)}</p></div>`, DETAIL_HIDE_MS);
+  }
+
+  // --- 하단 진행상태 (listening / session_countdown / boot, 지속 상태) ---
+
+  function clearProgressTimers() {
+    clearInterval(progressRingTimer); progressRingTimer = null;
+  }
+
+  function hideProgress() {
+    clearProgressTimers();
+    progressEl.classList.remove("visible");
+  }
+
+  function showProgress(html) {
+    progressEl.innerHTML = html;
+    progressEl.classList.add("visible");
+  }
+
+  function handleListening() {
+    clearProgressTimers();
+    showProgress(`<div class="row">${iconHtml("listening")}<p class="message">듣는 중...</p></div>`);
+  }
+
+  function handleSessionState(data) {
+    if (data.state === "ACTIVE" && data.deadlineMs) {
+      clearProgressTimers();
+      const render = () => {
+        const remaining = Math.max(Math.round((data.deadlineMs - Date.now()) / 1000), 0);
+        if (remaining <= 0) { hideProgress(); return; }
+        showProgress(`<div class="row">${ringHtml(remaining, 15, false)}<p class="message">${remaining}초 후 대기 상태로 돌아갑니다.</p></div>`);
+      };
+      render();
+      progressRingTimer = setInterval(render, 500);
+      return;
+    }
+    if (data.state === "PASSIVE") {
+      clearProgressTimers();
+      hideProgress();
+      if (!data.reason && !bootShown) {
+        bootShown = true;
+        showProgress(`<div class="row"><span class="logo"><i></i><i></i><i></i><i></i><i></i></span><p class="message">SIA가 실행되었습니다.</p></div>`);
+        setTimeout(hideProgress, BOOT_VISIBLE_MS);
+      }
+    }
+  }
+
+  // --- 이벤트 라우팅 ---
+
+  function route(kind, data) {
+    if (kind === "listening") return handleListening();
+    if (kind === "notice") return handleNotice(data);
+    if (kind === "tool_result") return handleToolResult(data);
+    if (kind === "gesture_result") return handleGestureResult(data);
+    if (kind === "capture_saved") return handleCaptureSaved(data);
+    if (kind === "voice_rejected") return handleVoiceRejected(data);
+    if (kind === "error") return handleError(data);
+    if (kind === "session_state") return handleSessionState(data);
+    // 그 외 kind는 지금 단계에서 표시 대상이 아님 — 조용히 무시
+  }
+
+  function boot() {
+    if (!window.__TAURI__ || !window.__TAURI__.event) {
+      console.error("[overlay] window.__TAURI__.event 없음 — tauri.conf.json의 app.withGlobalTauri 확인 필요");
+      return;
+    }
+    window.__TAURI__.event.listen("sia://notify", (event) => {
+      const { kind, data } = event.payload || {};
+      if (typeof kind === "string" && data && typeof data === "object") route(kind, data);
+    });
+    // 부팅 직후(session_state PASSIVE 등) 이벤트가 이 리스너 등록보다 먼저 Rust 쪽에서
+    // emit됐을 수 있다 — Tauri 이벤트는 리스너 없을 때 유실되므로, 준비됐다고 알려서
+    // Rust가 마지막 session_state를 한 번 더 보내주게 한다 (notify_bridge::resend_last_session_state).
+    window.__TAURI__.event.emit("sia://overlay-ready", {});
+  }
+
+  boot();
+  </script>
+</body>
+</html>

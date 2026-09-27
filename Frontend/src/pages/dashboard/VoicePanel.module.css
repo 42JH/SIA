@@ -1,0 +1,168 @@
+.voicePage, .registrationPage { --voice-navy: #142853; --voice-deep: #0f2047; --voice-blue: #3f70d8; --voice-line: #4f7ee1; --voice-soft: #d5e1f5; position: relative; color: var(--voice-navy); }
+.voicePage { display: grid; min-height: calc(100vh - 164px); gap: 20px; }
+.registrationPage { display: grid; height: calc(100dvh - 112px); min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 12px; align-content: start; overflow: hidden; }
+.voiceHero { position: relative; z-index: 1; display: grid; min-height: 38px; grid-template-columns: minmax(0, auto) 1fr; align-items: center; isolation: isolate; }
+.voiceHero h1 { margin: 0; color: var(--voice-navy); font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -.055em; }
+.heroTitle { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.heroTitle button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); font-size: 0; cursor: pointer; }
+.heroTitle button::before { position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; border-bottom: 2.5px solid currentColor; border-left: 2.5px solid currentColor; transform: translate(-35%, -50%) rotate(45deg); content: ""; }
+.voiceHero p { margin: 12px 0 0 50px; color: var(--voice-blue); font-size: clamp(18px, 1.55vw, 28px); font-weight: 700; letter-spacing: -.035em; }
+.circuit { width: 100%; height: 52px; overflow: hidden; opacity: 0; fill: var(--voice-navy); stroke: var(--voice-navy); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 2; }
+.circuit path { fill: none; }
+.circuit .circuitLight { stroke: var(--voice-blue); }
+.circuit > circle { fill: white; stroke-width: 2.4; }
+.frame { position: relative; border: 2px solid var(--voice-line); border-radius: 8px; }
+.frameLine { display: none; }
+.voiceGrid { display: grid; min-height: min(530px, calc(100vh - 286px)); grid-template-columns: minmax(0, 55fr) minmax(0, 45fr); gap: 20px; }
+.activePanel { display: flex; min-width: 0; padding: 32px 38px 28px; flex-direction: column; overflow: hidden; border-color: var(--voice-line); background: linear-gradient(135deg, #101f45 0%, #223d75 100%); color: white; }
+.activePanel > small, .listTitle small { margin: 0 0 15px; font-size: 12px; font-weight: 800; letter-spacing: .28em; }
+.activePanel h2, .listTitle h2 { margin: 0; font-size: clamp(28px, 2.55vw, 40px); letter-spacing: -.04em; }
+.activePanel .frameLine { background: #6191f2; }
+.activeVisual { position: relative; display: flex; min-height: 270px; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 30px; padding: 16px 7% 8px; border: 0; background: transparent; color: white; cursor: pointer; }
+.activeVisual:disabled { cursor: default; }
+.wave { display: flex; height: 54px; min-width: 135px; align-items: center; gap: 3px; contain: layout paint; }
+.wave i { width: 3px; height: 100%; min-height: 5px; flex: 1 1 3px; border-radius: 3px; background: #7194cf; transform: scaleY(var(--wave-scale, .1)); transform-origin: center; will-change: transform; }
+.liveAudio .wave i { transition: transform 45ms linear; }
+.largeWave { width: 100%; height: 72px; gap: 8px; }
+.largeWave i { width: 5px; flex-basis: 5px; background: #8dbaff; }
+.activeWave { width: min(84%, 540px); }
+.micRings { position: relative; z-index: 2; display: grid; width: 140px; height: 140px; flex: 0 0 auto; place-items: center; border: 2px solid #8eb9ff; border-radius: 50%; background: rgb(26 48 96 / 90%); box-shadow: 0 0 0 7px rgb(67 111 198 / 16%), 0 0 0 9px #6091ea, 0 0 0 14px rgb(23 46 91 / 75%), 0 0 0 15px #79a7ee; }
+.micRings::before { position: absolute; inset: -23px; border: 1px dashed #9bc0fa; border-radius: 50%; content: ""; }
+.micRings .micIcon { width: 92px; height: 92px; }
+.micIcon { width: 142px; height: 142px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 5; }
+.compactMic { width: 48px; height: 48px; stroke-width: 4; }
+.activeFooter { display: flex; align-items: end; justify-content: space-between; }
+.activeFooter span { display: grid; gap: 8px; }
+.activeFooter .nameRow { display: flex; align-items: center; gap: 8px; }
+.activeFooter strong { font-size: 27px; }
+.activeFooter small { color: #d8e5fb; font-size: 18px; }
+.activeFooter em { display: flex; min-width: 132px; height: 48px; align-items: center; justify-content: center; gap: 14px; border: 1px solid white; border-radius: 26px; font-size: 18px; font-style: normal; }
+.activeFooter em i { width: 17px; height: 17px; border-radius: 50%; background: white; }
+.storedPanel { min-width: 0; padding: 34px 25px 22px; background: rgb(255 255 255 / 82%); }
+.listTitle { display: flex; align-items: center; justify-content: space-between; }
+.listTitle span { display: grid; }
+.listTitle b { min-width: 180px; padding: 17px 20px; border: 1px solid #a6bee4; border-radius: 5px; background: #e4edf9; color: #7a94bb; text-align: center; }
+.primary, .secondary, .pillButton, .actionRow button, .modal > button { min-height: 50px; padding: 0 28px; border: 2px solid var(--voice-navy); border-radius: 5px; background: white; color: var(--voice-navy); font-size: 17px; font-weight: 800; cursor: pointer; }
+.primary { border-color: var(--voice-navy); background: linear-gradient(135deg, #101f45, #243f79); color: white; }
+button:disabled { cursor: default; opacity: .45; }
+.listTitle .primary { min-width: 154px; }
+.voiceList { display: grid; gap: 12px; max-height: 408px; margin-top: 18px; overflow-y: auto; scrollbar-color: #afc2df transparent; scrollbar-width: thin; }
+.voiceCard { display: grid; min-width: 0; min-height: 88px; grid-template-columns: minmax(150px, 1.3fr) minmax(100px, 1fr) max-content; grid-template-areas: "audio info action"; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--voice-soft); border-radius: 5px; background: white; }
+.selectableCard { cursor: pointer; user-select: none; }
+.selectableCard:hover, .selectableCard:focus-visible { border-color: var(--voice-line); background: #f7faff; outline: none; }
+.selectedCard { border-color: var(--voice-blue); background: #eef5ff; box-shadow: inset 0 0 0 1px var(--voice-blue); }
+.voiceCard:has(> input) { grid-template-columns: 28px minmax(150px, 1.3fr) minmax(100px, 1fr) max-content; grid-template-areas: "check audio info action"; }
+.voiceCard > input { grid-area: check; width: 25px; height: 25px; margin: 0; accent-color: var(--voice-navy); }
+.cardAudio { display: flex; grid-area: audio; min-width: 0; overflow: hidden; align-items: center; align-self: center; gap: 10px; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.cardAudio > span, .liveAudio > span, .reviewMicButton > span { display: grid; width: 58px; height: 58px; flex: 0 0 auto; place-items: center; border: 2px solid var(--voice-navy); border-radius: 50%; }
+.voiceInfo { display: grid; grid-area: info; min-width: 0; gap: 6px; color: var(--voice-navy); text-align: left; }
+.nameRow { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.nameRow strong { min-width: 0; }
+.editButton, .activeEditButton { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.activeEditButton { color: white; }
+.editButton svg, .activeEditButton svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.voiceInfo strong { overflow: hidden; font-size: clamp(13px, 1.2vw, 18px); text-overflow: ellipsis; white-space: nowrap; }
+.voiceInfo small { min-width: 0; color: var(--voice-blue); font-size: clamp(11px, 0.95vw, 14px); line-height: 1.35; overflow-wrap: anywhere; }
+.pillButton { grid-area: action; align-self: center; min-width: 0; min-height: 42px; margin: 0; padding: 0 12px; border-radius: 28px; font-size: clamp(12px, 1.1vw, 15px); white-space: nowrap; }
+.bottomBar { display: flex; min-height: 76px; align-items: center; gap: 18px; margin-top: 0; padding: 10px 20px 10px 28px; background: rgb(255 255 255 / 80%); }
+.noticeIcon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 3px solid var(--voice-navy); border-radius: 50%; font-size: 22px; font-weight: 800; line-height: 1; }
+.bottomBar > strong { color: var(--voice-blue); font-size: 17px; }
+.bottomBar > button, .deleteActions { margin-left: auto; }
+.bottomBar > .secondary { min-width: 220px; }
+.deleteActions { display: flex; align-items: center; gap: 16px; }
+.deleteActions button { min-width: 170px; min-height: 52px; border: 2px solid var(--voice-navy); border-radius: 4px; background: white; color: var(--voice-navy); font-size: 18px; font-weight: 800; }
+.deleteActions span { padding-left: 20px; border-left: 1px solid #abc0e2; color: var(--voice-blue); font-weight: 800; white-space: nowrap; }
+.loading, .pageError { position: fixed; z-index: 40; top: 64px; left: 50%; margin: 0; padding: 9px 16px; border: 1px solid var(--voice-line); background: white; transform: translateX(-50%); }
+.pageError { color: #a32838; }
+
+.registrationStage { display: grid; min-width: 0; min-height: 0; height: 100%; place-items: center; overflow: hidden; padding: clamp(10px, 2vh, 20px) 7% clamp(12px, 2.4vh, 24px); background: transparent; }
+.guideContent, .centerState, .completeState, .reviewContent, .recordingContent { width: min(100%, 760px); text-align: center; }
+.guideContent { display: grid; justify-items: center; }
+.guideContent h2, .reviewContent h2, .centerState h2, .completeState h2 { margin: 0; font-size: clamp(27px, 2.3vw, 39px); letter-spacing: -.045em; }
+.guideContent > p, .reviewContent > p, .centerState > p, .completeState > p { color: #7092cf; font-size: 19px; line-height: 1.75; }
+.deviceSelect { display: flex; min-height: 68px; align-items: center; margin: 30px 0; padding: 0 26px; border: 1px solid #a9c0eb; border-radius: 4px; background: white; text-align: left; }
+.deviceSelect span { font-weight: 800; white-space: nowrap; }
+.deviceSelect select { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--voice-navy); font-size: 17px; font-weight: 800; }
+.deviceSelect strong { color: var(--voice-blue); }
+.guideContent > .primary, .completeState > .primary { min-width: 300px; }
+.enrollmentMic { position: relative; display: grid; width: min(100%, 520px); justify-items: center; gap: 22px; margin: 0 auto 28px; color: var(--voice-navy); }
+.enrollmentMicCircle { position: relative; display: grid; width: 154px; height: 154px; place-items: center; border: 2px solid #adc4ea; border-radius: 50%; box-shadow: 0 0 0 14px rgb(63 112 216 / 7%); }
+.enrollmentMic .micIcon { position: relative; z-index: 2; width: 106px; height: 106px; }
+.enrollmentWave { width: min(100%, 460px); }
+.enrollmentWave .wave { width: 100%; height: 58px; gap: 6px; }
+.enrollmentWave .wave i { background: #6d8fd2; transition: transform 45ms linear; }
+.recordingContent { align-self: center; }
+.recordMeta { display: flex; justify-content: space-between; color: var(--voice-blue); font-size: 17px; }
+.recordingContent .enrollmentMic { margin-top: 4px; margin-bottom: 6px; gap: 14px; }
+.recordingStatus { display: block; margin-bottom: 4px; color: var(--voice-blue); }
+.recordingContent blockquote { display: grid; min-height: 92px; place-items: center; margin: 8px 0; padding: 12px 24px; border: 0; font-size: clamp(25px, 2.2vw, 36px); font-weight: 800; line-height: 1.35; }
+.liveAudio { display: grid; min-height: 72px; grid-template-columns: 58px 1fr auto; align-items: center; gap: 14px; padding: 8px 15px; border: 1px solid var(--voice-soft); border-radius: 4px; }
+.liveAudio strong { color: var(--voice-blue); white-space: nowrap; }
+.autoNextNotice { margin: 18px 0 0; color: #7896c8; font-size: 15px; text-align: center; }
+.previewError { margin: 8px 0 0; color: #a32838; font-size: 13px; text-align: left; }
+.actionRow { display: flex; justify-content: center; gap: 14px; margin-top: 22px; }
+.actionRow button { min-width: 160px; }
+.reviewAudio { display: grid; width: 100%; min-height: 84px; grid-template-columns: 64px 1fr 58px; align-items: center; gap: 14px; margin-top: 28px; color: var(--voice-navy); }
+.reviewMicButton { display: grid; width: 58px; height: 58px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--voice-navy); cursor: pointer; }
+.reviewMicButton:disabled { cursor: default; opacity: .58; }
+.reviewAudio time { color: #6f91ca; font-size: 17px; }
+.qualityRow { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 0 24px; border: 1px solid #a9c0eb; border-radius: 4px; }
+.qualityRow span { color: #7392c7; }
+.completeState > span { display: grid; width: 140px; height: 140px; place-items: center; margin: 0 auto 24px; border: 2px solid var(--voice-navy); border-radius: 50%; font-size: 84px; font-weight: 300; }
+.spinner { width: 76px; height: 76px; margin: 0 auto 24px; border: 4px solid #dbe5f3; border-top-color: var(--voice-blue); border-radius: 50%; animation: spin .9s linear infinite; }
+
+.backdrop { position: fixed; z-index: 100; inset: 0; display: grid; overflow-y: auto; place-items: center; padding: clamp(12px, 3vw, 24px); background: rgb(39 61 91 / 56%); }
+.modal { position: relative; width: min(680px, 100%); max-height: calc(100dvh - 48px); min-height: 0; box-sizing: border-box; overflow-y: auto; padding: clamp(22px, 3.5vh, 30px) clamp(20px, 3vw, 36px) 24px; border: 2px solid var(--voice-line); border-radius: 8px; background: white; color: var(--voice-navy); text-align: center; }
+.modal .frameLine { width: 84px; }
+.modal h2 { margin: 18px 0; font-size: 27px; }
+.modal p { color: #7695c7; font-size: 17px; line-height: 1.7; }
+.modal p span { display: block; white-space: nowrap; }
+.modalIcon { position: relative; display: grid; width: 66px; height: 66px; place-items: center; margin: 0 auto 12px; border: 2px solid var(--voice-navy); border-radius: 50%; font-size: 34px; font-weight: 500; line-height: 1; }
+.modalMic::after { position: absolute; width: 25px; height: 25px; margin: -58px -58px 0 0; border-radius: 50%; background: var(--voice-navy); color: white; content: "!"; font-size: 18px; line-height: 25px; }
+.modal > .primary { min-width: 190px; margin-top: 22px; }
+.renameModal { width: min(520px, calc(100vw - 48px)); text-align: left; }
+.renameModal h2 { font-size: 32px; }
+.titleUnderline { display: block; width: 42px; height: 2px; margin: 4px 0 34px; background: var(--voice-line); }
+.renameModal label { display: grid; gap: 14px; font-size: 17px; font-weight: 800; }
+.renameModal input { height: 62px; padding: 0 20px; border: 2px solid var(--voice-navy); border-radius: 4px; color: var(--voice-navy); font-size: 18px; }
+.successMessage { color: var(--voice-blue) !important; font-weight: 800; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes wavePlayback { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1.18); } }
+.wave.waveActive i { animation: wavePlayback .62s ease-in-out var(--wave-delay) infinite; transform-origin: center; }
+@media (min-width: 1001px) and (max-height: 800px) {
+  .voicePage { gap: 12px; }
+  .voiceGrid { min-height: calc(100vh - 330px); }
+  .activePanel { padding-top: 26px; padding-bottom: 20px; }
+  .activeVisual { min-height: 190px; }
+  .activeVisual { gap: 20px; padding-top: 10px; }
+  .micRings { width: 116px; height: 116px; box-shadow: 0 0 0 6px rgb(67 111 198 / 16%), 0 0 0 8px #6091ea, 0 0 0 12px rgb(23 46 91 / 75%), 0 0 0 13px #79a7ee; }
+  .micRings::before { inset: -20px; }
+  .micRings .micIcon { width: 72px; height: 72px; }
+  .micIcon.compactMic { width: 48px; height: 48px; }
+  .largeWave { height: 54px; }
+  .bottomBar { min-height: 62px; }
+}
+@media (max-width: 1050px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr; } .voiceGrid { grid-template-columns: 1fr; } .activePanel { min-height: 500px; } .largeWave { gap: 4px; } }
+@media (max-width: 1350px) and (min-width: 761px) {
+  .voiceCard { grid-template-columns: minmax(0, 1fr) max-content; grid-template-areas: "audio action" "info action"; }
+  .voiceCard:has(> input) { grid-template-columns: 28px minmax(0, 1fr) max-content; grid-template-areas: "check audio action" "check info action"; }
+  .wave { width: 100%; min-width: 0; }
+}
+@media (max-width: 760px) { .voiceHero { grid-template-columns: minmax(0, auto) 1fr; } .voiceHero p { margin-left: 0; font-size: 15px; } .circuit { display: none; } .voiceGrid { grid-template-columns: 1fr; } .registrationStage { min-height: 580px; padding: 34px 20px; } .activePanel { min-height: 440px; } .storedPanel { padding: 32px 14px 18px; } .listTitle { align-items: flex-start; gap: 12px; } .listTitle h2 { font-size: 26px; } .listTitle .primary { min-width: 120px; padding: 0 12px; } .voiceCard, .voiceCard:has(> input) { grid-template-columns: 1fr; grid-template-areas: "audio" "info" "action"; gap: 8px; } .voiceCard:has(> input) { grid-template-columns: 28px minmax(0, 1fr); grid-template-areas: "check audio" ". info" ". action"; } .cardAudio { width: 100%; min-width: 0; } .wave { width: 100%; min-width: 0; } .pillButton { width: 100%; font-size: 12px; padding: 0 10px; } .bottomBar { align-items: flex-start; flex-wrap: wrap; } .bottomBar > button, .deleteActions { width: 100%; margin-left: 0; } .deleteActions { flex-wrap: wrap; } .modal { padding: 30px 20px 26px; } .modal p span { white-space: normal; } .actionRow { flex-direction: column; } .actionRow button { width: 100%; } }
+
+@media (max-width: 760px) {
+  .registrationPage { height: calc(100dvh - 98px); }
+  .registrationStage { min-height: 0; padding: 10px 18px 14px; }
+}
+@media (max-height: 820px) {
+  .registrationPage { gap: 8px; }
+  .registrationStage { padding-top: 6px; padding-bottom: 10px; }
+  .enrollmentMicCircle { width: 118px; height: 118px; }
+  .enrollmentMic .micIcon { width: 78px; height: 78px; }
+  .recordingContent .enrollmentMic { gap: 6px; }
+  .recordingContent blockquote { min-height: 62px; margin: 4px 0; padding: 6px 16px; }
+  .liveAudio { min-height: 62px; }
+  .autoNextNotice { margin-top: 9px; }
+  .actionRow { margin-top: 14px; }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "오버레이 창 권한: sia://notify 이벤트 수신만 필요 (sidecar/shell 없음, lib.rs에서 set_ignore_cursor_events로 클릭도 전부 차단)",
+  "windows": [
+    "overlay"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

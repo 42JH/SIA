@@ -1,0 +1,33 @@
+.measure { position: fixed; z-index: var(--setup-layer); inset: 0; width: 100vw; height: 100vh; box-sizing: border-box; overflow: hidden; background: #f3f8ff; color: var(--onboarding-ink); --mole-size: clamp(168px, 16vw, 236px); --nose-x: 0.494; --nose-y: 0.441; --hit-nose-y: 0.471; }
+.guide { position: absolute; z-index: 4; top: 18px; left: 50%; margin: 0; font-size: clamp(17px, 1.4vw, 23px); font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
+.grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
+.cell { position: relative; }
+.cell::before, .cell::after { position: absolute; background: rgb(89 133 211 / 10%); content: ""; }
+.cell::before { top: 0; bottom: 0; left: 0; width: 1px; }
+.cell::after { top: 0; right: 0; left: 0; height: 1px; }
+.hole { position: absolute; top: calc(50% + (var(--mole-size) * 0.32)); left: 50%; width: calc(var(--mole-size) * 0.78); height: calc(var(--mole-size) * 0.2); border: 3px solid #5d77e8; border-radius: 50%; background: linear-gradient(#111a48, #03091f); box-shadow: 0 14px 0 #8f9bb9; transform: translate(-50%, -50%); }
+.cell small { position: absolute; top: calc(50% + (var(--mole-size) * 0.46)); left: 50%; color: #8da4d5; font-size: 15px; font-weight: 700; transform: translateX(-50%); }
+.check { position: absolute; z-index: 2; top: 50%; left: 50%; display: grid; width: 70px; height: 70px; place-items: center; border: 2px solid #a8bfe9; border-radius: 50%; background: #21336d; color: #70dbc5; font-size: 55px; line-height: 1; transform: translate(-50%, -50%); }
+.targetGroup { position: absolute; z-index: 4; inset: 0; pointer-events: none; }
+.targetGroup img { position: absolute; z-index: 3; top: 50%; left: 50%; width: var(--mole-size); height: auto; transform: translate(calc(var(--nose-x) * -100%), calc(var(--nose-y) * -100%)); }
+.targetGroup .hitMole { transform: translate(calc(var(--nose-x) * -100%), calc(var(--hit-nose-y) * -100%)); }
+.noseAnchor { position: absolute; z-index: 4; top: 50%; left: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%); }
+.scope { position: absolute; z-index: 6; inset: 0; pointer-events: none; }
+.scope::before { position: absolute; top: 50%; left: 50%; width: min(42%, 176px); height: min(42%, 176px); border: 3px dashed #2bc9f3; border-radius: 50%; box-shadow: 0 0 0 3px rgb(43 201 243 / 35%); transform: translate(-50%, -50%); content: ""; }
+.scope::after { position: absolute; top: 50%; left: 50%; width: calc(var(--mole-size) * 0.86); height: 2px; background: linear-gradient(90deg, #2bc9f3 0 38%, transparent 38% 62%, #2bc9f3 62%); transform: translate(-50%, -50%); content: ""; }
+.scope i { position: absolute; top: calc(50% - min(21%, 88px) - 40px); left: 50%; width: 2px; height: calc(min(21%, 88px) + 40px + var(--mole-size) * 0.42 + 16px); background: linear-gradient(#2bc9f3 0 38%, transparent 38% 62%, #2bc9f3 62%); transform: translateX(-50%); }
+.scope b { position: absolute; z-index: 7; top: calc(50% - min(21%, 88px) - 22px); left: 50%; color: #2bc9f3; font-size: 17px; font-weight: 800; transform: translateX(-50%); white-space: nowrap; }
+.hitGroup .scope::before { border-color: #efc84d; box-shadow: 0 0 0 3px rgb(239 200 77 / 40%); }
+.hitGroup .scope::after { background: linear-gradient(90deg, #efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }
+.hitGroup .scope i { background: linear-gradient(#efc84d 0 46%, transparent 46% 54%, #efc84d 54%); }
+.hitGroup .scope b { color: #efc84d; }
+@media (prefers-reduced-motion: no-preference) { .hitGroup { animation: hit .42s ease-out; } }
+@keyframes hit { from { opacity: .65; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
+.measureError { position: absolute; z-index: 5; right: 18px; bottom: 18px; margin: 0; padding: 7px 12px; background: rgb(255 255 255 / 92%); color: #a22839; }
+.startBackdrop { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; background: rgb(8 24 58 / 54%); backdrop-filter: blur(5px); }
+.startModal { position: relative; display: grid; width: min(440px, calc(100vw - 40px)); box-sizing: border-box; place-items: center; overflow: hidden; padding: 40px 36px 32px; background: #fff; color: var(--onboarding-ink); text-align: center; border-radius: 8px; box-shadow: 0 0 0 2px var(--onboarding-navy); }
+.modalBevel { display: none; }
+.startModal h2 { margin: 12px 0; font-size: 28px; }
+.startModal p { margin: 0 0 26px; color: var(--onboarding-muted); }
+.startModal button { min-width: 160px; min-height: 48px; border: 0; border-radius: 8px; background: var(--onboarding-navy); color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+@media (max-width: 900px) { .guide { top: 12px; max-width: 80%; font-size: 15px; white-space: normal; } }

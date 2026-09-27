@@ -1,0 +1,86 @@
+// /ws/fe 연결 · 재연결 · {type, data} 봉투 파싱을 담당하는 단일 소켓 모듈 (agents.md 3장, 4.3)
+// 컴포넌트에서 이 파일을 직접 쓰지 않고, eventBus를 통해서만 구독한다.
+
+import { logCommunication } from '../utils/communicationLogger';
+
+const WS_URL = "ws://127.0.0.1:61015/ws/fe";
+const RECONNECT_DELAY_MS = 2000;
+
+let socket = null;
+let reconnectTimer = null;
+const rawListeners = new Set();
+
+function notify(envelope) {
+  rawListeners.forEach((fn) => fn(envelope));
+}
+
+function connect() {
+  socket = new WebSocket(WS_URL);
+
+  socket.onopen = () => {
+    logCommunication('WS', '상태', 'open');
+    notify({ type: "__connection__", data: { status: "open" } });
+  };
+
+  socket.onmessage = (event) => {
+    let envelope;
+    try {
+      envelope = JSON.parse(event.data);
+    } catch {
+      return; // 파싱 불가 메시지는 무시
+    }
+    // 봉투는 {type, data} 고정, data는 항상 객체 (agents.md 4.1)
+    if (!envelope || typeof envelope.type !== "string" || !envelope.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) return;
+    logCommunication('WS', '수신', envelope.type, envelope.data);
+    notify(envelope);
+  };
+
+  socket.onclose = () => {
+    logCommunication('WS', '상태', 'closed');
+    notify({ type: "__connection__", data: { status: "closed" } });
+    scheduleReconnect();
+  };
+
+  socket.onerror = () => {
+    // onclose가 뒤이어 호출되므로 별도 처리하지 않음
+  };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, RECONNECT_DELAY_MS);
+}
+
+export function startFeSocket() {
+  if (socket) return; // 중복 연결 생성 금지 (agents.md 1장)
+  connect();
+}
+
+export function sendFeMessage(type, data = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    logCommunication('WS', '실패', type, { message: '소켓 미연결' });
+    return false;
+  }
+  try {
+    socket.send(JSON.stringify({ type, data }));
+    logCommunication('WS', '발신', type, data);
+    return true;
+  } catch {
+    logCommunication('WS', '실패', type, { message: '전송 실패' });
+    return false;
+  }
+}
+
+// eventBus 전용 - 컴포넌트에서 직접 호출하지 않음
+export function subscribeRaw(fn) {
+  rawListeners.add(fn);
+  return () => rawListeners.delete(fn);
+}
+
+if (import.meta.hot) import.meta.hot.dispose(() => {
+  clearTimeout(reconnectTimer);
+  if (socket) { socket.onclose = null; socket.close(); }
+});
