@@ -56,7 +56,7 @@ pub fn run() {
             // 사이드카 스폰 실패 등은 release 빌드에서도 원인 파악이 필요해서 항상 켠다
             // (기존엔 debug_assertions 로만 켰었는데, 그러면 release 설치본에서 문제
             // 생겨도 로그가 아예 없어서 진단이 불가능했다). 기본 타겟(LogDir+Stdout+
-            // Webview)이라 설치본 기준 %APPDATA%\com.sia.desktop\logs\ 에 남는다.
+            // Webview)이라 설치본 기준 %LOCALAPPDATA%\com.sia.desktop\logs\ 에 남는다.
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)

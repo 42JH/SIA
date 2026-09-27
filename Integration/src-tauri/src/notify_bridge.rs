@@ -15,8 +15,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::tungstenite::Message;
 
-/// Frontend/src/ws/feSocket.js 의 WS_URL 과 동일. 포트 정책은 아직 TBD (Integration/Agents.md 참고) —
-/// BE가 고정 61015가 아니게 되면 여기도 같이 바꿔야 한다.
+/// Frontend/src/ws/feSocket.js 의 WS_URL 과 동일한 현재 고정 포트 계약이다.
+/// 동적 포트를 도입하면 Frontend·Extension과 함께 주입 방식으로 바꿔야 한다.
 const WS_URL: &str = "ws://127.0.0.1:61015/ws/fe";
 /// feSocket.js 의 RECONNECT_DELAY_MS 와 동일.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);

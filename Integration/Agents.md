@@ -5,18 +5,27 @@ Backend, AI, Frontend의 세부 구현 문서가 아니라 Tauri 데스크톱 �
 
 ## 현재 단계
 
-- `Integration/`은 Tauri v2 기반 데스크톱 셸 스캐폴딩이다.
-- Frontend 화면을 WebView에 표시하고 Backend와 AI를 sidecar로 실행하는 구조다.
-- Backend와 AI의 최종 배포 파일은 아직 준비되지 않았다.
-- Backend, AI, Frontend는 각자의 `dev/*` 작업에서 독립적으로 정리하고 개발한다.
-- 각 파트를 `integration` 브랜치로 합친 뒤 최종 실행 인자, 포트, 리소스 배치를 확정한다.
+- `Integration/`은 Frontend 화면을 WebView에 표시하고 Backend와 AI를 sidecar로
+  실행하는 Tauri v2 데스크톱 셸이다.
+- `build-sidecars.ps1`이 Backend bootJar·jpackage, AI PyInstaller onedir,
+  Frontend·Tauri release 빌드, Inno Setup 설치 파일 생성을 한 번에 수행한다.
+- 2026-09-27 기준 로컬에서 두 sidecar와
+  `scripts/Output/sia-desktop-0.1.0-setup.exe` 생성까지 완료했다.
+- 빌드 산출물은 용량 때문에 Git에 커밋하지 않는다. 새 checkout에서는 아래 빌드
+  절차로 다시 생성해야 한다.
+- 2026-09-23 설치본 실행 로그에서 Backend·AI 기동, `/api/status`, `/ws/fe`,
+  시선 보정 저장까지 확인했다. 2026-09-27에 다시 만든 최신 설치본은 재설치 후
+  실행 검증이 남아 있다.
 
-## 현재 임시 계약
+## 현재 배포 계약
 
-- sidecar 논리 이름은 임시로 `sia-backend`, `sia-ai`를 사용한다.
-- Windows 빌드가 기대하는 임시 파일명은 다음과 같다.
+- sidecar 논리 이름은 `sia-backend`, `sia-ai`다.
+- Tauri가 빌드 입력으로 기대하는 Windows 파일명은 다음과 같다.
   - `sia-backend-x86_64-pc-windows-msvc.exe`
   - `sia-ai-x86_64-pc-windows-msvc.exe`
+- Tauri release 출력과 설치 폴더에서는 각각 `sia-backend.exe`, `sia-ai.exe`가 된다.
+- Backend는 jpackage의 `app/`·`runtime/`, AI는 PyInstaller onedir의
+  `sia-ai-support/`와 함께 배치한다.
 - 실제 바이너리는 `src-tauri/binaries/`에 두며 Git에 커밋하지 않는다.
 - Backend가 먼저 실행되고 준비 완료가 확인된 후 AI를 실행한다.
 - 창의 닫기 버튼은 창만 숨기고, 트레이의 종료 메뉴가 sidecar까지 종료한다.
@@ -36,17 +45,19 @@ Backend, AI, Frontend의 세부 구현 문서가 아니라 Tauri 데스크톱 �
 
 ## 포트 정책
 
-- 각 파트가 독립 개발 중인 현재 단계에서는 기존 기본 포트 `8080`을 유지한다.
-- 지금은 Backend, Frontend, AI, Extension의 포트를 일괄 변경하지 않는다.
-- 최종 포트 정책은 각 파트를 `integration` 브랜치에 합친 뒤 적용한다.
-- 통합 시 Tauri를 포트 설정의 기준점으로 삼는 방향을 우선 검토한다.
+- 현재 배포 계약은 루프백 고정 포트 `61015`다.
+- Backend, Frontend REST·`/ws/fe`, Extension `/ws/ext`, Tauri 알림 브리지가
+  모두 `127.0.0.1:61015`를 사용한다.
+- AI와 Tauri의 Backend 준비 확인은 `runtime.json`의 포트를 사용한다.
+- 동적 포트 주입은 아직 구현하지 않았다.
 - 포트를 변경할 때는 다음 연결 지점을 한 번에 맞춰야 한다.
   - Backend 실행 인자 또는 환경변수
   - Frontend REST 주소와 `/ws/fe`
   - AI가 읽는 `runtime.json`
   - Extension의 `/ws/ext`
-- AI와 Tauri의 준비 확인은 이미 `runtime.json`의 포트를 사용한다. Frontend와
-  Extension에는 현재 `8080` 하드코딩이 남아 있다.
+  - Tauri `notify_bridge.rs`와 overlay의 REST 자산 URL
+- 알려진 불일치: `overlay/index.html`의 캡처 이미지 URL 한 곳은 아직 `8080`이라
+  `61015`로 고쳐야 한다.
 
 ## 검증
 
@@ -60,9 +71,11 @@ npm test
 ```
 
 - `npm run check`는 검증 중에만 `externalBin`을 비워 Rust 전체 타깃을 컴파일한다.
-- `npm test`는 `runtime.json` 파싱과 `/api/status` 성공 판정을 검사한다.
-- 2026-09-16 기준 Windows에서 위 검사와 Frontend 포함 Tauri 디버그 빌드가 성공했다.
-- `npm run dev`와 `npm run build`는 실제 sidecar 파일이 준비된 뒤 사용한다.
+- `npm test`는 `runtime.json` 파싱·실행 ID 대조, `/api/status`, 온보딩·자동 시작
+  판정을 포함한 Rust 단위 테스트를 실행한다.
+- 2026-09-27 기준 Windows에서 `npm run check`, Rust 테스트 8개, Backend 테스트가
+  통과했다.
+- `npm run dev`와 `npm run build`는 실제 sidecar 파일이 준비된 환경에서 사용한다.
 
 ## 해결된 항목 (2026-09-21 코드 확인)
 
@@ -83,15 +96,13 @@ npm test
   유실되는 문제도 `sia://overlay-ready` 핸드셰이크로 해결했다
   (`notify_bridge::resend_last_session_state`). 남은 의존성은 포트뿐이다.
 
-## 아직 확정하지 않는 항목
+## 남은 확인·정리
 
-- Backend의 jpackage/jlink 최종 구성과 동반 런타임 폴더 구조
-- AI의 PyInstaller hidden import·패키지 데이터 수집 범위
-- 최종 sidecar 이름과 실행 인자
-- 동적 포트 또는 고정 포트 선택
-- Frontend 및 Extension의 포트 주입 방식
-위 항목은 Backend와 AI 파일 정리가 끝나기 전에
-임의로 확정하지 않는다.
+- 2026-09-27 생성 설치 파일을 새로 설치한 뒤 Backend·AI 기동, 온보딩 생략,
+  트레이 종료까지 다시 검증한다.
+- `overlay/index.html`의 캡처 이미지 URL에 남은 `8080`을 `61015`로 맞춘다.
+- 현재는 고정 포트 `61015`를 사용한다. 동적 포트가 필요해질 때만 Frontend,
+  Extension, Tauri 알림 브리지의 주입 방식을 함께 설계한다.
 
 ## 설치 리소스 배치 (2026-09-21 확정)
 

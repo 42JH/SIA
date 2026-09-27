@@ -586,7 +586,7 @@ DB 밖에 두는 자산이다. 루트는 `%APPDATA%/SIA` 이며 (`APPDATA` 가 �
 
 | 경로 | 내용 | 참조 |
 |---|---|---|
-| `runtime.json` | `{token, port, pid}`. BE 기동 시 1회 기록 | AI 가 접속 시 읽는다 |
+| `runtime.json` | `{token, port, pid, launchId?}`. BE 기동 시 1회 기록하며 `launchId`는 Tauri 실행 때만 포함 | AI가 접속 시 읽고, Tauri는 이번에 실행한 Backend인지 대조한다 |
 | `previews/{tempId}-{take}.webm` | 제스처 등록 미리보기 영상 (임시 — 회차 선택까지) | `GET /api/previews/{tempId}-{take}.webm` |
 | `gestures/g{gestureId}.webm` | 제스처 등록 영상 (영구). 파일명이 `gesture.video_path` | `GET /api/gestures/{id}/video` |
 | `models/` | 다운로드 · sha256 검증이 끝난 모델 파일 | `model_load {name, path}` |

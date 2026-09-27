@@ -13,7 +13,7 @@
   7) S 도구(세션 후)            — session.extend → ok  (★ WS로 연 세션을 MCP가 인식하는지 = 교차상관 핵심)
   8) 정리                        — session_end
 
-실행: python test_integration.py   (BE를 먼저 :8080 에 띄운 뒤)
+실행: python test_integration.py   (BE를 먼저 :61015 에 띄운 뒤)
 BE 미기동이면 2)에서 멈추고 "BE 안 떠 있음"을 알린다.
 """
 import sys

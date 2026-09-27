@@ -32,7 +32,8 @@
 - 첫 기동에 Flyway 가 스키마와 설정 싱글턴 시드를 만들고, `ToolCatalogSync` 가 코드의 도구 목록
   (`ToolCatalog` 31개 + `@McpTool` 설명·스키마)을 tool 테이블에 UPSERT 하며, 그 뒤
   `DefaultGestureBootstrap` 이 기본 제공 제스처 9종 중 없는 이름을 gesture 테이블에 넣는다 (기능은 빈칸).
-- AI 파트는 `%APPDATA%/SIA/runtime.json` 의 `{token, port, pid}` 를 읽어 접속한다.
+- AI 파트는 `%APPDATA%/SIA/runtime.json` 의 `{token, port, pid, launchId?}`를 읽어
+  접속한다. `launchId`는 Tauri가 실행한 경우에만 기록하며 런처와 실제 JVM을 연결한다.
 
 | 환경변수 | 기본값 | 용도 |
 |---|---|---|
@@ -56,7 +57,8 @@
 | REST (FE) | `http://127.0.0.1:61015/api/**` | 없음 — 상태·설정·앱·제스처(페이지네이션·영상)·보이스/시선 프로필·장비 맵핑·기록·대시보드·백업·삭제 |
 
 - WS 메시지는 전부 `{"type","data"}` 봉투다. 모르는 type 은 로그만 남기고 무시한다.
-- CORS 는 `/api/**` 에만, 오리진은 `http://localhost:*`·`http://127.0.0.1:*` 뿐이다.
+- CORS 는 `/api/**` 에만 적용하며 `http://localhost:*`, `http://127.0.0.1:*`,
+  `http://tauri.localhost`를 허용한다. `/ws/fe`도 같은 Tauri 오리진을 허용한다.
 
 ## 구조
 

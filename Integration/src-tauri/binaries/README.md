@@ -14,7 +14,7 @@
   — AI exe가 사용하는 Python 런타임·DLL·모델. exe와 형제 경로를 유지해야 한다.
 
 이 폴더 안의 실제 바이너리는 git에 커밋하지 않는다 (용량 큼, 빌드 산출물).
-루트 `.gitignore`에 추가 필요 — 지금은 이 README만 커밋됨.
+루트 `.gitignore`가 이 폴더 전체를 제외하고 이 README만 추적하도록 설정돼 있다.
 
 tauri.conf.json의 `bundle.externalBin`이 이 경로(확장자·타깃 트리플 제외한
 이름)를 참조한다: `binaries/sia-backend`, `binaries/sia-ai`.

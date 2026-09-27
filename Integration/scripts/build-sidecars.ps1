@@ -2,13 +2,14 @@
 # src-tauri/binaries/ 에 배치하고, 이어서 `tauri build`로 최종 설치파일까지 만든다.
 # `npm run build:sidecars`로 실행 (사이드카만 필요하면 `-SkipTauriBuild` 옵션).
 #
-# 전제(Agents.md "현재 임시 계약"과 동일):
+# 전제(Agents.md "현재 배포 계약"과 동일):
 #   - sidecar 논리 이름: sia-backend, sia-ai
 #   - Windows 타깃 트리플: x86_64-pc-windows-msvc
-#   - 최종 파일명: sia-backend-x86_64-pc-windows-msvc.exe / sia-ai-x86_64-pc-windows-msvc.exe
+#   - Tauri 입력 파일명: sia-backend-x86_64-pc-windows-msvc.exe / sia-ai-x86_64-pc-windows-msvc.exe
+#   - release·설치 파일명: sia-backend.exe / sia-ai.exe
 #
-# 필요 도구: JDK 17+ (jpackage 포함, 이 프로젝트는 toolchain 21), Python + pyinstaller
-# (pip install pyinstaller), 둘 다 PATH에 있어야 한다.
+# 필요 도구: JDK 17+ (jpackage 포함, 이 프로젝트는 toolchain 21), Python + PyInstaller.
+# Python은 PATH에서 찾거나 -PythonExe로 명시한다.
 #
 # [해결됨, 2026-09-21 재확인] AI/assistant.py·brain.py의 사용자 데이터 경로 문제는
 # AI/paths.py 도입으로 이미 고쳐졌다 — frozen 상태에서는 `%APPDATA%\SIA\ai`(data_path)
