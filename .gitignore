@@ -1,57 +1,53 @@
 # Claude Code
 .claude/
 
-# Environment variables
+# Environment / secrets
 .env
 .env.*
 !.env.example
+AI/gemini_api_key.txt*
+AI/dombridge_token.txt
+AI/gms_tokens.json
 
-# OS
+# OS / IDE
 .DS_Store
 Thumbs.db
-
-# IDE
 .idea/
 *.iml
 .vscode/
 
-# Frontend (Next.js)
-node_modules/
-.next/
-out/
-.turbo/
-*.tsbuildinfo
-Frontend/dist/
-
-# Backend (Java/Spring)
-build/
-.gradle/
-*.class
-HELP.md
-
-# AI (Python)
+# Python (AI)
 __pycache__/
 *.pyc
 .venv/
 venv/
-.gesture_research/
-AI/dist/
-AI/*.spec
+AI/logs/
+AI/eval/
+AI/.gesture_cache/
+AI/.gesture_research/
+AI/models/*.npz
+!AI/models/wake_neg_bank.npz
+AI/models/*.pth
+AI/custom_gestures.npz
+AI/be_custom_gestures.npz
+
+# Java (Backend)
+Backend/build/
+Backend/.gradle/
+Backend/out/
+*.class
+HELP.md
+*.db
+*.db-shm
+*.db-wal
+
+# Node (Frontend / Integration)
+node_modules/
+Frontend/dist/
+Integration/src-tauri/target/
+Integration/src-tauri/binaries/*
+!Integration/src-tauri/binaries/README.md
 
 # Logs
 *.log
 npm-debug.log*
-
-# Integration (Tauri)
-Integration/node_modules/
-Integration/src-tauri/target/
-Integration/src-tauri/gen/
-Integration/src-tauri/binaries/*
-!Integration/src-tauri/binaries/README.md
-
-# Integration overlay 창 산출물 — Integration/overlay/ 가 원본이고, 빌드/개발 시
-# scripts/sync-overlay.cjs 가 여기로 복사한다 (Frontend 소스 아님)
-Frontend/public/overlay/
-
-# Inno Setup 빌드 산출물 (수 GB 설치 파일)
-Integration/scripts/Output/
