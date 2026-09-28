@@ -654,7 +654,11 @@ class SwipeDetector:
             if step_speed < self.still_speed * 0.5:
                 if self._lock_still_since is None:
                     self._lock_still_since = t
-                elif t - self._lock_still_since >= self.rearm_hold_s:
+                # 클래스 설명대로 "시작 위치에서 0.5초 정지해야 잠금 해제"이므로
+                # unlock_hold_s(0.5s)를 써야 한다. rearm_hold_s(0.15s)를 쓰면
+                # 다음 동작을 위해 손을 되돌리다 잠깐 멈추는 정도로도 잠금이
+                # 풀려, 그 복귀 동작 자체가 반대 방향 스와이프로 오발동한다.
+                elif t - self._lock_still_since >= self.unlock_hold_s:
                     self._direction_lock = None
             else:
                 self._lock_still_since = None
