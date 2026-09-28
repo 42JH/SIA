@@ -43,6 +43,7 @@ from gesture_be import (
 )
 from body_pose import BodyPoseEngine
 from custom_motion import CustomGestureStore, static_execution_allowed
+from swipe_progress_guard import SwipeProgressGuard
 from gaze import Calibrator, GazeBuffer, make_engine
 from hands import (GestureEngine, GestureStable, HoldToggle, MotionHandTracker,
                    PalmScrollDetector, PinchVolumeDetector, SCREEN_SWIPE_CONFIG,
@@ -363,6 +364,11 @@ def main():
     # 검출 순서가 프레임마다 바뀌면 다른 손으로 착각해 오발동할 수 있다 — handedness로
     # 같은 손을 계속 추적한다.
     palm_motion_tracker = MotionHandTracker()
+    # 스와이프 판정 기준(dist)의 5% 이상 이미 이동한, "진짜 스와이프처럼 보이는"
+    # 움직임일 때만 정적 홀드를 미룬다. 손을 들어 자세를 잡는 등 스와이프와
+    # 무관한 일반적인 움직임은 이 문턱 아래라 그대로 둔다(대가 없음) — 자세히는
+    # Docs/gesture-ai-troubleshooting/swipe-progress-guard-2026-09-28/report.md.
+    swipe_progress_guard = SwipeProgressGuard(progress_fraction=0.05, settle_s=0.5)
     palm_scroll = PalmScrollDetector()
     pinch_volume = PinchVolumeDetector()
     two_hand_motion = TwoHandSpreadDetector()
@@ -713,6 +719,7 @@ def main():
             if gesture_active != was_gesture_active:
                 palm_motion_tracker.update([])
                 palm_motion.update(None, now)
+                swipe_progress_guard.reset()
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
                 two_hand_motion.reset()
@@ -839,54 +846,8 @@ def main():
             # 컨텍스트 단위 폴백만 — 제스처 단위로 default를 부활시키면
             # NOTE: 양손 제스처는 BE 기본 매핑이 아직 없어 감지만 하고 실행되지 않는다.
             # BE 가 매핑을 소유하면 정적·동적과 같은 gesture_exec 경로로 나간다.
-            for name in static_names:
-                # 등록 중이거나 커스텀 동작 후보를 추적 중이면(claimed, 그리고 이
-                # 이름이 그 후보가 아니면) false를 넣어 홀드 상태도 해제한다.
-                # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
-                allowed = static_execution_allowed(gesture_active, gesture_execution_blocked,
-                                                    custom_claimed, custom_pose, name)
-                if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:
-                    # fired 뒤가 아니라 HoldToggle 조건에 넣는다 — 발동 후 필터링이면
-                    # 홀드가 이미 차 있다가 라벨이 붙는 순간 발사된다.
-                    ok = model_labeled(hand, name)
-                    if (allowed and gesture == name and not ok
-                            and now - blocked_log_at.get(name, 0) > 2.0):
-                        blocked_log_at[name] = now   # 리허설 계측용 — 거짓 음성을 센다
-                        print(f"[제스처] 보정 라벨 — 실행 안 함: {name}")
-                    allowed = allowed and ok
-                fired = gesture_toggles[name].update(allowed and gesture == name, now)
-                sent = False
-                if fired and name not in disabled_gestures and not args.two_hand_preview:
-                    be_target = be_gesture_target(
-                        name, context, {ref.get("name") for ref in remote_refs.values()}
-                    )
-                    if link and link.gesture_ready and be_target:
-                        be_name, be_context = be_target
-                        if args.no_actions:
-                            print(f"[시늉만] 제스처→BE: {name}")
-                        else:
-                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
-                            sent = link.send_event(
-                                "gesture_exec",
-                                {"name": be_name, "hwnd": foreground_hwnd(), "context": be_context},
-                            )
-                        hud_feedback = name
-                        hud_feedback_until = now + 0.9
-                    elif link and link.gesture_ready:
-                        print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
-                # queue_usage 는 위 if(link and link.gesture_ready and be_target) 블록 밖에 둔다 —
-                # test_remote_gesture_dispatch_respects_no_actions 가 그 블록만 떼어내
-                # 독립 실행해 검증하므로(raw_score 는 그 블록의 검증 대상 변수가 아니다),
-                # 블록 안에 두면 그 격리 계약이 깨진다.
-                if sent:
-                    link.queue_usage(
-                        "gesture",
-                        sessionId=link.be_session_id,
-                        action=be_name,
-                        context=be_context or context,
-                        accuracy=raw_score,
-                        payload={"source": "static", "occurredAt": int(time.time() * 1000)},
-                    )
+            # 정적 판정 전에 동적(스와이프 등) 감지기부터 갱신한다 — 아래 정적
+            # 루프가 "지금 스와이프처럼 움직이는 중인가"를 알아야 하기 때문이다.
             if gesture_active and not gesture_execution_blocked:
                 # 스와이프/스크롤/핀치볼륨의 이동량 기준은 화면 비율로 정해져
                 # 있어 카메라와의 거리에 따라 민감도가 달라진다 — 넣기 전에
@@ -926,13 +887,73 @@ def main():
                     dynamic_event = "Scroll_Down"
                 else:
                     dynamic_event = None
+                static_motion_blocked = swipe_progress_guard.update(
+                    swipe_hand["anchor"] if swipe_hand else None, now,
+                    size=swipe_hand["size"] if swipe_hand else None,
+                    event=motion_event in ("Swipe_Right", "Swipe_Left"))
             else:
                 palm_motion_tracker.update([])
                 palm_motion.update(None, now)
+                swipe_progress_guard.reset()
                 palm_scroll.reset()
                 pinch_volume.update(None, now)
                 dynamic_event = None
                 scroll_steps = 0
+                static_motion_blocked = False
+            for name in static_names:
+                # 등록 중이거나 커스텀 동작 후보를 추적 중이면(claimed, 그리고 이
+                # 이름이 그 후보가 아니면) false를 넣어 홀드 상태도 해제한다.
+                # 등록 완료 직후 직전 손모양이 명령으로 발동하는 것도 이걸로 막는다.
+                allowed = static_execution_allowed(gesture_active, gesture_execution_blocked,
+                                                    custom_claimed, custom_pose, name)
+                if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:
+                    # fired 뒤가 아니라 HoldToggle 조건에 넣는다 — 발동 후 필터링이면
+                    # 홀드가 이미 차 있다가 라벨이 붙는 순간 발사된다.
+                    ok = model_labeled(hand, name)
+                    if (allowed and gesture == name and not ok
+                            and now - blocked_log_at.get(name, 0) > 2.0):
+                        blocked_log_at[name] = now   # 리허설 계측용 — 거짓 음성을 센다
+                        print(f"[제스처] 보정 라벨 — 실행 안 함: {name}")
+                    allowed = allowed and ok
+                if static_motion_blocked:
+                    # 스와이프처럼 보이는 이동 중(또는 그 직후 안정 구간)이면 정적
+                    # 홀드 누적을 즉시 지운다 — update(False)만 쓰면 grace_s 동안
+                    # 누적이 남아 곧바로 발동해버릴 수 있다.
+                    gesture_toggles[name].cancel_pending()
+                    allowed = False
+                fired = gesture_toggles[name].update(allowed and gesture == name, now)
+                sent = False
+                if fired and name not in disabled_gestures and not args.two_hand_preview:
+                    be_target = be_gesture_target(
+                        name, context, {ref.get("name") for ref in remote_refs.values()}
+                    )
+                    if link and link.gesture_ready and be_target:
+                        be_name, be_context = be_target
+                        if args.no_actions:
+                            print(f"[시늉만] 제스처→BE: {name}")
+                        else:
+                            print(f"[GESTURE→BE] detected={name} | name={be_name} | context={be_context or 'default'}")
+                            sent = link.send_event(
+                                "gesture_exec",
+                                {"name": be_name, "hwnd": foreground_hwnd(), "context": be_context},
+                            )
+                        hud_feedback = name
+                        hud_feedback_until = now + 0.9
+                    elif link and link.gesture_ready:
+                        print(f"[GESTURE] BE 매핑 없음 — 실행하지 않는다: {name} ({context})")
+                # queue_usage 는 위 if(link and link.gesture_ready and be_target) 블록 밖에 둔다 —
+                # test_remote_gesture_dispatch_respects_no_actions 가 그 블록만 떼어내
+                # 독립 실행해 검증하므로(raw_score 는 그 블록의 검증 대상 변수가 아니다),
+                # 블록 안에 두면 그 격리 계약이 깨진다.
+                if sent:
+                    link.queue_usage(
+                        "gesture",
+                        sessionId=link.be_session_id,
+                        action=be_name,
+                        context=be_context or context,
+                        accuracy=raw_score,
+                        payload={"source": "static", "occurredAt": int(time.time() * 1000)},
+                    )
             # 동적 제스처는 순간 이벤트라 정적 손모양과 별도로 로그한다.
             # 실행이 비활성화됐어도 감지 자체는 확인할 수 있어 실측에 유용하다.
             if dynamic_event:

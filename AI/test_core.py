@@ -1564,7 +1564,10 @@ def test_geometry_only_gate_is_wired_into_the_hold_condition():
     src = _io.open(_Path(__file__).parent / "assistant.py", encoding="utf-8").read()
     head = src.index("            for name in static_names:")
     body = src[head:]
-    body = body[:body.index("            if gesture_active and not gesture_execution_blocked:")]
+    # 2026-09-28: 동적(스와이프 등) 감지기 갱신이 정적 루프보다 먼저 오도록
+    # 순서가 바뀌어(SwipeProgressGuard가 그 결과를 알아야 하므로), 루프 끝
+    # 경계로 다음 블록 대신 루프 뒤 첫 주석을 쓴다.
+    body = body[:body.index("            # 동적 제스처는 순간 이벤트라 정적 손모양과 별도로 로그한다.")]
 
     assert "if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:" in body, (
         "게이트가 사라졌거나 GEOMETRY_ONLY_LABELS 범위 제한이 풀렸다 — 범위가 풀리면 "

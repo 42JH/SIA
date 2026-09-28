@@ -245,6 +245,17 @@ class HoldToggle:
         self._last_true = -1e9
         self._last_fire = -1e9
 
+    def cancel_pending(self):
+        """누적 중인 홀드를 즉시 지운다. 마지막 발동 시각(cooldown)은 그대로 둔다.
+
+        스와이프 등 동적 동작 도중임이 확인된 프레임에서 정적 판정을 미루는 데 쓴다.
+        단순히 update(False)만 호출하면 grace_s 동안 누적 시간이 그대로 남아있어
+        곧바로 발동해버릴 수 있다 — 이 메서드는 그 누적을 즉시 0으로 되돌린다.
+        """
+        self._since = None
+        self._last_true = -1e9
+        self._armed = True
+
     def update(self, condition, t=None):
         t = time.monotonic() if t is None else t
         if condition:
