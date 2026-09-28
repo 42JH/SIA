@@ -308,8 +308,11 @@ def test_swipe_detector():
     assert feed([0.5] * 15) == []                                  # 정지 → 무장
     assert feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
     assert feed([0.82 - i * 0.04 for i in range(1, 9)]) == []      # 되돌아오는 손 — 무시
-    # Any neutral position can re-arm after the short return-motion lock.
-    assert feed([0.2] * 15) == []
+    # Any neutral position can re-arm after the short return-motion lock —
+    # 단, 클래스 설명대로 0.5초(unlock_hold_s)는 정지해야 한다. 이 중 첫 프레임은
+    # 직전 위치(0.5)에서 이동한 프레임이라 "정지 시작"으로 안 잡히므로, 0.5초를
+    # 채우려면 15프레임(0.467초)보다 몇 프레임 더 필요하다.
+    assert feed([0.2] * 18) == []
     assert feed([0.2 - i * 0.04 for i in range(1, 8)]) == ["Swipe_Left"]
 
     # A fast reversal is the return motion, not a second command.
@@ -329,8 +332,9 @@ def test_swipe_detector():
     assert guarded_feed([0.5] * 15) == []
     assert guarded_feed([0.5 + i * 0.04 for i in range(1, 9)]) == ["Swipe_Right"]
     assert guarded_feed([0.82 - i * 0.04 for i in range(1, 9)]) == []
-    # Any stable position, rather than the original center, re-arms it.
-    assert guarded_feed([0.2] * 15) == []
+    # Any stable position, rather than the original center, re-arms it —
+    # 위와 같은 이유로 15프레임이 아니라 18프레임 정지가 필요하다.
+    assert guarded_feed([0.2] * 18) == []
     assert guarded_feed([0.2 - i * 0.04 for i in range(1, 8)]) == ["Swipe_Left"]
 
     # A same-direction repeat does not need a neutral hold.  The return path
@@ -1564,7 +1568,10 @@ def test_geometry_only_gate_is_wired_into_the_hold_condition():
     src = _io.open(_Path(__file__).parent / "assistant.py", encoding="utf-8").read()
     head = src.index("            for name in static_names:")
     body = src[head:]
-    body = body[:body.index("            if gesture_active and not gesture_execution_blocked:")]
+    # 2026-09-28: 동적(스와이프 등) 감지기 갱신이 정적 루프보다 먼저 오도록
+    # 순서가 바뀌어(SwipeProgressGuard가 그 결과를 알아야 하므로), 루프 끝
+    # 경계로 다음 블록 대신 루프 뒤 첫 주석을 쓴다.
+    body = body[:body.index("            # 동적 제스처는 순간 이벤트라 정적 손모양과 별도로 로그한다.")]
 
     assert "if EXECUTE_MODEL_LABELED_ONLY and name in GEOMETRY_ONLY_LABELS:" in body, (
         "게이트가 사라졌거나 GEOMETRY_ONLY_LABELS 범위 제한이 풀렸다 — 범위가 풀리면 "
