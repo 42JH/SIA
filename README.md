@@ -405,23 +405,22 @@ erDiagram
 
 <br>
 
-## 실행
+## 설치
 
-```bash
-# Backend (작업 디렉터리는 반드시 Backend/)
-cd Backend && ./gradlew bootRun          # 127.0.0.1:61015
+SIA는 Windows 설치 파일 하나로 배포됩니다. 설치본에 Backend(jpackage)·AI 런타임(PyInstaller, CUDA torch·시선/호출어 모델 포함)·Frontend가 모두 들어 있어 별도 개발 환경이 필요 없습니다.
 
-# Frontend
-cd Frontend && npm install && npm run dev -- --port 5173
+1. [Releases](https://github.com/42JH/SIA/releases)에서 `sia-desktop-0.1.0-setup.exe`(약 1.9GB)를 받아 설치합니다.
+2. 처음 실행하면 온보딩이 시작됩니다 — 호출명·장치 선택 → 목소리 5문장 → 호출어 5회 → 9점 시선 보정.
+3. 브라우저 본문 읽기(요약·저장 품질)를 쓰려면 Chrome `chrome://extensions` → 개발자 모드 → **압축해제된 확장 프로그램을 로드** → [`Extension/`](Extension/) 폴더를 선택합니다. 확장이 없어도 접근성 폴백으로 동작합니다.
 
-# AI (GPU 권장 — requirements.txt 상단의 torch cu128 설치 안내 참고)
-cd AI && python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python assistant.py
+| 항목 | 요구 사항 |
+|---|---|
+| OS | Windows 10/11 64bit |
+| 장치 | 웹캠(시선·제스처) · 마이크(호출어·음성) |
+| GPU | NVIDIA GPU 권장(RTX 4050 이상에서 검증). GPU가 없으면 CPU로 폴백되며 1단 라우터 응답이 0.15초 → 약 2.4초 |
+| 네트워크 | 지시어·화면 참조 명령(LLM)에만 사용. 고정 명령·호출어·화자 인증·제스처는 오프라인 |
 
-# Chrome 확장: chrome://extensions → 개발자 모드 → Extension/ 폴더 로드
-```
-
-설치본 빌드는 [`Integration/README.md`](Integration/README.md) 참고 (`npm run build:sidecars` → Inno Setup).
+소스에서 빌드하거나 개발 모드로 띄우는 방법은 [`Integration/README.md`](Integration/README.md)(`build-sidecars.ps1` → Inno Setup)와 각 파트 README를 참고하세요.
 
 <br>
 
