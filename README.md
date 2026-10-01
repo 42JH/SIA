@@ -69,7 +69,17 @@
 - **네 재료(음성 원본 · 전체 화면 · 응시 영역 · 로컬 텍스트)를 한 번의 호출**로 보내 음성 인식·명령 판단·"이거" 해석·실행 결정을 한 번에 끝냅니다.
 - **남은 오차는 설계로 흡수**합니다 — 영역은 시선이 좁히고(화면 가로 32%), 대상은 LLM이 집습니다.
 
-<p align="center"><img src="assets/slide_onecall.png" width="720" alt="네 재료를 한 번의 호출로"></p>
+```mermaid
+flowchart LR
+    A[음성 원본] --> C
+    B[전체 화면] --> C
+    G[응시 영역 크롭<br>발화 0.15초 전] --> C
+    T[로컬 텍스트 · DOM] --> C
+    C((한 번의<br>Gemini 호출)) --> R1[음성 인식]
+    C --> R2[명령 판단]
+    C --> R3["'이거' 해석"]
+    C --> R4[실행 결정]
+```
 
 <br>
 
@@ -170,8 +180,6 @@ flowchart LR
     AI <-- /ws/agent · REST --> BE
 ```
 
-<p align="center"><img src="assets/slide_hub.png" width="720" alt="BE가 화면·AI·브라우저 확장을 잇는 허브"></p>
-
 **흐름**
 1. PASSIVE: 시선 링버퍼·VAD·호출어 모델만 상시 동작. 호출어가 없는 말은 여기서 버려지고 음성인식·LLM은 부르지 않습니다.
 2. 호출어 + 본인 목소리 확인 → BE가 세션을 ACTIVE(15초)로 엽니다. 세션의 주인은 BE 하나입니다.
@@ -194,6 +202,8 @@ flowchart LR
 |:---:|:---:|
 | <img src="assets/save_screen.png" width="440"> | <img src="assets/save_result.png" width="300"> |
 
+<p align="center"><img src="assets/feature_search.gif" width="720" alt="검색 결과 화면을 보며 질문"></p>
+
 * * *
 
 #### 6-2. 시선 — 커서가 아니라 기록
@@ -201,9 +211,11 @@ flowchart LR
 - 처음 보는 위치 오차: 기하 특징만 228px → 딥 특징 추가 183px → 교차검증 정규화 **156px(약 1.9cm), 32%↓** (실제 보정 3건 평균)
 - 보정한 9개 점 위에서는 평균 25~49px(약 0.5cm)
 
-| 발화 0.15초 전 응시점 되감기 | 처음 보는 위치 오차 228 → 156px |
-|:---:|:---:|
-| <img src="assets/slide_rewind.png" width="440"> | <img src="assets/slide_gaze_err.png" width="440"> |
+| 단계 | 처음 보는 위치 오차 | 비고 |
+|---|---:|---|
+| 기하 특징만 | 228px | 회귀 기본형 |
+| + 딥 특징 | 183px | 학습 오차↓, 검증 오차↑(과적합) |
+| + 교차검증 정규화 | **156px (약 1.9cm)** | leave-one-point-out으로 λ 선택 |
 
 <p align="center"><img src="assets/app_gaze.png" width="720" alt="시선 보정 프로필 화면"></p>
 
@@ -217,9 +229,17 @@ flowchart LR
 
 <p align="center"><img src="assets/feature_voice.gif" width="720" alt="음성으로 브라우저 열고 검색"></p>
 
-| 세 겹의 방어선 | 호출명 설정 화면 |
-|:---:|:---:|
-| <img src="assets/slide_funnel.png" width="440"> | <img src="assets/app_settings.png" width="440"> |
+```mermaid
+flowchart TD
+    M[마이크 상시 입력] -->|적응형 VAD| N["소음 거름 — 불필요 처리 45%↓"]
+    N -->|호출어 모델| W["'시아야' 감지 — 놓침 4.3%"]
+    W -->|화자 인증| S["본인 확인 — 타인 통과 14/92"]
+    S --> R{1단 로컬 라우터<br>0.15초 · 오프라인}
+    R -->|고정 명령 89%| T[BE 도구 즉시 실행]
+    R -->|지시어 · 화면 참조| L[Gemini 한 번 호출]
+```
+
+<p align="center"><img src="assets/app_settings.png" width="720" alt="호출명·장치 설정 화면"></p>
 
 * * *
 
@@ -243,7 +263,20 @@ flowchart LR
 - 발화마다 남긴 로그(2,900+건)로 병목 발견: 느린 LLM 응답 뒤에 빠른 명령이 **최대 23.57초** 대기
 - 명령마다 독립 스레드, 동시 최대 4개 — 빠른 명령은 기다리지 않음
 
-<p align="center"><img src="assets/slide_pipeline.png" width="720" alt="명령별 독립 처리"></p>
+```mermaid
+flowchart LR
+    subgraph after["지금 — 명령별 독립 스레드 (동시 4개)"]
+        direction TB
+        a1["요약해줘 → LLM 처리 중 … 6초"]
+        a2["계산기 열어줘 → ✔ 0.15초"]
+        a3["볼륨 올려 → ✔ 0.15초"]
+        a4["창 닫아 → ✔ 0.15초"]
+    end
+    subgraph before["이전 — 단일 큐"]
+        direction LR
+        b1["요약해줘 (LLM 6초)"] --> b2["계산기 열어줘 — 대기"] --> b3["볼륨 올려 — 대기"] --> b4["창 닫아 — 최대 23.57초 대기"]
+    end
+```
 
 * * *
 
@@ -254,23 +287,29 @@ flowchart LR
 4. **시간**: 호출어 없이는 조작 불가(세션 15초 안에서만), 예외는 조회 4가지뿐
 5. **흔적**: 모든 요청이 한 관문을 지나 전수 기록(400일 보존)
 
-<p align="center"><img src="assets/slide_defense.png" width="720" alt="다섯 겹의 방어"></p>
-
 * * *
 
 #### 6-7. 온보딩 · 대시보드
-- 온보딩: 장치 선택 → 9점 시선 보정 → 5문장 목소리 등록 → 호출어 등록
-- 대시보드: 제스처 등록·매핑, 시선 보정 프로필, 설정(호출명·세션 길이·장치), 사용 기록 통계
+- 온보딩: 호출명·장치 선택 → 5문장 목소리 등록 → 호출어 등록 → 9점 시선 보정
+- 대시보드: 사용량·인식 정확도·응답 시간·자주 쓰는 프로그램 통계(하루/주차/한달/1년 드릴다운), 제스처 등록·매핑, 시선 보정·보이스 프로필(각 최대 4개), 설정(호출명·장치·자동 실행)
 
-| 시작 화면 | 시선 보정 시작 |
+<p align="center"><img src="assets/app_onboarding.gif" width="720" alt="온보딩 — 시작 → 기본 설정 → 마이크 설정"></p>
+
+| 시선 보정 시작 | 목소리 등록 | 호출어 등록 |
+|:---:|:---:|:---:|
+| <img src="assets/app_gazeStart.png" width="300"> | <img src="assets/app_micStart.png" width="300"> | <img src="assets/app_wake_0.png" width="300"> |
+
+<p align="center"><img src="assets/app_dashboard.gif" width="720" alt="대시보드 — 사용량 드릴다운 · 정확도 · 응답 시간"></p>
+
+| 제스처 목록 → 기본·커스텀 상세 | 시선 · 보이스 프로필 → 설정 |
 |:---:|:---:|
-| <img src="assets/app_welcome.png" width="440"> | <img src="assets/app_gazeStart.png" width="440"> |
+| <img src="assets/app_gestures.gif" width="440"> | <img src="assets/app_profiles.gif" width="440"> |
 
-| 목소리 등록 시작 | 호출어 등록 |
-|:---:|:---:|
-| <img src="assets/app_micStart.png" width="440"> | <img src="assets/app_wake_0.png" width="440"> |
+| 월별 사용량 | 평균 응답 시간 | 자주 사용하는 프로그램 |
+|:---:|:---:|:---:|
+| <img src="assets/app_dashboard_usage.png" width="300"> | <img src="assets/app_dashboard_latency.png" width="300"> | <img src="assets/app_dashboard_apps.png" width="300"> |
 
-<p align="center"><img src="assets/feature_search.gif" width="720" alt="검색 결과 화면을 보며 질문"></p>
+> 대시보드 화면의 수치는 시연용 데이터입니다. 측정값은 위 기능 설명의 수치를 기준으로 합니다.
 
 <br>
 
