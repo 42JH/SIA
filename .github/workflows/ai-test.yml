@@ -1,0 +1,33 @@
+name: AI test
+
+on:
+  push:
+    paths:
+      - "AI/**"
+      - ".github/workflows/ai-test.yml"
+  pull_request:
+    paths:
+      - "AI/**"
+      - ".github/workflows/ai-test.yml"
+
+jobs:
+  test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: AI
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: AI/requirements.txt
+      - run: pip install -r requirements.txt
+      # .githooks/pre-push 와 같은 검증
+      - run: python test_core.py
+      - run: python eval_prompt.py --selftest
+      - run: python router.py --selftest
+      - run: python calib_bridge.py --selftest
