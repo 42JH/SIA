@@ -125,11 +125,47 @@ Passive 상태에선 아무것도 조작되지 않는다. Active여도 시선만
 
 ## 파일 구조
 
+**시아 모드 (음성·LLM·BE 연동)**
+- `assistant.py` — 시아 모드 진입점. 카메라·마이크·시선·제스처 루프를 소유
+- `brain.py` — Gemini 융합 콜(오디오+화면+응시 크롭), 활성 세션·확인 대기, 액션 실행
+- `router.py` — 1단 로컬 라우터 (faster-whisper STT + 단어 사전, 고정 명령은 LLM 없이 처리)
+- `voice.py` — 상시 마이크 대기, 에너지 VAD로 발화 구간·시작 시각 분리
+- `speaker.py` — 화자 인증 (ECAPA-TDNN 임베딩 코사인 비교)
+- `wake_head.py` — 사용자 지정 호출어 판정 헤드 (등록 녹음 5회로 즉석 학습)
+- `be_link.py` — BE 연결 계층 (runtime.json, WS `/ws/agent`, MCP 도구 호출, REST)
+- `voice_bridge.py` — BE WS 이벤트로 구동하는 호출어·화자 등록, 활성 프로필 동기화
+- `calib_bridge.py` — BE `calib_*` 이벤트로 구동하는 시선 보정 (calibrate.py의 이벤트판)
+- `voice_enroll.py` — 로컬 화자 등록·검증 CLI
+- `paths.py` — 번들 자산(`ASSET_DIR`)과 사용자 데이터(`DATA_DIR`) 경로 분리
+
+**시선**
 - `gaze.py` — 홍채+머리자세 특징, 2차 ridge 캘리브레이션, 링버퍼+fixation
-- `hands.py` — GestureRecognizer 래퍼, 핀치 FSM(히스테리시스), 클러치 토글
-- `overlay.py` — 응시 링 오버레이 (click-through 투명 창)
-- `calibrate.py` — 9점 캘리브레이션 UI (`--grid 4x3` 가능)
+- `deepgaze.py` — ETH-XGaze ResNet-18 시선 각도 (선택, 없으면 기하 특징만)
+- `calibrate.py` — 로컬 캘리브레이션 UI (기본 4x3 × 2라운드, `--grid 3x3` 가능)
+
+**제스처**
+- `hands.py` — GestureRecognizer 래퍼, 핀치 FSM(히스테리시스), 클러치 토글, 스와이프
+- `gesture_pose.py` — 내장 브이/검지 분류를 3D 관절 형태로 검증
+- `static_hand_shape.py` — 시점·좌우 불변 3D 손모양 거리
+- `custom_motion.py` — 커스텀 제스처 템플릿 (NPZ v2, 1손/2손 정적·동적)
+- `gesture_be.py` — BE 제스처 동기화와 등록 촬영 처리 (카메라는 assistant.py가 소유)
+- `gesture_consistency.py` — 동적 제스처 등록 품질 검사 (회차끼리 서로 인식되는지)
+- `gesture_diagnostics.py` — 등록 진단 좌표·비교 결과 저장 (영상은 저장 안 함)
+- `swipe_progress_guard.py` — 스와이프 진행 중에만 정적 홀드 억제
+- `body_pose.py` — 저주기 MediaPipe Pose 보조 신호 (어깨·팔꿈치·손목 관찰)
+- `gesture_studio.py` — 로컬 단독 커스텀 제스처 등록 스튜디오 (1손 정적)
+
+**손 커서 데모 v0**
 - `main.py` — 메인 루프·상태머신·마우스 제어 (튜닝 노브는 파일 상단)
+- `overlay.py` — 응시 링·상태 배지·토스트·답변 패널 오버레이 (click-through 투명 창)
+
+**평가·테스트**
+- `test_core.py` — 카메라 없이 핵심 로직 검증 (나머지 `test_*.py`는 기능별 회귀 테스트)
+- `eval_prompt.py` — 프롬프트 회귀 러너 (`eval/cases` 재생, `--tier1`로 1단 라우터만 평가)
+- `synth_cases.py` — 윈도우 TTS로 1단 라우터 평가용 합성 케이스 생성
+- `evaluate_*.py` — 공개 사진·저장 좌표로 제스처 판정을 오프라인 재현·비교
+- `models/` — MediaPipe `.task`, 호출어 모델(`siaya_v2.onnx`, `openwakeword/`), 부정 뱅크
+- `testdata/` — 제스처 오프라인 평가용 랜드마크 좌표
 
 ## 팁 / 알려진 한계
 
@@ -158,9 +194,11 @@ Passive 상태에선 아무것도 조작되지 않는다. Active여도 시선만
 - calibrate.py를 다시 돌리면 이전 캘리브레이션은 `calib_backup.npz`로 백업되고
   클릭 샘플은 초기화된다 (옛 자세 기준 샘플이 새 캘리브레이션을 오염시키므로)
 
-## 다음 단계 (v0에 없음)
+## 다음 단계
 
-1. **음성 + VLM**: 발화 온셋 시점 fixation 크롭 → "이거 저장해줘" (링버퍼가 이미 과거 조회 지원)
-2. 시선 모델 업그레이드 (L2CS-Net 등 appearance 기반)
-3. UIA 요소 하이라이트 (링 대신 실제 컨트롤 사각형 강조 — 진짜 Vision Pro 느낌)
-4. 커스텀 제스처 등록 (랜드마크 + kNN)
+v0 당시 목록 중 음성+VLM(`assistant.py`·`brain.py`), appearance 기반 시선 모델
+(`deepgaze.py`, ETH-XGaze), 커스텀 제스처 등록(`gesture_studio.py`·`gesture_be.py`)은
+구현됐다. 남은 것:
+
+1. UIA 요소 하이라이트 (링 대신 실제 컨트롤 사각형 강조 — 진짜 Vision Pro 느낌).
+   지금은 `main.snap_to_element`가 워프 좌표만 컨트롤 중앙으로 스냅한다
